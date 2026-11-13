@@ -148,8 +148,8 @@
             core.paneFactory = { [weak core] _, sessionId, paneId, _ in
                 let echo = FakeEcho(PaneRef(machineId: machineId, sessionId: sessionId, paneId: paneId), core: core)
                 let frames: FakePane.Frames = { since in echo.frames(since: since) }
-                let pane = chats && paneId == FakeChatWorld.pane.paneId
-                    ? agent.pane(frames: frames) : FakePane(paneId: paneId, frames: frames)
+                let isAgent = chats && paneId == FakeChatWorld.pane.paneId
+                let pane = isAgent ? agent.pane(frames: frames) : FakePane(paneId: paneId, frames: frames)
                 pane.onInput = { input in echo.take(input) }
                 return pane
             }

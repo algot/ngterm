@@ -1,16 +1,18 @@
 import XCTest
 
-/// A session opened with a hardware keyboard takes the keyboard at once, with no tap on it (Android's `FollowFocus`):
-/// its selected pane's terminal, or its chat's prompt field when the pane shows its chat. The fake core's `split`
-/// (`-ngterm-fake-session`): each pane names itself on its first line ("P1 ready") and echoes what it was typed on its
-/// second ("$ ls"); New session there opens `session 1`, of one pane, `P1` too. The simulator has the Mac's keyboard
-/// attached, so each test runs with a hardware keyboard; the session moves' chords chaining is SessionViewTests'.
+/// A session opened with a hardware keyboard takes the keyboard at once, with no tap on it.
+///
+/// As Android's `FollowFocus` does, its selected pane's terminal takes it, or its chat's prompt field when the pane
+/// shows its chat. The fake core's `split` (`-ngterm-fake-session`): each pane names itself on its first line ("P1
+/// ready") and echoes what it was typed on its second ("$ ls"); New session there opens `session 1`, of one pane, `P1`
+/// too. The simulator has the Mac's keyboard attached, so each test runs with a hardware keyboard; the session moves'
+/// chords chaining is SessionViewTests'.
 internal final class SessionKeyboardTests: XCTestCase {
     private static let wait: TimeInterval = 15
 
     // the terminal whose screen names the pane `pane` and shows `typed` after its prompt (VoiceOver's value of it)
     @MainActor
-    private static func screen(_ pane: String, typed: String = "", in app: XCUIApplication) -> XCUIElement {
+    private static func screen(_ pane: String, in app: XCUIApplication, typed: String = "") -> XCUIElement {
         let shows = NSPredicate(format: "value CONTAINS %@ AND value CONTAINS %@", "\(pane) ready", "$ \(typed)")
         return app.textViews.matching(shows).firstMatch
     }
@@ -57,8 +59,8 @@ internal final class SessionKeyboardTests: XCTestCase {
         row.tap()
         FakeApp.expect(Self.screen("P1", in: app), "work's first pane")
         Self.type("ls", in: app)
-        FakeApp.expect(Self.screen("P1", typed: "ls", in: app), "the typing on work's first pane, with no tap")
-        XCTAssertFalse(Self.screen("P2", typed: "l", in: app).exists, "the pane not selected took the typing")
+        FakeApp.expect(Self.screen("P1", in: app, typed: "ls"), "the typing on work's first pane, with no tap")
+        XCTAssertFalse(Self.screen("P2", in: app, typed: "l").exists, "the pane not selected took the typing")
         Self.expectNoSoftKeyboard(in: app, "on work")
 
         // a phone goes back from the session to the machine's sessions; a tablet shows them beside it
@@ -71,7 +73,7 @@ internal final class SessionKeyboardTests: XCTestCase {
         FakeApp.expect(Self.title(naming: "session 1", in: app), "the new session's view")
         FakeApp.expect(Self.screen("P1", in: app), "the new session's pane")
         Self.type("pwd", in: app)
-        FakeApp.expect(Self.screen("P1", typed: "pwd", in: app), "the typing on the new session's pane, with no tap")
+        FakeApp.expect(Self.screen("P1", in: app, typed: "pwd"), "the typing on the new session's pane, with no tap")
         Self.expectNoSoftKeyboard(in: app, "on the new session")
     }
 

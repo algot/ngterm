@@ -4,9 +4,10 @@
     import NgtermCoreFakes
     import Synchronization
 
-    /// A fake pane's screen as a shell keeps it, for the session view's UI tests (``FakeSessionWorld``): its first line
-    /// names the pane ("P1 ready"), its second shows what it was typed after the prompt ("$ ls"), so a test sees which
-    /// pane took the typing. Each input tells the app the pane changed, as the shell's echo would.
+    /// A fake pane's screen as a shell keeps it, for the session view's UI tests (``FakeSessionWorld``).
+    ///
+    /// Its first line names the pane ("P1 ready"), its second shows what it was typed after the prompt ("$ ls"), so a
+    /// test sees which pane took the typing. Each input tells the app the pane changed, as the shell's echo would.
     internal final class FakeEcho: Sendable {
         nonisolated private static let columns = 40
         nonisolated private static let rows = 12
@@ -29,7 +30,7 @@
                 .bytes()
         }
 
-        /// Keeps `input`'s text, if it is typed text, for the screen, and reports the pane changed.
+        /// Keeps typed text for the screen and reports that the pane changed.
         internal func take(_ input: FakeInput) {
             if case .typed(let text) = input {
                 typed.withLock { $0 += text }

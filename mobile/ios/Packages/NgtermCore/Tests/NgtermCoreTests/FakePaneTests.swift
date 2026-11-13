@@ -76,10 +76,9 @@ internal struct FakePaneTests {
         #expect(throws: PaneInputError.Closed) {
             try pane.typeText(text: "ls")
         }
-        #expect(heard.count == 0)
         pane.frames = { _ in Data() }
         #expect(try pane.typeText(text: "ls"))
-        #expect(heard.count == 1)
+        #expect(heard.count == 1, "the refused one went unheard")
     }
 
     @Test("input to a pane with nothing to pack is refused as closed")
