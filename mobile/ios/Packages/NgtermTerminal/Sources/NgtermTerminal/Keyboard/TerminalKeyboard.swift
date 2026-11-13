@@ -12,7 +12,8 @@ public final class TerminalKeyboard {
     private static let enter = "enter"
 
     private var madeBar: ExtraKeysBar?
-    // the focus the terminal that had it left when the selection moved on: the terminal selected next takes it
+    // the focus the terminal or chat that had it left when the selection moved on, or a session opened with a hardware
+    // keyboard gives its selected pane: the pane selected next takes it
     private var handingOver: Handover?
 
     /// The moves' actions, which the session view sets.
@@ -171,12 +172,13 @@ public final class TerminalKeyboard {
     ///
     /// When a terminal has the focus now, the one drawn focused next in a window takes it, with the soft keyboard if
     /// this one had it open (Android's `FollowFocus`). A chat's prompt field with the keyboard (``chatField``) hands it
-    /// on the same way, with the soft keyboard.
+    /// on the same way, with the soft keyboard. With neither, a handover not taken yet waits for the pane selected
+    /// next.
     public func handOver() {
         if let target {
             handingOver = target.softKeyboardWanted ? .withKeyboard : .focus
-        } else {
-            handingOver = chatField == nil ? nil : .withKeyboard
+        } else if chatField != nil {
+            handingOver = .withKeyboard
         }
     }
 
