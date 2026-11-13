@@ -19,8 +19,8 @@ internal final class SessionKeyboardTests: XCTestCase {
         return app.textViews.matching(shows).firstMatch
     }
 
-    // waits until the terminal of the pane `pane` has the keyboard's focus, which it takes as it comes on: typing before
-    // that would go nowhere
+    // waits until the terminal of the pane `pane` has the keyboard's focus, which it takes as it comes on: typing
+    // before that would go nowhere
     @MainActor
     private static func expectFocus(on pane: String, in app: XCUIApplication, _ what: String) {
         let focused = NSPredicate(format: "value CONTAINS %@ AND hasKeyboardFocus == true", "\(pane) ready")
@@ -41,8 +41,8 @@ internal final class SessionKeyboardTests: XCTestCase {
         XCTAssertEqual(app.keyboards.count, 0, "a soft keyboard came up \(when)")
     }
 
-    // opens the session named `name` again by its row in the machine's sessions: a phone goes back to them first, a tablet
-    // lists them beside the session
+    // opens the session named `name` again by its row in the machine's sessions: a phone goes back to them first, a
+    // tablet lists them beside the session
     @MainActor
     private static func reopen(_ name: String, in app: XCUIApplication) {
         let row = app.descendants(matching: .any)["session-\(name)"].firstMatch
