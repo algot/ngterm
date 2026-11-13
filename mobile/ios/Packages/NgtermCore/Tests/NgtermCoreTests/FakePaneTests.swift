@@ -64,6 +64,24 @@ internal struct FakePaneTests {
         #expect(pane.mouseTracking())
     }
 
+    @Test("each input taken goes on to its listener once kept, and a refused one doesn't")
+    internal func inputGoesToItsListener() throws {
+        let heard = Counter()
+        let pane = FakePane()
+        pane.onInput = { [weak pane] input in
+            #expect(input == .typed("ls"))
+            #expect(pane?.inputs.last == input, "kept before it is heard")
+            heard.add()
+        }
+        #expect(throws: PaneInputError.Closed) {
+            try pane.typeText(text: "ls")
+        }
+        #expect(heard.count == 0)
+        pane.frames = { _ in Data() }
+        #expect(try pane.typeText(text: "ls"))
+        #expect(heard.count == 1)
+    }
+
     @Test("input to a pane with nothing to pack is refused as closed")
     internal func inputToAClosedPaneIsRefused() {
         let pane = FakePane()
