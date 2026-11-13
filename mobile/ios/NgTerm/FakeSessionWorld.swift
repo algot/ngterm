@@ -10,11 +10,13 @@
     /// leads both panes; when asked, its origin then asks whether to deploy (``deployAsk``), and says what it does with
     /// the answer as the session's context ("Deploying to production", or "Deploy called off"); when asked, its first
     /// pane runs Claude Code (``FakeChatWorld``). Each pane's screen names it on its first line ("P1 ready"), so a test
-    /// sees which pane shows. With a companion, `split` also lists `notes`, a session of its own, and `review`, a
-    /// companion of `work`, each with one pane, listed as the core lists them: parents first, companions after them.
+    /// sees which pane shows, and echoes what it was typed after its prompt ("$ ls"), so a test sees which pane took
+    /// the typing. With a companion, `split` also lists `notes`, a session of its own, and `review`, a companion of
+    /// `work`, each with one pane, listed as the core lists them: parents first, companions after them.
     ///
-    /// A Duplicate's first copy (``copyId``) has one pane, which another device leads as it is shown, and which this
-    /// device leads once it takes control; when asked, the first Duplicate fails (``duplicateRefusal``).
+    /// The first session made there (``copyId``: a Duplicate's first copy, or New session's first session) has one
+    /// pane, `P1`, which another device leads as it is shown, and which this device leads once it takes control; when
+    /// asked, the first Duplicate fails (``duplicateRefusal``).
     internal enum FakeSessionWorld {
         /// The machine's id in the store.
         internal static let machineId = "split"
@@ -24,12 +26,10 @@
         internal static let companionId = "review"
         /// The id of the session listed with the companion, between `work` and it.
         internal static let otherId = "notes"
-        /// The id of a Duplicate's first copy, as the fake core names it.
+        /// The id of a Duplicate's first copy, or of the first session New session makes, as the fake core names it.
         internal static let copyId = "fake-1"
         /// Why the first Duplicate fails, when the launch asks for it.
         internal static let duplicateRefusal = "split could not copy work"
-        nonisolated private static let columns = 40
-        nonisolated private static let rows = 12
         private static let paneIds = ["P1", "P2"]
 
         /// The question the origin asks when the launch asks for it.
@@ -85,7 +85,8 @@
             return events
         }
 
-        // a Duplicate's copy: another device leads its pane as it is shown, until this one takes control
+        // the first session made (a Duplicate's copy, New session's): another device leads its pane as it is shown,
+        // until this one takes control
         @MainActor
         private static func seedCopy(_ core: FakeMobileCore) {
             let pane = PaneRef(machineId: machineId, sessionId: copyId, paneId: "P1")
@@ -144,15 +145,13 @@
                 FakeMobileCore.answerKey(askId: deployAsk.id, button: "deploy"): [context("Deploying to production")],
                 FakeMobileCore.answerKey(askId: deployAsk.id, button: nil): [context("Deploy called off")],
             ]
-            core.paneFactory = { _, _, paneId, _ in
-                let frames: FakePane.Frames = { since in
-                    RowBufferWriter(columns: columns, rows: rows, seq: since + 1)
-                        .text(0, "\(paneId) ready")
-                        .text(1, "$ ")
-                        .bytes()
-                }
-                return chats && paneId == FakeChatWorld.pane.paneId
+            core.paneFactory = { [weak core] _, sessionId, paneId, _ in
+                let echo = FakeEcho(PaneRef(machineId: machineId, sessionId: sessionId, paneId: paneId), core: core)
+                let frames: FakePane.Frames = { since in echo.frames(since: since) }
+                let pane = chats && paneId == FakeChatWorld.pane.paneId
                     ? agent.pane(frames: frames) : FakePane(paneId: paneId, frames: frames)
+                pane.onInput = { input in echo.take(input) }
+                return pane
             }
         }
     }

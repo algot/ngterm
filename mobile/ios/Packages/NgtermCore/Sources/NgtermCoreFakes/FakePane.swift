@@ -11,11 +11,11 @@
     /// ``asked``. As the real terminal wakes (and the core reports a dirty pane) after a resize, new colors or a
     /// selection change, those call ``onWake``. Every method may be called from any thread.
     ///
-    /// Input is kept in ``inputs``, in order, and answered as the real terminal would: ``mouse(mouse:)`` reports only
-    /// while ``tracking`` (the program asked for the mouse); ``wheel(wheel:)`` answers ``wheelOutcome``;
-    /// ``paste(text:allowUnsafe:)`` refuses text with a line break unless allowed (``PaneSendOutcome/unsafe``, as
-    /// Ghostty's paste protection does) and writes nothing for empty text; ``selectionText()`` is ``selection``. Input
-    /// to a pane with no ``frames`` throws ``PaneInputError/Closed``.
+    /// Input is kept in ``inputs``, in order, then goes to ``onInput``, and answered as the real terminal would:
+    /// ``mouse(mouse:)`` reports only while ``tracking`` (the program asked for the mouse); ``wheel(wheel:)`` answers
+    /// ``wheelOutcome``; ``paste(text:allowUnsafe:)`` refuses text with a line break unless allowed
+    /// (``PaneSendOutcome/unsafe``, as Ghostty's paste protection does) and writes nothing for empty text;
+    /// ``selectionText()`` is ``selection``. Input to a pane with no ``frames`` throws ``PaneInputError/Closed``.
     ///
     /// The chat's actions (``sendPrompt(text:)``, ``interrupt()``, ``answerApproval(approval:label:)``,
     /// ``answerQuestion(question:answers:)``) are kept in ``actions`` and answer ``outcome``, or throw ``actionError``
@@ -30,6 +30,7 @@
         private struct State {
             var frames: Frames?
             var onWake: (@Sendable () -> Void)?
+            var onInput: (@Sendable (FakeInput) -> Void)?
             var tracking = false
             var wheelOutcome = PaneWheelOutcome.scrolled
             var selection: String?
@@ -58,6 +59,12 @@
         public var onWake: (@Sendable () -> Void)? {
             get { state.withLock { $0.onWake } }
             set { state.withLock { $0.onWake = newValue } }
+        }
+
+        /// Runs with each input taken, once kept in ``inputs``: a fake world echoes it to the screen.
+        public var onInput: (@Sendable (FakeInput) -> Void)? {
+            get { state.withLock { $0.onInput } }
+            set { state.withLock { $0.onInput = newValue } }
         }
 
         /// Whether the program takes pointer events.
@@ -303,16 +310,17 @@
         }
 
         private func take(_ input: FakeInput) throws(PaneInputError) {
-            let open = state.withLock { state in
+            let (open, listener): (Bool, (@Sendable (FakeInput) -> Void)?) = state.withLock { state in
                 guard state.frames != nil else {
-                    return false
+                    return (false, nil)
                 }
                 state.inputs.append(input)
-                return true
+                return (true, state.onInput)
             }
             guard open else {
                 throw PaneInputError.Closed
             }
+            listener?(input)
         }
 
         private func selected(_ input: FakeInput) throws(PaneInputError) {
