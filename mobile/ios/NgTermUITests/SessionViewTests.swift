@@ -180,8 +180,8 @@ internal final class SessionViewTests: XCTestCase {
 
     // `split` lists work, notes and review (work's companion), the core's order: parents first, companions after.
     // Attached alone, the companion keeps "Companion of work" at the sessions' indent; with its parent attached, the
-    // column and the session moves (⌘⌥↓ and ⌘⌥↑ on a hardware keyboard) go work, review, notes, not the listing's order,
-    // each session opened (by a tap on its row or a move) taking the keyboard at once
+    // column and the session moves (⌘⌥↓ and ⌘⌥↑ on a hardware keyboard) go work, review, notes, not the listing's
+    // order, each session opened (by a tap on its row or a move) taking the keyboard at once
     @MainActor
     internal func testAnOrphanCompanionStandsAloneAndTheSessionMovesFollowTheTree() {
         let arguments = ["-ngterm-fake-session", "-ngterm-fake-companion"]

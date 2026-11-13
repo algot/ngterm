@@ -78,7 +78,8 @@ internal enum SessionShot {
                 graph: world.graph,
                 session: SessionWorld.key,
                 actions: SessionActions(close: ignore, open: { _ in ignore() }, openInNewWindow: nil),
-                keyboard: TerminalKeyboard(hardware: HardwareKeyboard(fixed: true))
+                // no hardware keyboard: nothing takes the focus, so no prompt field's caret blinks in the shot
+                keyboard: TerminalKeyboard(hardware: HardwareKeyboard(fixed: false))
             )
         }
         .ngtermTheme()
