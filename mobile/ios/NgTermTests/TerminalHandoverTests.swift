@@ -101,4 +101,16 @@ internal struct TerminalHandoverTests {
         window.addSubview(alone)
         #expect(!alone.isFirstResponder, "without a hardware keyboard the soft one waits for a tap")
     }
+
+    @Test("with a hardware keyboard, a new session's focus outlasts a layout change made before any terminal came on")
+    internal func newSessionRelaid() throws {
+        let window = try Self.window()
+        defer { window.isHidden = true }
+        let keyboard = TerminalKeyboard(hardware: HardwareKeyboard(fixed: true))
+        keyboard.handOver()
+        let selected = Self.terminal(keyboard, focused: true)
+        window.addSubview(selected)
+        #expect(selected.isFirstResponder)
+        #expect(keyboard.target === selected)
+    }
 }

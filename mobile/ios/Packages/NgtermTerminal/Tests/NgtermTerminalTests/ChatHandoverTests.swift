@@ -24,7 +24,8 @@ internal struct ChatHandoverTests {
     @Test("a session opened with a hardware keyboard attached gives its selected chat the focus, once")
     internal func newSession() {
         let keyboard = TerminalKeyboard(hardware: HardwareKeyboard(fixed: true))
-        #expect(keyboard.takeChatHandover())
+        keyboard.handOver()
+        #expect(keyboard.takeChatHandover(), "a handover with nothing holding the keyboard keeps the session's own")
         #expect(!keyboard.takeChatHandover(), "taken once")
     }
 }
