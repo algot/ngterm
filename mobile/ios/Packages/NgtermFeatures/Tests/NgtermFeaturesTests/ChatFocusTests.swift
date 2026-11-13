@@ -48,7 +48,7 @@ internal struct ChatFocusTests {
 
     @Test("a chat selected while the keyboard was in use takes it, and one the selection leaves lets it go")
     internal func handover() async throws {
-        let keyboard = TerminalKeyboard()
+        let keyboard = TerminalKeyboard(hardware: HardwareKeyboard(fixed: false))
         // another chat's field had the keyboard when the selection moved
         keyboard.chatField = AnyHashable("another chat's prompt")
         keyboard.handOver()
@@ -69,7 +69,7 @@ internal struct ChatFocusTests {
 
     @Test("a chat selected while the keyboard wasn't in use leaves it down")
     internal func noHandover() async throws {
-        let keyboard = TerminalKeyboard()
+        let keyboard = TerminalKeyboard(hardware: HardwareKeyboard(fixed: false))
         let chat = Self.chat()
         let host = UIHostingController(rootView: Self.screen(chat, keyboard: keyboard, isSelected: true))
         let made = (UIWindow.self as UIView.Type).init(frame: CGRect(origin: .zero, size: ScreenVariant.size))

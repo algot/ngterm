@@ -105,7 +105,7 @@ internal struct ChatSnapshotTests {
         ChatScreen(
             chat: chat,
             machine: "build-01",
-            keyboard: TerminalKeyboard(),
+            keyboard: TerminalKeyboard(hardware: HardwareKeyboard(fixed: false)),
             isSelected: true,
             onShowTerminal: ScreenSnapshot.ignore
         )

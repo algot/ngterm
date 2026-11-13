@@ -64,9 +64,15 @@ public final class TerminalKeyboard {
 
     /// A keyboard running `shortcuts`, the extra keys standing aside while `hardware` says a keyboard is attached (the
     /// system's by default).
+    ///
+    /// A session opened while a hardware keyboard is attached gives its selected terminal the focus as it comes on, so
+    /// typing and the chords go on there without a tap (Android's `FollowFocus`); the soft keyboard still waits for one.
     public init(shortcuts: TerminalShortcuts = TerminalShortcuts(), hardware: HardwareKeyboard? = nil) {
         self.shortcuts = shortcuts
         self.hardware = hardware ?? HardwareKeyboard()
+        if self.hardware.isAttached {
+            handingOver = .focus
+        }
         self.hardware.onChange = { [weak self] in
             self?.target?.reloadInputViews()
         }
