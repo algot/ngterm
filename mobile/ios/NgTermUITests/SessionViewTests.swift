@@ -41,12 +41,10 @@ internal final class SessionViewTests: XCTestCase {
         FakeApp.expect(add, "the machines")
     }
 
-    // on the session whose pane's screen shows `shown`, types ⌘⌥ with `key` and waits for the session whose pane's
-    // screen shows `text`; a tap on the terminal first gives it the keyboard, as a user's does (a session the moves
-    // opened has no terminal with the keyboard yet)
+    // types ⌘⌥ with `key` and waits for the session whose pane's screen shows `text`, which takes the keyboard for the
+    // next chord without a tap
     @MainActor
-    private static func moveSession(_ key: String, from shown: String, to text: String, in app: XCUIApplication) {
-        screen(showing: shown, in: app).tap()
+    private static func moveSession(_ key: String, to text: String, in app: XCUIApplication) {
         app.typeKey(key, modifierFlags: [.command, .option])
         FakeApp.expect(screen(showing: text, in: app), "the session showing \(text) after the move")
     }
@@ -182,7 +180,8 @@ internal final class SessionViewTests: XCTestCase {
 
     // `split` lists work, notes and review (work's companion), the core's order: parents first, companions after.
     // Attached alone, the companion keeps "Companion of work" at the sessions' indent; with its parent attached, the
-    // column and the session moves (⌘⌥↓ and ⌘⌥↑ on a hardware keyboard) go work, review, notes, not the listing's order
+    // column and the session moves (⌘⌥↓ and ⌘⌥↑ on a hardware keyboard) go work, review, notes, not the listing's order,
+    // each session opened (by a tap on its row or a move) taking the keyboard at once
     @MainActor
     internal func testAnOrphanCompanionStandsAloneAndTheSessionMovesFollowTheTree() {
         let arguments = ["-ngterm-fake-session", "-ngterm-fake-companion"]
@@ -220,10 +219,10 @@ internal final class SessionViewTests: XCTestCase {
         rows[0].tap()
         FakeApp.expect(Self.screen(showing: "P1 ready", in: app), "work's first pane")
         let down = XCUIKeyboardKey.downArrow.rawValue
-        Self.moveSession(down, from: "P1 ready", to: "R1 ready", in: app)
-        Self.moveSession(down, from: "R1 ready", to: "N1 ready", in: app)
-        Self.moveSession(down, from: "N1 ready", to: "P1 ready", in: app)
-        Self.moveSession(XCUIKeyboardKey.upArrow.rawValue, from: "P1 ready", to: "N1 ready", in: app)
+        Self.moveSession(down, to: "R1 ready", in: app)
+        Self.moveSession(down, to: "N1 ready", in: app)
+        Self.moveSession(down, to: "P1 ready", in: app)
+        Self.moveSession(XCUIKeyboardKey.upArrow.rawValue, to: "N1 ready", in: app)
     }
 
     @MainActor

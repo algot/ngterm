@@ -6,7 +6,8 @@ import UIKit
 
 /// The keyboard's focus following the session view's selection, in a window of the app's scene (the first responder
 /// needs one): the terminal selected next takes the focus the last one had, with its soft keyboard, whether it is on
-/// screen already (a split) or comes on as the other goes (a phone's one pane).
+/// screen already (a split) or comes on as the other goes (a phone's one pane); with a hardware keyboard, a session
+/// opened anew gives its selected terminal the focus.
 @MainActor
 @Suite("the focus handed over between panes")
 internal struct TerminalHandoverTests {
@@ -79,5 +80,25 @@ internal struct TerminalHandoverTests {
         let third = Self.terminal(keyboard, focused: true)
         window.addSubview(third)
         #expect(!third.isFirstResponder)
+    }
+
+    @Test("with a hardware keyboard, a new session's selected terminal takes the focus as it comes on; without, none")
+    internal func newSession() throws {
+        let window = try Self.window()
+        defer { window.isHidden = true }
+        let attached = TerminalKeyboard(hardware: HardwareKeyboard(fixed: true))
+        let other = Self.terminal(attached, focused: false)
+        window.addSubview(other)
+        #expect(!other.isFirstResponder, "a pane not selected takes nothing")
+        let selected = Self.terminal(attached, focused: true)
+        window.addSubview(selected)
+        #expect(selected.isFirstResponder)
+        #expect(!selected.softKeyboardWanted)
+        #expect(attached.target === selected)
+
+        let soft = TerminalKeyboard(hardware: HardwareKeyboard(fixed: false))
+        let alone = Self.terminal(soft, focused: true)
+        window.addSubview(alone)
+        #expect(!alone.isFirstResponder, "without a hardware keyboard the soft one waits for a tap")
     }
 }
