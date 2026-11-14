@@ -39,6 +39,8 @@ use ngterm_core::remote::tree::{
 };
 use ngterm_proto::{ControlRemoteSession, ControlRemoteTree, RemotePeer};
 
+use crate::applog::tag;
+use crate::note;
 use crate::transport::{ChannelEnd, ChannelOutput, Connection};
 
 /// What replaces desktop's CLI advice in a created-but-unattached failure ([`phone_wording`]).
@@ -241,6 +243,13 @@ async fn run_tree<C: Connection>(
     pin: Option<RemotePeer>,
 ) -> Result<RemoteCommandResult, String> {
     let shell = connection.origin_shell();
+    note!(
+        INFO,
+        tag::SESSIONS,
+        "listing asked",
+        cli = asked_cli(shell, pin),
+        shell = shell_class(shell)
+    );
     let first = run(connection, &tree_tail_for(shell, pin), deadline).await?;
     if shell == OriginShell::Windows || !origin::rejected_by_windows_shell(&first) {
         return Ok(first);
@@ -250,7 +259,45 @@ async fn run_tree<C: Connection>(
         return Ok(first);
     }
     connection.set_origin_shell(OriginShell::Windows);
+    note!(INFO, tag::SESSIONS, "listing asked again: the machine runs Windows");
     run(connection, &tree_tail_for(OriginShell::Windows, pin), deadline).await
+}
+
+/// Which CLI a listing asks, for the log: both apps' when no app is pinned.
+fn asked_cli(shell: OriginShell, pin: Option<RemotePeer>) -> &'static str {
+    match (shell, pin) {
+        (OriginShell::Windows, _) | (OriginShell::Posix, Some(RemotePeer::Ngterm)) => "ngtermctl",
+        (OriginShell::Posix, Some(RemotePeer::Agterm)) => "agtermctl",
+        (OriginShell::Posix, None) => "ngtermctl-and-agtermctl",
+    }
+}
+
+fn shell_class(shell: OriginShell) -> &'static str {
+    match shell {
+        OriginShell::Posix => "posix",
+        OriginShell::Windows => "windows",
+    }
+}
+
+/// The app's name, for the log.
+pub(crate) fn peer_class(peer: RemotePeer) -> &'static str {
+    match peer {
+        RemotePeer::Ngterm => "ngterm",
+        RemotePeer::Agterm => "agterm",
+    }
+}
+
+/// Why a listing's answer gave no sessions, for the log: never what the machine printed.
+fn failure_class(result: &RemoteCommandResult) -> &'static str {
+    if result.status == 0 {
+        "unreadable-answer"
+    } else if result.stderr == NO_ANSWER_IN_TIME {
+        "no-answer-in-time"
+    } else if result.status == -1 {
+        "lost"
+    } else {
+        "exit-status"
+    }
 }
 
 /// The form of the commands for `app` on the connection's machine, the app whose listing shows the session they are
@@ -290,12 +337,41 @@ pub async fn read_tree<C: Connection>(
     host: &str,
     deadline: Duration,
 ) -> Result<ControlRemoteTree, String> {
-    let result = run_tree(connection, deadline, None).await?;
-    let tree = read_remote_tree(&result, host)?;
+    let result = run_tree(connection, deadline, None).await.inspect_err(|_| {
+        note!(WARN, tag::SESSIONS, "listing failed", class = "no-channel", host = host);
+    })?;
+    let tree = read_remote_tree(&result, host).inspect_err(|_| {
+        note!(
+            WARN,
+            tag::SESSIONS,
+            "listing failed",
+            class = failure_class(&result),
+            status = result.status,
+            stdout_bytes = result.stdout.len(),
+            stderr_bytes = result.stderr.len(),
+            host = host
+        );
+    })?;
     // an ngterm that did not answer this once still has the machine, once a listing has told it
     if tree.skipped != Some(RemotePeer::Ngterm) || !connection.learned().peer_known {
         connection.set_origin_peer(tree.endpoint.peer());
     }
+    let sessions: usize = tree.apps().map(|app| app.sessions.len()).sum();
+    note!(
+        INFO,
+        tag::SESSIONS,
+        "listing answered",
+        answer = if sessions == 0 { "empty" } else { "sessions" },
+        peer = peer_class(tree.endpoint.peer()),
+        beside = tree
+            .beside
+            .as_deref()
+            .map_or("none", |beside| peer_class(beside.endpoint.peer())),
+        skipped = tree.skipped.map_or("none", peer_class),
+        sessions = sessions,
+        pickable = listed_sessions(&tree).len(),
+        host = host
+    );
     Ok(tree)
 }
 

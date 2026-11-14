@@ -12,6 +12,7 @@
 //! [`Pane::answer_question`]) are the exception: each takes the lead, waits for the screen to settle and checks it
 //! before any key goes, so it runs on the actor ([`crate::chat::input`]) and the call waits for its outcome.
 
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use tokio::sync::{mpsc, oneshot};
@@ -23,9 +24,14 @@ use ngterm_term::{
 };
 
 use crate::actor::Command;
-use crate::chat::input::{Action, AgentInputOutcome, QuestionAnswer};
+use crate::applog::tag;
+use crate::chat::input::{
+    ACTION_IN_FLIGHT, Action, AgentInputOutcome, BAD_ANSWER, NO_AGENT_TO_DRIVE, NOTHING_TO_SEND, QuestionAnswer,
+    UNSAFE_PASTE,
+};
 use crate::chat::matchers::left_arrow_backgrounds;
 use crate::chat::{ChatApproval, ChatQuestion};
+use crate::note;
 use crate::pane::PaneRef;
 
 #[cfg(test)]
@@ -225,6 +231,33 @@ pub enum PaneInputError {
     Refused { reason: String },
 }
 
+impl PaneInputError {
+    /// The error's name, for the log.
+    #[must_use]
+    pub fn class(&self) -> &'static str {
+        match self {
+            Self::Closed => "closed",
+            Self::Backpressure => "backpressure",
+            Self::Refused { .. } => "refused",
+        }
+    }
+
+    /// Which of the chat's own refusals this is, for the log; `None` for any other error, whose wording is the
+    /// terminal's.
+    #[must_use]
+    pub fn why(&self) -> Option<&'static str> {
+        let Self::Refused { reason } = self else { return None };
+        match reason.as_str() {
+            NOTHING_TO_SEND => Some("nothing-to-send"),
+            NO_AGENT_TO_DRIVE => Some("no-agent-to-drive"),
+            ACTION_IN_FLIGHT => Some("action-in-flight"),
+            BAD_ANSWER => Some("answer-does-not-fit"),
+            UNSAFE_PASTE => Some("unsafe-paste"),
+            _ => None,
+        }
+    }
+}
+
 impl From<ngterm_term::PaneError> for PaneInputError {
     fn from(error: ngterm_term::PaneError) -> Self {
         match error {
@@ -252,6 +285,45 @@ pub(crate) struct PaneSlot {
     colors: Mutex<Option<ThemeColors>>,
     /// Tells the actor the view gave a grid while the slot held no terminal: a pane waiting for one attaches.
     sized: Wake,
+    /// How the last input the view gave was delivered ([`Delivery`]), so the log says each change once.
+    delivery: AtomicU8,
+}
+
+/// What became of input the view gave a pane's terminal, for the log: that it was sent or dropped and why, never
+/// what it was.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum Delivery {
+    Sent = 1,
+    Closed,
+    Backpressure,
+    Refused,
+    /// A Left arrow kept from Claude Code's empty prompt.
+    HeldLeftArrow,
+    /// A paste that could run a command, not confirmed.
+    UnsafePaste,
+}
+
+impl Delivery {
+    fn of<T>(result: &Result<T, PaneInputError>) -> Self {
+        match result {
+            Ok(_) => Self::Sent,
+            Err(PaneInputError::Closed) => Self::Closed,
+            Err(PaneInputError::Backpressure) => Self::Backpressure,
+            Err(PaneInputError::Refused { .. }) => Self::Refused,
+        }
+    }
+
+    fn class(self) -> &'static str {
+        match self {
+            Self::Sent => "sent",
+            Self::Closed => "dropped-pane-closed",
+            Self::Backpressure => "dropped-input-queue-full",
+            Self::Refused => "dropped-terminal-refused",
+            Self::HeldLeftArrow => "held-left-arrow-at-empty-prompt",
+            Self::UnsafePaste => "held-unsafe-paste",
+        }
+    }
 }
 
 impl std::fmt::Debug for PaneSlot {
@@ -273,6 +345,22 @@ impl PaneSlot {
             size: Mutex::new(size),
             colors: Mutex::new(None),
             sized,
+            delivery: AtomicU8::new(0),
+        }
+    }
+
+    /// Logs how input of `kind` was delivered when that differs from the input before it: typing writes one line
+    /// when it starts to go and one when it stops, not one per key.
+    fn delivered(&self, pane: &str, kind: &'static str, delivery: Delivery) {
+        if self.delivery.swap(delivery as u8, Ordering::AcqRel) != delivery as u8 {
+            note!(
+                INFO,
+                tag::INPUT,
+                "input",
+                delivery = delivery.class(),
+                kind = kind,
+                pane = pane
+            );
         }
     }
 
@@ -371,7 +459,16 @@ impl Pane {
     }
 
     async fn act(&self, action: Action) -> Result<AgentInputOutcome, PaneInputError> {
-        action.check()?;
+        action.check().inspect_err(|error| {
+            note!(
+                INFO,
+                tag::CHAT,
+                "action refused before it was sent",
+                action = action.kind(),
+                why = error.why(),
+                pane = self.id.as_str()
+            );
+        })?;
         self.ask(|pane, slot, reply| Command::PaneInput {
             pane,
             slot,
@@ -379,6 +476,13 @@ impl Pane {
             reply,
         })
         .await
+    }
+
+    /// The terminal input of `kind` goes to; with none, the input is dropped, which the log says.
+    fn current(&self, kind: &'static str) -> Result<Arc<ngterm_term::Pane>, PaneInputError> {
+        self.slot.current().inspect_err(|_| {
+            self.slot.delivered(&self.id, kind, Delivery::Closed);
+        })
     }
 
     /// The terminal behind the handle now (the tests read its screen).
@@ -466,7 +570,7 @@ impl Pane {
         reason = "UniFFI passes the foreign side's arguments owned"
     )]
     pub fn key(&self, key: PaneKey) -> Result<bool, PaneInputError> {
-        let terminal = self.slot.current()?;
+        let terminal = self.current("key")?;
         let mut input = KeyInput::press(
             PhysicalKey::new(&key.key).unwrap_or(PhysicalKey::UNIDENTIFIED),
             mods(key.mods),
@@ -480,9 +584,15 @@ impl Pane {
             input.unshifted = Some(unshifted);
         }
         if backgrounds_claude(&terminal, &input) {
+            self.slot.delivered(&self.id, "key", Delivery::HeldLeftArrow);
             return Ok(false);
         }
-        Ok(terminal.key(&input)?)
+        let sent = terminal.key(&input).map_err(PaneInputError::from);
+        // a key that sends nothing (a lone modifier, a release) says nothing of delivery
+        if !matches!(sent, Ok(false)) {
+            self.slot.delivered(&self.id, "key", Delivery::of(&sent));
+        }
+        sent
     }
 
     /// Types `text` as the keyboard would (an input method's commit, the extra-keys row); whether anything was sent.
@@ -495,7 +605,11 @@ impl Pane {
         reason = "UniFFI passes the foreign side's arguments owned"
     )]
     pub fn type_text(&self, text: String) -> Result<bool, PaneInputError> {
-        Ok(self.slot.current()?.type_text(&text)?)
+        let sent = self.current("text")?.type_text(&text).map_err(PaneInputError::from);
+        if !matches!(sent, Ok(false)) {
+            self.slot.delivered(&self.id, "text", Delivery::of(&sent));
+        }
+        sent
     }
 
     /// Reports a pointer event to the program when it asked for the mouse ([`Pane::mouse_tracking`]); whether
@@ -561,9 +675,16 @@ impl Pane {
         reason = "UniFFI passes the foreign side's arguments owned"
     )]
     pub fn paste(&self, text: String, allow_unsafe: bool) -> Result<PaneSendOutcome, PaneInputError> {
-        let terminal = self.slot.current()?;
-        let pasted = terminal.paste(&text, PasteSource::Clipboard, ClipboardLocation::Standard, allow_unsafe)?;
-        Ok(match pasted {
+        let terminal = self.current("paste")?;
+        let pasted = terminal
+            .paste(&text, PasteSource::Clipboard, ClipboardLocation::Standard, allow_unsafe)
+            .map_err(PaneInputError::from);
+        match &pasted {
+            Ok(Paste::Empty) => {}
+            Ok(Paste::Unsafe) => self.slot.delivered(&self.id, "paste", Delivery::UnsafePaste),
+            other => self.slot.delivered(&self.id, "paste", Delivery::of(other)),
+        }
+        Ok(match pasted? {
             Paste::Written => PaneSendOutcome::Written,
             Paste::Empty => PaneSendOutcome::Empty,
             Paste::Unsafe => PaneSendOutcome::Unsafe,

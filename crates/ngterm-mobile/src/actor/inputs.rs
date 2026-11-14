@@ -3,6 +3,7 @@
 //! read from the screen as it stands. The screen is always the program's own ([`readable`]), never what the terminal
 //! view shows of it.
 
+use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -12,11 +13,13 @@ use tokio::time::Instant;
 
 use super::{Command, State};
 use crate::api::{PaneInputError, PaneSlot};
+use crate::applog::tag;
 use crate::chat::ChatKey;
 use crate::chat::input::{
     ACTION_IN_FLIGHT, Action, AgentInputOutcome, InputTiming, NO_AGENT_TO_DRIVE, Next, Plan, approval_labels,
 };
 use crate::chat::matchers::Agent;
+use crate::note;
 use crate::pane::{PaneRef, Standing};
 use crate::transport::Transport;
 
@@ -32,7 +35,7 @@ pub(super) fn command<T: Transport>(state: &Rc<State<T>>, command: Command) {
             let state = Rc::clone(state);
             tokio::task::spawn_local(async move {
                 // A caller that stopped waiting has nothing to be told; the action still ran its course.
-                let _ = reply.send(act(&state, &pane, slot, action).await);
+                let _ = reply.send(noted(&state, &pane, slot, action).await);
             });
         }
         Command::ApprovalLabels { pane, slot, reply } => {
@@ -139,6 +142,35 @@ impl<T: Transport> Drop for Acting<T> {
     }
 }
 
+/// Runs `action` ([`act`]) and logs how it ended and the last screen it read: why a message was sent, held or refused,
+/// never the message.
+async fn noted<T: Transport>(
+    state: &Rc<State<T>>,
+    reference: &PaneRef,
+    slot: Arc<PaneSlot>,
+    action: Action,
+) -> Result<AgentInputOutcome, PaneInputError> {
+    let kind = action.kind();
+    let seen = Cell::new("not-read");
+    let outcome = act(state, reference, slot, action, &seen).await;
+    let (ended, why) = match &outcome {
+        Ok(outcome) => (outcome.class(), None),
+        Err(error) => (error.class(), error.why()),
+    };
+    note!(
+        INFO,
+        tag::CHAT,
+        "action",
+        action = kind,
+        outcome = ended,
+        why = why,
+        screen = seen.get(),
+        session = reference.session_id.as_str(),
+        pane = reference.pane_id.as_str()
+    );
+    outcome
+}
+
 /// Runs `action` on the pane: lead, then settle, look and send until its plan is done; after keys went, settle and
 /// look until the screen shows what they did or [`InputTiming::confirm`] has gone by.
 async fn act<T: Transport>(
@@ -146,6 +178,7 @@ async fn act<T: Transport>(
     reference: &PaneRef,
     slot: Arc<PaneSlot>,
     action: Action,
+    seen: &Cell<&'static str>,
 ) -> Result<AgentInputOutcome, PaneInputError> {
     let (on, agent) = target(state, reference, slot)?;
     standing(state, &on).ok_or(PaneInputError::Closed)?;
@@ -160,7 +193,7 @@ async fn act<T: Transport>(
     let mut busy = 0;
     loop {
         let step = match settle(state, &on, attach, timing).await {
-            Ok(true) => look(state, &on, attach, agent, (&mut plan, &mut sent)),
+            Ok(true) => look(state, &on, attach, agent, (&mut plan, &mut sent), seen),
             Ok(false) => Ok(Looked::Done(plan.stopped(AgentInputOutcome::LeadRefused))),
             Err(error) => Err(error),
         };
@@ -318,6 +351,7 @@ fn look<T: Transport>(
     attach: u64,
     agent: Agent,
     (plan, sent): (&mut Plan, &mut Option<Went>),
+    seen: &Cell<&'static str>,
 ) -> Result<Looked, PaneInputError> {
     drain(state, &on.key);
     let now = standing(state, on).ok_or(PaneInputError::Closed)?;
@@ -325,6 +359,7 @@ fn look<T: Transport>(
         return Ok(Looked::Done(plan.stopped(AgentInputOutcome::LeadRefused)));
     };
     let Some(screen) = readable(terminal) else {
+        seen.set("unreadable");
         return Ok(Looked::Busy);
     };
     let generation = screen.generation;
@@ -332,7 +367,9 @@ fn look<T: Transport>(
         return Ok(Looked::Pending);
     }
     let before = plan.clone();
-    match plan.next(&agent.read(&screen.frame)) {
+    let read = agent.read(&screen.frame);
+    seen.set(read.class());
+    match plan.next(&read) {
         Next::Done(outcome) => Ok(Looked::Done(outcome)),
         Next::Wait => Ok(Looked::Pending),
         Next::Send { keys, look } => {

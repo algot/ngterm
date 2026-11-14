@@ -57,6 +57,19 @@ pub enum TransportError {
     Closed,
 }
 
+impl TransportError {
+    /// The error's name, for the log: its wording may quote the machine.
+    #[must_use]
+    pub fn class(&self) -> &'static str {
+        match self {
+            Self::Unreachable(_) => "unreachable",
+            Self::Refused(_) => "refused",
+            Self::Rejected(_) => "rejected",
+            Self::Closed => "closed",
+        }
+    }
+}
+
 /// What a connection has learned of its machine.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Learned {

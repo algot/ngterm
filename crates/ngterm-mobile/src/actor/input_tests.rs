@@ -22,6 +22,7 @@ use super::pane_tests::{
     Fixture, MACHINE, PANE, SESSION, contains, inputs_until, lead_of, listing, pane_uuid, role_title, send,
 };
 use crate::api::{MobileEvent, Pane, PaneInputError, PaneSize, PaneWheel, PaneWheelOutcome};
+use crate::applog::tests::{Captured, MARKER};
 use crate::chat::input::{ACTION_IN_FLIGHT, AgentInputOutcome, InputTiming, NO_AGENT_TO_DRIVE, QuestionAnswer};
 use crate::chat::matchers::{Agent, Screen};
 use crate::chat::tests::matchers::{Capture, approval_of, asked, draft_drawn, into_prompt};
@@ -993,4 +994,68 @@ fn a_grid_measured_again_or_new_cells_alone_leave_an_idle_screen_readable() {
         Ok(AgentInputOutcome::NotOnScreen)
     );
     assert!(typed(&mut agents.first.peer).is_empty());
+}
+
+#[test]
+fn an_action_and_typing_log_how_they_ended_and_the_screen_read_never_the_text() {
+    let captured = Captured::new();
+    captured.run(|| {
+        let mut agents = Agents::start_timed("codex", "codex-44x36", expiring());
+        agents.first_is("leader");
+        // a draft at the prompt holds the message: the log says why, and neither the draft nor the message
+        agents.show(&agents.first.peer, "idle");
+        agents.show_typed(&agents.first.peer, Agent::Codex, "idle", &format!("draft {MARKER} "));
+        assert_eq!(
+            block_on(agents.pane.send_prompt(format!("typed {MARKER}"))),
+            Ok(AgentInputOutcome::NotOnScreen)
+        );
+        assert!(block_on(agents.pane.send_prompt(String::new())).is_err());
+        // the prompt cleared: the message goes, its Enter waiting for a paste the screen never shows
+        agents.show_in_prompt(
+            &agents.first.peer,
+            Agent::Codex,
+            "idle",
+            "2",
+            "Ask Codex to do anything",
+        );
+        assert_eq!(
+            block_on(agents.pane.send_prompt(format!("typed {MARKER}"))),
+            Ok(AgentInputOutcome::Unconfirmed)
+        );
+
+        // typing at the terminal: one line when it starts to go, one when the pane is gone
+        for _ in 0..3 {
+            assert_eq!(agents.pane.type_text(format!("typed {MARKER}")), Ok(true));
+        }
+        agents.pane.paste(format!("pasted {MARKER}"), true).unwrap();
+        agents
+            .fixture
+            .core
+            .hide_pane(MACHINE.to_owned(), SESSION.to_owned(), PANE.to_owned())
+            .unwrap();
+        while agents.pane.type_text(format!("typed {MARKER}")) != Err(PaneInputError::Closed) {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(agents.pane.paste(MARKER.to_owned(), true), Err(PaneInputError::Closed));
+    });
+
+    let text = captured.text();
+    for wanted in [
+        format!(
+            "I chat: action action=prompt outcome=not-on-screen screen=prompt-idle-with-draft session={SESSION} \
+             pane={PANE}"
+        ),
+        format!("I chat: action refused before it was sent action=prompt why=nothing-to-send pane={PANE}"),
+        format!("I chat: action action=prompt outcome=unconfirmed screen=prompt-idle session={SESSION} pane={PANE}"),
+        format!("I input: input delivery=sent kind=text pane={PANE}"),
+        format!("I input: input delivery=dropped-pane-closed kind=text pane={PANE}"),
+    ] {
+        assert!(text.contains(&wanted), "no line {wanted:?} in:\n{text}");
+    }
+    assert_eq!(
+        text.matches("I input: ").count(),
+        2,
+        "a line per change, not per key:\n{text}"
+    );
+    captured.assert_clean();
 }

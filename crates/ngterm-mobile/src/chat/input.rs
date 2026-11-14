@@ -102,6 +102,20 @@ pub enum AgentInputOutcome {
     Unconfirmed,
 }
 
+impl AgentInputOutcome {
+    /// The outcome's name, for the log.
+    #[must_use]
+    pub fn class(self) -> &'static str {
+        match self {
+            Self::Sent => "sent",
+            Self::NotOnScreen => "not-on-screen",
+            Self::DialogOpen => "dialog-open",
+            Self::LeadRefused => "lead-refused",
+            Self::Unconfirmed => "unconfirmed",
+        }
+    }
+}
+
 /// One question's answer: the option labels picked (one for a single-select question), and the text typed into its
 /// "Type something." option.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -148,6 +162,16 @@ pub(crate) enum Action {
 }
 
 impl Action {
+    /// The action's name, for the log.
+    pub(crate) fn kind(&self) -> &'static str {
+        match self {
+            Self::Prompt(_) => "prompt",
+            Self::Interrupt => "interrupt",
+            Self::Approval(..) => "approval",
+            Self::Question(..) => "question",
+        }
+    }
+
     /// Refuses an action that can't be sent whatever the screen shows.
     ///
     /// # Errors

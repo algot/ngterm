@@ -37,6 +37,8 @@ mod clipboard_tests;
 #[cfg(test)]
 mod input_tests;
 #[cfg(test)]
+mod log_tests;
+#[cfg(test)]
 mod pane_tests;
 #[cfg(test)]
 mod presentation_tests;
@@ -64,8 +66,10 @@ use crate::api::PaneInputError;
 use crate::api::{
     EventSink, Machine, MachineState, MobileError, MobileEvent, Pane, PaneSize, PaneSlot, UploadProgress,
 };
+use crate::applog::{self, tag};
 use crate::chat::input::{Action, AgentInputOutcome, InputTiming};
 use crate::chat::{AgentCommand, ChatEvent, ChatKey, Chats, UploadCancel};
+use crate::note;
 use crate::pane::{self, ClipboardReply, ClipboardWriteStatus, GoneCheck, Note, PaneRef, Panes, Target};
 use crate::presentation::{self, AskReply, ChannelLinks, LinkEvent, Presentations, Reporter};
 use crate::reconnect::Retry;
@@ -210,9 +214,11 @@ impl Actor {
             commands: commands.downgrade(),
             timing,
         };
+        let log = applog::inherited();
         let thread = thread::Builder::new()
             .name(THREAD_NAME.to_owned())
             .spawn(move || {
+                let _log = log.as_ref().map(tracing::dispatcher::set_default);
                 let local = LocalSet::new();
                 local.block_on(&runtime, run(transport, sink, queue, wiring));
             })
@@ -438,7 +444,10 @@ async fn run<T: Transport>(
     while let Some(command) = queue.recv().await {
         match command {
             Command::Connect { machine, reply } => connect(&state, machine, reply),
-            Command::Disconnect { machine_id } => disconnect(&state, &machine_id),
+            Command::Disconnect { machine_id } => {
+                note!(INFO, tag::LINK, "disconnect asked", machine = machine_id.as_str());
+                disconnect(&state, &machine_id);
+            }
             Command::UseKey { machine_id, key_id } => use_key(&state, &machine_id, &key_id),
             Command::AnswerHostKey {
                 machine_id,
@@ -496,31 +505,58 @@ fn session_command<T: Transport>(state: &Rc<State<T>>, command: Command) {
             machine_id,
             name,
             reply,
-        } => spawn_on_machine(state, machine_id, reply, |state, link, id| {
-            create_session(state, link, id, name)
+        } => spawn_on_machine(state, machine_id, reply, |state, link, id| async move {
+            let created = create_session(state, link, id, name).await;
+            note!(INFO, tag::SESSIONS, "new session", result = result_class(&created));
+            created
         }),
         Command::DuplicateSession {
             machine_id,
             session_id,
             reply,
-        } => spawn_on_machine(state, machine_id, reply, |state, link, id| {
-            duplicate_session(state, link, id, session_id)
+        } => spawn_on_machine(state, machine_id, reply, |state, link, id| async move {
+            let created = duplicate_session(state, link, id, session_id).await;
+            note!(
+                INFO,
+                tag::SESSIONS,
+                "duplicate session",
+                result = result_class(&created)
+            );
+            created
         }),
         Command::EndSession {
             machine_id,
             session_id,
             reply,
-        } => spawn_on_machine(state, machine_id, reply, |state, link, id| {
-            end_session(state, link, id, session_id)
+        } => spawn_on_machine(state, machine_id, reply, |state, link, id| async move {
+            let ended = end_session(state, link, id, session_id).await;
+            note!(INFO, tag::SESSIONS, "end session", result = result_class(&ended));
+            ended
         }),
         Command::AttachSession {
             machine_id,
             session_id,
             reply,
         } => {
-            let _ = reply.send(attach_session(state, &machine_id, &session_id));
+            let attached = attach_session(state, &machine_id, &session_id);
+            note!(
+                INFO,
+                tag::STREAM,
+                "attach asked",
+                result = result_class(&attached),
+                machine = machine_id.as_str(),
+                session = session_id.as_str()
+            );
+            let _ = reply.send(attached);
         }
         Command::DetachSession { machine_id, session_id } => {
+            note!(
+                INFO,
+                tag::STREAM,
+                "detach asked",
+                machine = machine_id.as_str(),
+                session = session_id.as_str()
+            );
             state.presentations.borrow_mut().detach(&machine_id, &session_id);
             state.chats.borrow_mut().close_session(&machine_id, &session_id);
             let events = state.panes.borrow_mut().hide_session(&machine_id, &session_id);
@@ -536,6 +572,16 @@ fn connect<T: Transport>(state: &Rc<State<T>>, machine: Machine, reply: Reply) {
     // A connect of the machine as edited replaces whatever it had (a connection, a connect or retry in flight, a
     // suspension), and its sessions' streams with it: the new connection reports its own state. One only renamed
     // keeps it all and takes the new label.
+    note!(
+        INFO,
+        tag::LINK,
+        "connect asked",
+        machine = machine.id.as_str(),
+        label = machine.label.as_str(),
+        user = machine.user.as_str(),
+        host = machine.host.as_str(),
+        port = machine.port
+    );
     match known(state, &machine.id) {
         Some(known) if !known.reached_as(&machine) => disconnect(state, &machine.id),
         Some(known) if known.label != machine.label => relabel(state, &machine.id, &machine.label),
@@ -678,6 +724,14 @@ async fn reach<T: Transport>(state: Rc<State<T>>, mut machine: Machine, generati
         }
         Err(error) => {
             let reason = error.to_string();
+            note!(
+                WARN,
+                tag::LINK,
+                "connect failed",
+                machine = machine.id.as_str(),
+                class = error.class(),
+                reconnect = attempt.retry.is_some()
+            );
             // A refusal ends a reconnect too: retrying won't change the key, or the user's or the machine's answer.
             match attempt.retry.filter(|_| !matches!(error, TransportError::Refused(_))) {
                 Some(retry) => start_attempt(&state, machine, Vec::new(), Some(retry.failed())),
@@ -734,6 +788,7 @@ async fn watch<T: Transport>(state: Rc<State<T>>, machine_id: String, connection
     let Some(link) = state.connections.borrow_mut().remove(&machine_id) else {
         return;
     };
+    note!(WARN, tag::LINK, "connection lost", machine = machine_id.as_str());
     state
         .origin_forms
         .borrow_mut()
@@ -763,6 +818,7 @@ fn network_changed<T: Transport>(state: &Rc<State<T>>) {
         .map(|(id, _)| id.clone())
         .collect();
     waiting.sort();
+    note!(INFO, tag::LINK, "network changed", retried = waiting.len());
     for machine_id in waiting {
         retry_at_once(state, &machine_id);
     }
@@ -779,6 +835,7 @@ fn network_changed<T: Transport>(state: &Rc<State<T>>) {
 async fn suspend<T: Transport>(state: &State<T>) {
     let mut connected: Vec<String> = state.connections.borrow().keys().cloned().collect();
     connected.sort();
+    note!(INFO, tag::LINK, "suspend", connected = connected.len());
     let mut tasks = Vec::new();
     for machine_id in connected {
         tasks.extend(state.presentations.borrow_mut().stop_machine(&machine_id));
@@ -828,6 +885,7 @@ fn resume<T: Transport>(state: &Rc<State<T>>) {
         .into_values()
         .collect();
     machines.sort_by(|left, right| left.machine.id.cmp(&right.machine.id));
+    note!(INFO, tag::LINK, "resume", machines = machines.len());
     for set_aside in machines {
         let retry = set_aside.retry();
         start_attempt(state, set_aside.machine, Vec::new(), retry);
@@ -909,6 +967,11 @@ fn shown_name(machine: &Machine) -> String {
     } else {
         label.to_owned()
     }
+}
+
+/// How a call ended, for the log: `ok`, or the error's class.
+pub(crate) fn result_class<R>(result: &Result<R, MobileError>) -> &'static str {
+    result.as_ref().map_or_else(MobileError::class, |_| "ok")
 }
 
 fn remote(reason: String) -> MobileError {
@@ -1107,9 +1170,21 @@ fn pane_command<T: Transport>(state: &Rc<State<T>>, command: Command) {
                 session_id,
                 pane_id,
             };
-            let _ = reply.send(show_pane(state, &pane, size));
+            let shown = show_pane(state, &pane, size);
+            note!(
+                INFO,
+                tag::PANE,
+                "show asked",
+                result = result_class(&shown),
+                cols = size.cols,
+                rows = size.rows,
+                session = pane.session_id.as_str(),
+                pane = pane.pane_id.as_str()
+            );
+            let _ = reply.send(shown);
         }
         Command::HidePane(pane) => {
+            note!(INFO, tag::PANE, "hide asked", pane = pane.pane_id.as_str());
             let Some(id) = pane_uuid(&pane) else { return };
             if let Ok(key) = ChatKey::of(&pane) {
                 state.chats.borrow_mut().close(&key);
@@ -1118,6 +1193,13 @@ fn pane_command<T: Transport>(state: &Rc<State<T>>, command: Command) {
             state.emit_all(events);
         }
         Command::TakeLead(pane) => {
+            note!(
+                INFO,
+                tag::PANE,
+                "take control asked",
+                session = pane.session_id.as_str(),
+                pane = pane.pane_id.as_str()
+            );
             let Some(id) = pane_uuid(&pane) else { return };
             let events = state
                 .panes

@@ -20,6 +20,7 @@ pub use self::pane::{
 };
 
 use crate::actor::{Actor, Command};
+use crate::applog::LoggedSink;
 use crate::chat::input::InputTiming;
 use crate::chat::{AgentCommand, ChatEvent, ChatState, UploadCancel};
 use crate::keys::{self, ExportProtection, KeyError, KeyPair};
@@ -270,6 +271,21 @@ pub enum MobileError {
     NotListed { session_id: String },
 }
 
+impl MobileError {
+    /// The error's name, for the log: its wording may quote the machine.
+    #[must_use]
+    pub fn class(&self) -> &'static str {
+        match self {
+            Self::Unreachable { .. } => "unreachable",
+            Self::Cancelled => "cancelled",
+            Self::Stopped => "stopped",
+            Self::NotConnected { .. } => "not-connected",
+            Self::Remote { .. } => "remote",
+            Self::NotListed { .. } => "not-listed",
+        }
+    }
+}
+
 /// Why a [`KeyVault`] could not hand over a key.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Error)]
 pub enum VaultError {
@@ -280,6 +296,17 @@ pub enum VaultError {
     /// failed).
     #[error("{reason}")]
     Unavailable { reason: String },
+}
+
+impl VaultError {
+    /// The error's name, for the log.
+    #[must_use]
+    pub fn class(&self) -> &'static str {
+        match self {
+            Self::Missing { .. } => "missing",
+            Self::Unavailable { .. } => "unavailable",
+        }
+    }
 }
 
 impl From<uniffi::UnexpectedUniFFICallbackError> for VaultError {
@@ -345,8 +372,11 @@ impl MobileCore {
         vault: Arc<dyn KeyVault>,
         hosts: Arc<dyn HostKeyStore>,
     ) -> Result<Arc<Self>, MobileError> {
+        let sink = LoggedSink::wrap(sink);
         let transport = RusshTransport::new(vault, hosts, Arc::clone(&sink));
-        Self::with_transport(transport, sink)
+        Ok(Arc::new(Self {
+            actor: Actor::spawn(transport, sink, InputTiming::default())?,
+        }))
     }
 }
 
@@ -373,7 +403,7 @@ impl MobileCore {
         T: Transport + Send,
     {
         Ok(Arc::new(Self {
-            actor: Actor::spawn(transport, sink, timing)?,
+            actor: Actor::spawn(transport, LoggedSink::wrap(sink), timing)?,
         }))
     }
 }

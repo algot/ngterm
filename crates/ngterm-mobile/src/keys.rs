@@ -104,6 +104,19 @@ pub enum KeyError {
     Invalid { reason: String },
 }
 
+impl KeyError {
+    /// The error's name, for the log.
+    #[must_use]
+    pub fn class(&self) -> &'static str {
+        match self {
+            Self::PassphraseRequired => "passphrase-required",
+            Self::WrongPassphrase => "wrong-passphrase",
+            Self::PassphraseTooShort { .. } => "passphrase-too-short",
+            Self::Invalid { .. } => "invalid",
+        }
+    }
+}
+
 /// A new ed25519 key whose public half carries `comment`.
 ///
 /// # Errors

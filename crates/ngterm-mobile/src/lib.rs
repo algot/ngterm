@@ -21,7 +21,7 @@
 //! list, New Session and End Session), [`presentation`] (attached sessions' presentation streams and what they
 //! show), [`pane`] (shown panes: their attach, terminal, leadership, ends and clipboard reads), [`reconnect`] (keeping
 //! machines connected: lost connections, network changes, suspend and resume), [`rows`] (the packed row buffer a pane
-//! is drawn from), [`release`] (verifying a GitHub release's checksums for the Android app's self-update), [`chat`] (the agent chat view: what each pane runs, the chat channels of the panes shown as a chat,
+//! is drawn from), [`applog`] (the diagnostic log the core and the apps write, and the apps show and export), [`release`] (verifying a GitHub release's checksums for the Android app's self-update), [`chat`] (the agent chat view: what each pane runs, the chat channels of the panes shown as a chat,
 //! their older pages and the agents' slash-command catalogs; the screen matchers and the actions that take the lead and
 //! answer the agent in its pane, [`chat::input`]).
 //!
@@ -48,6 +48,7 @@ uniffi::setup_scaffolding!();
 
 pub mod actor;
 pub mod api;
+pub mod applog;
 pub mod chat;
 pub mod keys;
 pub mod pane;
@@ -64,6 +65,7 @@ pub use api::{
     PaneColors, PaneInputError, PaneKey, PaneKeyAction, PaneMouse, PaneMouseAction, PaneMouseButton, PaneSendOutcome,
     PaneSize, PaneWheel, PaneWheelOutcome, UploadProgress, VaultError,
 };
+pub use applog::{AppLog, LogError, LogLevel, app_log};
 pub use chat::input::{AgentInputOutcome, QuestionAnswer};
 pub use chat::{
     AgentCommand, AgentCommandKind, ChatApproval, ChatBody, ChatEvent, ChatNoticeKind, ChatQuestion, ChatQuestionItem,

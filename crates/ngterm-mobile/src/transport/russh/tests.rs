@@ -21,6 +21,7 @@ use super::{
     banner_link, banner_text,
 };
 use crate::api::{EventSink, HostKeyStore, KeyVault, Machine, MobileEvent, VaultError};
+use crate::applog::tests::Captured;
 use crate::keys;
 use crate::transport::{
     Channel, ChannelEnd, ChannelInput, ChannelOutput, ChannelReader, Connection, PEER_GONE, Transport, TransportError,
@@ -1403,4 +1404,58 @@ fn a_disconnect_while_the_core_waits_for_a_sign_in_cancels_it_quietly() {
         None,
         "nothing follows"
     );
+}
+
+#[test]
+fn a_connect_logs_the_keys_class_and_how_it_ended_never_the_key_or_a_fingerprint() {
+    let captured = Captured::new();
+    let (fingerprint, private_key) = captured.run(|| {
+        run(async {
+            let fixture = fixture(quick());
+            let server = TestServer::start(&fixture.public).await;
+            connected(&fixture, &server).await;
+
+            let stranger = keys::generate("stranger").unwrap();
+            let strict = TestServer::start(&PublicKey::from_openssh(&stranger.authorized_key).unwrap()).await;
+            fixture.hosts.pin("m1".to_owned(), strict.fingerprint());
+            assert!(fixture.transport.connect(&machine(strict.port)).await.is_err());
+
+            let no_key = Machine {
+                key_id: "gone".to_owned(),
+                ..machine(1)
+            };
+            assert!(fixture.transport.connect(&no_key).await.is_err());
+            let closed_port = TcpListener::bind("127.0.0.1:0")
+                .await
+                .unwrap()
+                .local_addr()
+                .unwrap()
+                .port();
+            assert!(fixture.transport.connect(&machine(closed_port)).await.is_err());
+
+            let private_key = fixture.transport.vault.load(KEY_ID.to_owned()).unwrap();
+            (server.fingerprint(), String::from_utf8(private_key).unwrap())
+        })
+    });
+
+    let text = captured.text();
+    for wanted in [
+        "I ssh: host key matches the pinned one machine=m1",
+        "I ssh: authenticating machine=m1 method=publickey key=ssh-ed25519",
+        "I ssh: authenticated machine=m1",
+        "W ssh: the machine did not accept the key machine=m1 partial=false",
+        "W ssh: connect failed machine=m1 class=refused why=key-not-accepted",
+        "W ssh: key not available machine=m1 class=missing",
+        "W ssh: tcp connect failed machine=m1 kind=ConnectionRefused",
+        "W ssh: connect failed machine=m1 class=unreachable why=other",
+    ] {
+        assert!(text.contains(wanted), "no line {wanted:?} in:\n{text}");
+    }
+    assert!(
+        !text.contains(&fingerprint) && !text.contains("SHA256:"),
+        "a fingerprint:\n{text}"
+    );
+    for line in private_key.lines().filter(|line| line.len() > 16) {
+        assert!(!text.contains(line), "key material:\n{text}");
+    }
 }

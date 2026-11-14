@@ -7,9 +7,11 @@ use std::rc::Rc;
 use ngterm_core::remote::peer::Capabilities;
 use ngterm_core::remote::tree::RemoteCommandResult;
 
-use super::{Command, State, connection_of};
+use super::{Command, State, connection_of, result_class};
 use crate::api::MobileError;
+use crate::applog::tag;
 use crate::chat::{self, ChatKey, FETCH_DEADLINE, Job, LinkReport, Lookup, NOT_SHOWN, Reporter, upload};
+use crate::note;
 use crate::pane::PaneRef;
 use crate::sessions;
 use crate::transport::Transport;
@@ -33,6 +35,7 @@ pub(super) fn command<T: Transport>(state: &Rc<State<T>>, command: Command) {
             let _ = reply.send(open(state, &pane));
         }
         Command::CloseChat(pane) => {
+            note!(INFO, tag::CHAT, "close asked", pane = pane.pane_id.as_str());
             if let Ok(key) = ChatKey::of(&pane) {
                 state.chats.borrow_mut().close(&key);
             }
@@ -101,6 +104,13 @@ pub(super) fn command<T: Transport>(state: &Rc<State<T>>, command: Command) {
                     }
                 };
                 let answer = upload::upload(&*connection, &name, &bytes, &told, cancelled).await;
+                note!(
+                    INFO,
+                    tag::CHAT,
+                    "upload",
+                    result = result_class(&answer),
+                    bytes = bytes.len()
+                );
                 let _ = reply.send(answer);
             });
         }
@@ -111,6 +121,19 @@ pub(super) fn command<T: Transport>(state: &Rc<State<T>>, command: Command) {
 
 /// Opens the chat of a shown pane on its machine's connection.
 fn open<T: Transport>(state: &Rc<State<T>>, pane: &PaneRef) -> Result<(), MobileError> {
+    let opened = open_on(state, pane);
+    note!(
+        INFO,
+        tag::CHAT,
+        "open asked",
+        result = result_class(&opened),
+        session = pane.session_id.as_str(),
+        pane = pane.pane_id.as_str()
+    );
+    opened
+}
+
+fn open_on<T: Transport>(state: &Rc<State<T>>, pane: &PaneRef) -> Result<(), MobileError> {
     let key = ChatKey::of(pane)?;
     let connection = connection_of(state, &key.machine_id)?;
     if !state

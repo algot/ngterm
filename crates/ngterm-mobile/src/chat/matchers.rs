@@ -242,6 +242,23 @@ pub(crate) enum Screen {
 }
 
 impl Screen {
+    /// What the matchers made of the screen, for the log: the kind of screen, and for a prompt whether the agent is
+    /// working and whether it holds a draft, never the draft.
+    pub(crate) fn class(&self) -> &'static str {
+        match self {
+            Self::Prompt { working, composer } => match (*working, composer.is_empty()) {
+                (false, true) => "prompt-idle",
+                (false, false) => "prompt-idle-with-draft",
+                (true, true) => "prompt-working",
+                (true, false) => "prompt-working-with-draft",
+            },
+            Self::Permission(_) => "permission-dialog",
+            Self::Question(_) => "question-picker",
+            Self::Review { .. } => "question-review",
+            Self::Unknown => "unknown",
+        }
+    }
+
     /// Whether a dialog (permission, picker or review) is up.
     pub(crate) fn is_dialog(&self) -> bool {
         matches!(self, Self::Permission(_) | Self::Question(_) | Self::Review { .. })

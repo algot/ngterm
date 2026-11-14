@@ -89,6 +89,8 @@ pub use self::records::{
     ChatQuestionOption, ChatState, ChatTool, ChatToolKind, ChatToolStatus, ChatUsage,
 };
 use crate::api::{MobileError, MobileEvent};
+use crate::applog::tag;
+use crate::note;
 use crate::pane::{PaneRef, UNKNOWN_PANE};
 use crate::presentation::RemoteLayout;
 use crate::transport::{ChannelEnd, ChannelOutput, Connection};
@@ -596,6 +598,23 @@ impl<C: Connection> Chat<C> {
             ChannelEnd::Lost(_) => false,
         };
         self.failures += 1;
+        let pane = self.key.reference().pane_id;
+        let (how, code) = match end {
+            ChannelEnd::Exit { code, .. } => ("exit", code.map(u64::from)),
+            ChannelEnd::Lost(_) => ("lost", None),
+        };
+        note!(
+            INFO,
+            tag::CHAT,
+            "chat channel ended",
+            end = how,
+            code = code,
+            no_agent = stderr.contains(NO_AGENT),
+            had_started = self.started,
+            failures = self.failures,
+            ends_chat = for_good || self.failures > MAX_FAILURES,
+            pane = pane.as_str()
+        );
         if for_good || self.failures > MAX_FAILURES {
             return true;
         }

@@ -49,6 +49,8 @@ base64.workspace = true
 pkcs8.workspace = true
 # counts an export passphrase's characters as a person does (grapheme clusters)
 unicode-segmentation.workspace = true
+# the diagnostic log's events (`applog`): the core writes them, the log's own subscriber takes them
+tracing.workspace = true
 uniffi.workspace = true
 # the Android app's self-update: a release's SHA256SUMS signature, as ngterm-update checks it
 minisign-verify.workspace = true

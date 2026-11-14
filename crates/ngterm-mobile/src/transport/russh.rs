@@ -72,7 +72,9 @@ use super::{
     TransportError,
 };
 use crate::api::{EventSink, HostKeyStore, KeyVault, Machine, MobileEvent};
+use crate::applog::{self, tag};
 use crate::keys;
+use crate::note;
 
 /// Why a channel ended when its connection went away under it.
 pub const CONNECTION_LOST: &str = "the connection was lost";
@@ -193,12 +195,32 @@ impl RusshTransport {
         let work = async {
             let socket = TcpStream::connect((machine.host.as_str(), machine.port))
                 .await
-                .map_err(|error| unreachable(machine, &error))?;
+                .map_err(|error| {
+                    let kind = applog::variant(&error.kind());
+                    note!(
+                        WARN,
+                        tag::SSH,
+                        "tcp connect failed",
+                        machine = machine.id.as_str(),
+                        kind = kind.as_str()
+                    );
+                    unreachable(machine, &error)
+                })?;
             // Keystrokes go out at once rather than waiting to fill a segment.
             let _ = socket.set_nodelay(true);
             let mut handle = client::connect_stream(self.config(), socket, client)
                 .await
-                .map_err(|error| refused(machine, &refusal, &error))?;
+                .map_err(|error| {
+                    let kind = applog::variant(&error);
+                    note!(
+                        WARN,
+                        tag::SSH,
+                        "handshake failed",
+                        machine = machine.id.as_str(),
+                        kind = kind.as_str()
+                    );
+                    refused(machine, &refusal, &error)
+                })?;
             authenticate(&mut handle, machine, key).await?;
             Ok::<_, TransportError>(handle)
         };
@@ -228,12 +250,16 @@ impl Transport for RusshTransport {
     type Connection = RusshConnection;
 
     async fn connect(&self, machine: &Machine) -> Result<RusshConnection, TransportError> {
-        let bytes = self
-            .vault
-            .load(machine.key_id.clone())
-            .map_err(|error| TransportError::Unreachable(error.to_string()))?;
+        let id = machine.id.as_str();
+        let bytes = self.vault.load(machine.key_id.clone()).map_err(|error| {
+            note!(WARN, tag::SSH, "key not available", machine = id, class = error.class());
+            TransportError::Unreachable(error.to_string())
+        })?;
         let bytes = Zeroizing::new(bytes);
-        let key = keys::load(&bytes).map_err(|error| TransportError::Unreachable(error.to_string()))?;
+        let key = keys::load(&bytes).map_err(|error| {
+            note!(WARN, tag::SSH, "key not usable", machine = id, class = error.class());
+            TransportError::Unreachable(error.to_string())
+        })?;
         drop(bytes);
         // Dropped with the connect (a disconnect, an edit), it withdraws the question this connect asked, if any.
         let withdraw = Withdraw {
@@ -242,7 +268,18 @@ impl Transport for RusshTransport {
             token: self.challenges.token(),
             withdrawn: Arc::new(AtomicBool::new(false)),
         };
-        self.reach(machine, key, &withdraw).await
+        let reached = self.reach(machine, key, &withdraw).await;
+        if let Err(error) = &reached {
+            note!(
+                WARN,
+                tag::SSH,
+                "connect failed",
+                machine = id,
+                class = error.class(),
+                why = failure_class(error)
+            );
+        }
+        reached
     }
 
     fn answer_host_key(&self, machine_id: &str, fingerprint: &str, trust: bool) {
@@ -560,6 +597,12 @@ impl Client {
         self.challenges.withdraw(&self.machine_id, self.token);
         match answer {
             Ok(Ok(true)) => {
+                note!(
+                    INFO,
+                    tag::SSH,
+                    "host key trusted and pinned",
+                    machine = self.machine_id.as_str()
+                );
                 self.hosts.pin(self.machine_id.clone(), offered);
                 true
             }
@@ -606,7 +649,15 @@ impl client::Handler for Client {
     ) -> Result<bool, Self::Error> {
         let offered = fingerprint(server_public_key);
         let trusted = match self.pinned.clone() {
-            Some(pinned) if pinned == offered => true,
+            Some(pinned) if pinned == offered => {
+                note!(
+                    INFO,
+                    tag::SSH,
+                    "host key matches the pinned one",
+                    machine = self.machine_id.as_str()
+                );
+                true
+            }
             Some(pinned) => {
                 self.sink.on_event(MobileEvent::HostKeyChanged {
                     machine_id: self.machine_id.clone(),
@@ -637,6 +688,15 @@ async fn authenticate(
     key: ::russh::keys::PrivateKey,
 ) -> Result<(), TransportError> {
     let key = Arc::new(key);
+    let id = machine.id.as_str();
+    note!(
+        INFO,
+        tag::SSH,
+        "authenticating",
+        machine = id,
+        method = "publickey",
+        key = key.algorithm().as_str()
+    );
     let hash = if key.algorithm().is_rsa() {
         handle
             .best_supported_rsa_hash()
@@ -651,16 +711,53 @@ async fn authenticate(
         .await
         .map_err(|error| unreachable(machine, &error))?;
     match result {
-        AuthResult::Success => Ok(()),
-        AuthResult::Failure { .. } => Err(TransportError::Refused(format!(
-            "{}@{} did not accept the key",
-            machine.user, machine.host
-        ))),
+        AuthResult::Success => {
+            note!(INFO, tag::SSH, "authenticated", machine = id);
+            Ok(())
+        }
+        AuthResult::Failure { partial_success, .. } => {
+            note!(
+                WARN,
+                tag::SSH,
+                "the machine did not accept the key",
+                machine = id,
+                partial = partial_success
+            );
+            Err(TransportError::Refused(format!(
+                "{}@{}{KEY_NOT_ACCEPTED}",
+                machine.user, machine.host
+            )))
+        }
     }
 }
 
+/// Which of the connect's own failures `error` is, for the log; `other` for one worded by the system or russh, whose
+/// kind its own line gives.
+fn failure_class(error: &TransportError) -> &'static str {
+    let (TransportError::Unreachable(reason) | TransportError::Refused(reason) | TransportError::Rejected(reason)) =
+        error
+    else {
+        return "closed";
+    };
+    match reason.as_str() {
+        HOST_KEY_REFUSED => "host-key-not-trusted",
+        HOST_KEY_UNCONFIRMED => "host-key-not-confirmed",
+        HOST_KEY_WITHDRAWN => "host-key-question-withdrawn",
+        HOST_KEY_CHANGED => "host-key-changed",
+        SIGN_IN_UNFINISHED => "sign-in-unfinished",
+        reason if reason.ends_with(NO_ANSWER) => "no-answer-in-time",
+        reason if reason.ends_with(KEY_NOT_ACCEPTED) => "key-not-accepted",
+        _ => "other",
+    }
+}
+
+/// How a connect that ran out of time ends its reason.
+const NO_ANSWER: &str = " did not answer in time";
+/// How a connect whose key the machine refused ends its reason.
+const KEY_NOT_ACCEPTED: &str = " did not accept the key";
+
 fn timed_out(machine: &Machine) -> TransportError {
-    TransportError::Unreachable(format!("{}:{} did not answer in time", machine.host, machine.port))
+    TransportError::Unreachable(format!("{}:{}{NO_ANSWER}", machine.host, machine.port))
 }
 
 fn unreachable(machine: &Machine, error: &dyn std::fmt::Display) -> TransportError {
