@@ -83,9 +83,11 @@ pub fn tree_tail(shell: OriginShell) -> String {
 }
 
 /// The remote command of [`super::tree::tree_argv`]: the far side's bare `ngtermctl live tree --json`, or, for a host
-/// pinned to agterm, its `agtermctl zmx tree --json` after the [`AGTERM_ANSWER`] line. A host that pins neither runs
-/// ngterm's when it is installed and answers, else agterm's under that line, else ngterm's failure: one ssh call tells
-/// the peer ([`super::peer`]). A Windows origin's form is ngterm's, as agterm runs only on Macs.
+/// pinned to agterm, its `agtermctl zmx tree --json` after the [`AGTERM_ANSWER`] line. A host that pins neither asks
+/// each app installed there, in one ssh call: ngterm's answer first, then agterm's under that line, so a host that
+/// runs both lists both ([`super::peer`]). An app that fails beside one that answers is left out; with no answer the
+/// failure is ngterm's when it is installed, else agterm's. A Windows origin's form is ngterm's, as agterm runs only
+/// on Macs.
 #[must_use]
 pub fn tree_tail_for(shell: OriginShell, pin: Option<RemotePeer>) -> String {
     let ngterm = format!("{REMOTE_CLI} live tree --json");
@@ -101,11 +103,13 @@ pub fn tree_tail_for(shell: OriginShell, pin: Option<RemotePeer>) -> String {
             let (n, a) = (REMOTE_CLI, agterm::CLI);
             let script = format!(
                 "PATH=\"$PATH:$HOME/.local/bin:{dirs}\"; \
-                 if command -v {n} >/dev/null 2>&1; then o=$({ngterm}); s=$?; \
-                 if [ \"$s\" -eq 0 ] || ! command -v {a} >/dev/null 2>&1; then printf '%s\\n' \"$o\"; exit \"$s\"; fi; fi; \
-                 if command -v {a} >/dev/null 2>&1; then p=$({agterm}); t=$?; \
-                 if [ \"$t\" -eq 0 ] || [ -z \"${{s:-}}\" ]; then printf '%s\\n%s\\n' {marker} \"$p\"; exit \"$t\"; fi; \
-                 printf '%s\\n' \"$o\"; exit \"$s\"; fi; \
+                 if command -v {n} >/dev/null 2>&1; then o=$({ngterm}); s=$?; fi; \
+                 if command -v {a} >/dev/null 2>&1; then p=$({agterm}); t=$?; fi; \
+                 if [ \"${{s:-1}}\" -eq 0 ]; then printf '%s\\n' \"$o\"; \
+                 if [ \"${{t:-1}}\" -eq 0 ]; then printf '%s\\n%s\\n' {marker} \"$p\"; fi; exit 0; fi; \
+                 if [ -n \"${{t:-}}\" ] && {{ [ \"$t\" -eq 0 ] || [ -z \"${{s:-}}\" ]; }}; then \
+                 printf '%s\\n%s\\n' {marker} \"$p\"; exit \"$t\"; fi; \
+                 if [ -n \"${{s:-}}\" ]; then printf '%s\\n' \"$o\"; exit \"$s\"; fi; \
                  exec {ngterm}",
                 dirs = agterm::PATH_DIRECTORIES,
             );

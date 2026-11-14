@@ -55,6 +55,7 @@ use ngterm_core::remote::frames::{
     PresentationPane, PresentationRespawns,
 };
 use ngterm_core::remote::origin::OriginForm;
+use ngterm_core::remote::peer::RemotePeer;
 use ngterm_core::remote::ssh::present_tail;
 use ngterm_core::remote::tree::INVALID_REMOTE_SESSION;
 use ngterm_core::remote::{LinkKey, PresentationLink, PresentationTransport};
@@ -99,6 +100,8 @@ pub(crate) type Reporter = Rc<dyn Fn(LinkKey, LinkEvent)>;
 pub(crate) struct ChannelLinks<C> {
     /// `None` while the machine's connection is down.
     connection: RefCell<Option<Rc<C>>>,
+    /// The app its session is one of, when that is not the machine's own: agterm's beside an ngterm.
+    app: Option<RemotePeer>,
     report: Reporter,
     /// The launches' tasks that may still be running, so a suspend can wait for them to write what they hold.
     tasks: RefCell<Vec<JoinHandle<()>>>,
@@ -109,9 +112,15 @@ impl<C> ChannelLinks<C> {
     pub(crate) fn new(connection: Rc<C>, report: Reporter) -> Self {
         Self {
             connection: RefCell::new(Some(connection)),
+            app: None,
             report,
             tasks: RefCell::new(Vec::new()),
         }
+    }
+
+    /// These links for a session of `app`, whose stream that app's CLI opens whatever the machine's own app is.
+    pub(crate) fn of_app(self, app: RemotePeer) -> Self {
+        Self { app: Some(app), ..self }
     }
 
     /// The machine's connection from now on: `None` while it is down.
@@ -126,12 +135,18 @@ impl<C> ChannelLinks<C> {
 }
 
 impl<C: Connection> ChannelLinks<C> {
-    /// How its machine's remote commands are formed; a machine down is taken for a POSIX ngterm.
+    /// How its session's remote commands are formed: its machine's, for its own app when it names one; a machine down
+    /// is taken for a POSIX one.
     fn origin_form(&self) -> OriginForm {
-        self.connection
+        let form = self
+            .connection
             .borrow()
             .as_ref()
-            .map_or_else(OriginForm::default, |connection| connection.origin_form())
+            .map_or_else(OriginForm::default, |connection| connection.origin_form());
+        OriginForm {
+            peer: self.app.unwrap_or(form.peer),
+            ..form
+        }
     }
 }
 

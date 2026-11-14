@@ -4,6 +4,7 @@
 
 use std::rc::Rc;
 
+use ngterm_core::remote::peer::Capabilities;
 use ngterm_core::remote::tree::RemoteCommandResult;
 
 use super::{Command, State, connection_of};
@@ -56,6 +57,7 @@ pub(super) fn command<T: Transport>(state: &Rc<State<T>>, command: Command) {
         Command::AgentCommands { pane, reply } => {
             let lookup = ChatKey::of(&pane).and_then(|key| {
                 let connection = connection_of(state, &key.machine_id)?;
+                offers_chat(state, &key)?;
                 let lookup = state.chats.borrow_mut().commands(&key, connection)?;
                 Ok((key, lookup))
             });
@@ -120,7 +122,18 @@ fn open<T: Transport>(state: &Rc<State<T>>, pane: &PaneRef) -> Result<(), Mobile
             reason: NOT_SHOWN.to_owned(),
         });
     }
+    offers_chat(state, &key)?;
     state.chats.borrow_mut().open(key, connection, reporter(state))
+}
+
+/// Refuses a chat action on a session of an app with no agent chat: agterm's, also beside an ngterm on its machine.
+fn offers_chat<T: Transport>(state: &State<T>, key: &ChatKey) -> Result<(), MobileError> {
+    match state.app_of(&key.machine_id, &key.session_id) {
+        Some(app) if !Capabilities::of(app).agent_chat => Err(MobileError::Remote {
+            reason: chat::NO_CHAT_ON_AGTERM.to_owned(),
+        }),
+        _ => Ok(()),
+    }
 }
 
 /// Where the chats' channels report: the actor's chats, once the channel's task has the report.

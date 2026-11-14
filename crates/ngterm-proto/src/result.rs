@@ -373,16 +373,36 @@ pub struct ControlRemoteTree {
     /// The presentation protocol version this app speaks; absent from an app that predates the stream.
     #[serde(default)]
     pub presentation: Option<i64>,
+    /// What the other app on the same host offers, when the host runs both and its listing pinned neither: agterm's
+    /// sessions beside ngterm's, with the endpoint they attach through. Absent from an origin's own answer.
+    #[serde(default)]
+    pub beside: Option<Box<ControlRemoteTree>>,
 }
 
 impl ControlRemoteTree {
-    /// This answer with the ssh destination the requesting app was given (upstream's `stamped(host:)`).
+    /// This answer with the ssh destination the requesting app was given (upstream's `stamped(host:)`), the other
+    /// app's beside it too.
     #[must_use]
     pub fn stamped(self, host: &str) -> Self {
         Self {
             host: Some(host.to_owned()),
+            beside: self.beside.map(|beside| Box::new(beside.stamped(host))),
             ..self
         }
+    }
+
+    /// Each app's answer: this one, then the one beside it.
+    pub fn apps(&self) -> impl Iterator<Item = &Self> {
+        std::iter::successors(Some(self), |tree| tree.beside.as_deref())
+    }
+
+    /// The answer of the app that lists `session`; this one when neither does, as the caller's own check then reads
+    /// it.
+    #[must_use]
+    pub fn listing(&self, session: &str) -> &Self {
+        self.apps()
+            .find(|tree| tree.sessions.iter().any(|listed| listed.id == session))
+            .unwrap_or(self)
     }
 }
 

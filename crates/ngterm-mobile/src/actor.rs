@@ -29,6 +29,8 @@ mod chats;
 mod inputs;
 
 #[cfg(test)]
+mod both_apps_tests;
+#[cfg(test)]
 mod chat_tests;
 #[cfg(test)]
 mod clipboard_tests;
@@ -51,7 +53,7 @@ use std::thread::{self, JoinHandle, ThreadId};
 use std::time::Duration;
 
 use ngterm_core::remote::peer::origin_pane_identity as pane_identity;
-use ngterm_proto::ControlRemoteTree;
+use ngterm_proto::{ControlRemoteTree, RemotePeer};
 use uuid::Uuid;
 
 use tokio::runtime::Builder;
@@ -363,6 +365,26 @@ impl<T: Transport> State<T> {
 
     fn emit(&self, event: MobileEvent) {
         self.sink.on_event(event);
+    }
+
+    /// What `read` makes of the answer of the app that lists `session_id` in `machine_id`'s kept listing: a machine
+    /// that runs both apps keeps both answers. `None` for a session the listing does not hold.
+    fn listing_of<R>(
+        &self,
+        machine_id: &str,
+        session_id: &str,
+        read: impl FnOnce(&ControlRemoteTree) -> R,
+    ) -> Option<R> {
+        let listings = self.listings.borrow();
+        let tree = listings.get(machine_id)?.tree.as_ref()?;
+        tree.apps()
+            .find(|app| app.sessions.iter().any(|listed| listed.id == session_id))
+            .map(read)
+    }
+
+    /// The app that lists `session_id` on `machine_id`; `None` for a session the kept listing does not hold.
+    fn app_of(&self, machine_id: &str, session_id: &str) -> Option<RemotePeer> {
+        self.listing_of(machine_id, session_id, |app| app.endpoint.peer())
     }
 
     fn emit_all(&self, events: Vec<MobileEvent>) {
@@ -946,8 +968,15 @@ async fn create_session<T: Transport>(
     .await
     .map_err(remote)?;
     let receipt = RemoteSession::listed(&created, tree.endpoint.peer());
+    let tree = with_other_app(&state, &machine_id, tree);
     listed(&state, &link, machine_id, tree, began.get());
     Ok(receipt)
+}
+
+/// `tree`, the listing of the one app a session was made on, with the machine's other app as last listed.
+fn with_other_app<T: Transport>(state: &State<T>, machine_id: &str, tree: ControlRemoteTree) -> ControlRemoteTree {
+    let listings = state.listings.borrow();
+    sessions::beside_kept(tree, listings.get(machine_id).and_then(|kept| kept.tree.as_ref()))
 }
 
 async fn duplicate_session<T: Transport>(
@@ -957,12 +986,14 @@ async fn duplicate_session<T: Transport>(
     source: String,
 ) -> Result<RemoteSession, MobileError> {
     let began = Cell::new(0);
-    let (created, tree) = sessions::duplicate(&*link.connection, &link.host, &source, || {
+    let source = (source.as_str(), state.app_of(&machine_id, &source));
+    let (created, tree) = sessions::duplicate(&*link.connection, &link.host, source, || {
         began.set(state.ticket());
     })
     .await
     .map_err(remote)?;
     let receipt = RemoteSession::listed(&created, tree.endpoint.peer());
+    let tree = with_other_app(&state, &machine_id, tree);
     listed(&state, &link, machine_id, tree, began.get());
     Ok(receipt)
 }
@@ -975,7 +1006,8 @@ async fn end_session<T: Transport>(
     machine_id: String,
     session_id: String,
 ) -> Result<(), MobileError> {
-    sessions::end(&*link.connection, &link.host, &session_id)
+    let app = state.app_of(&machine_id, &session_id);
+    sessions::end(&*link.connection, &link.host, &session_id, app)
         .await
         .map_err(remote)?;
     if !state.is_current(&machine_id, &link.connection) {
@@ -1001,13 +1033,8 @@ async fn end_session<T: Transport>(
 /// connection.
 fn attach_session<T: Transport>(state: &Rc<State<T>>, machine_id: &str, session_id: &str) -> Result<(), MobileError> {
     let connection = connection_of(state, machine_id)?;
-    let version = state
-        .listings
-        .borrow()
-        .get(machine_id)
-        .and_then(|kept| kept.tree.as_ref())
-        .filter(|tree| tree.sessions.iter().any(|listed| listed.id == session_id))
-        .map(|tree| tree.presentation)
+    let (version, app) = state
+        .listing_of(machine_id, session_id, |app| (app.presentation, app.endpoint.peer()))
         .ok_or_else(|| MobileError::NotListed {
             session_id: session_id.to_owned(),
         })?;
@@ -1015,7 +1042,7 @@ fn attach_session<T: Transport>(state: &Rc<State<T>>, machine_id: &str, session_
         machine_id,
         session_id,
         version,
-        ChannelLinks::new(connection, reporter(state)),
+        ChannelLinks::new(connection, reporter(state)).of_app(app),
         sessions::now(),
     )?;
     state.presented(events);
@@ -1110,32 +1137,29 @@ fn pane_uuid(pane: &PaneRef) -> Option<Uuid> {
 /// Shows a pane of a session of the machine's last listing, on the machine's connection.
 fn show_pane<T: Transport>(state: &Rc<State<T>>, pane: &PaneRef, size: PaneSize) -> Result<Arc<Pane>, MobileError> {
     let connection = connection_of(state, &pane.machine_id)?;
-    let target = {
-        let listings = state.listings.borrow();
-        let tree = listings.get(&pane.machine_id).and_then(|kept| kept.tree.as_ref());
-        let session = tree
-            .and_then(|tree| tree.sessions.iter().find(|listed| listed.id == pane.session_id))
-            .ok_or_else(|| MobileError::NotListed {
-                session_id: pane.session_id.clone(),
-            })?;
-        let unknown = || MobileError::Remote {
-            reason: pane::UNKNOWN_PANE.to_owned(),
-        };
-        let id = pane_uuid(pane).ok_or_else(unknown)?;
-        let daemon = session
+    let unknown = || MobileError::Remote {
+        reason: pane::UNKNOWN_PANE.to_owned(),
+    };
+    let id = pane_uuid(pane);
+    let found = state.listing_of(&pane.machine_id, &pane.session_id, |app| {
+        let session = app.sessions.iter().find(|listed| listed.id == pane.session_id)?;
+        let listed = session
             .panes
             .iter()
-            .find(|listed| pane_identity(&listed.daemon) == Some(id))
-            .ok_or_else(unknown)?
-            .daemon
-            .clone();
-        Target {
-            machine_id: pane.machine_id.clone(),
+            .find(|listed| id.is_some() && pane_identity(&listed.daemon) == id)?;
+        Some((listed.daemon.clone(), app.endpoint.clone()))
+    });
+    let (daemon, endpoint) = found
+        .ok_or_else(|| MobileError::NotListed {
             session_id: pane.session_id.clone(),
-            pane: id,
-            daemon,
-            endpoint: tree.map(|tree| tree.endpoint.clone()).ok_or_else(unknown)?,
-        }
+        })?
+        .ok_or_else(unknown)?;
+    let target = Target {
+        machine_id: pane.machine_id.clone(),
+        session_id: pane.session_id.clone(),
+        pane: id.ok_or_else(unknown)?,
+        daemon,
+        endpoint,
     };
     let (slot, events) = state.panes.borrow_mut().show(target, connection, size.into())?;
     state.emit_all(events);
@@ -1173,7 +1197,9 @@ fn check_gone<T: Transport>(state: &Rc<State<T>>, check: GoneCheck) {
         let began = state.ticket();
         let gone = match sessions::list(&*link.connection, &link.host).await {
             Ok(tree) => {
-                let gone = !tree.sessions.iter().any(|listed| listed.id == check.session_id);
+                let gone = !tree
+                    .apps()
+                    .any(|app| app.sessions.iter().any(|listed| listed.id == check.session_id));
                 listed(&state, &link, check.machine_id.clone(), tree, began);
                 gone
             }

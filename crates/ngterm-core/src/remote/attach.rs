@@ -20,6 +20,7 @@ use uuid::Uuid;
 use super::frames;
 use super::origin_replies::{is_pickable, pickable_sessions, read_remote_tree};
 use super::origin_sessions::{CreateRun, NEW_SESSION, NEW_SESSION_ID};
+use super::peer::RemotePeer;
 use super::remotes::{RemoteEntry, diagnostics_banner_body};
 use super::ssh::{PaneLabel, attach_pane_command};
 use super::tree::{self, RemoteCommandResult};
@@ -154,13 +155,14 @@ impl Core {
             Ok(tree) => tree,
             Err(error) => return Dispatched::done(Err(ControlError::rejected(error))),
         };
+        let remote_tree = remote_tree.listing(&request.session);
         let page = remote_tree
             .sessions
             .iter()
             .find(|candidate| candidate.id == request.session && candidate.content.as_deref() == Some("page"));
         match page {
-            Some(page) => super::companions::begin_page_row_attach(self, page, &remote_tree, request),
-            None => Dispatched::done(self.attach_from(&remote_tree, request)),
+            Some(page) => super::companions::begin_page_row_attach(self, page, remote_tree, request),
+            None => Dispatched::done(self.attach_from(remote_tree, request)),
         }
     }
 
@@ -168,7 +170,7 @@ impl Core {
     /// `attachRemoteSession`).
     pub(crate) fn finish_attach(&mut self, result: &RemoteCommandResult, request: &AttachRequest) -> Outcome {
         let remote_tree = read_remote_tree(result, &request.host).map_err(ControlError::rejected)?;
-        self.attach_from(&remote_tree, request)
+        self.attach_from(remote_tree.listing(&request.session), request)
     }
 
     fn attach_from(&mut self, remote_tree: &ControlRemoteTree, request: &AttachRequest) -> Outcome {
@@ -397,6 +399,8 @@ impl AttachFlow {
 struct AttachAllReport {
     attached: usize,
     failures: Vec<String>,
+    /// Whether a row of its own was selected already: only the first is.
+    selected: bool,
 }
 
 /// The sessions Attach All attaches, parents before their companions so each companion finds its parent's row: what
@@ -437,6 +441,34 @@ fn pick_item(session: &ControlRemoteSession) -> PickItem {
         status_color: session.status_color.clone(),
         status_shape: session.status_shape.clone(),
     }
+}
+
+/// The sessions of one app's answer a picker offers: a page companion attaches only under its parent's row, which the
+/// picker has no place for.
+fn pickable(app: &ControlRemoteTree) -> impl Iterator<Item = &ControlRemoteSession> {
+    app.sessions.iter().filter(|session| is_pickable(session))
+}
+
+/// One app's sessions as picker rows, a companion under its parent's name, each naming `marked` when the host's other
+/// app is listed beside it.
+fn app_items(app: &ControlRemoteTree, marked: Option<RemotePeer>) -> Vec<PickItem> {
+    let names: HashMap<&str, &str> = pickable(app).map(|row| (row.id.as_str(), row.name.as_str())).collect();
+    pickable(app)
+        .map(|session| {
+            let mut item = pick_item(session);
+            if let Some(parent) = session.parent.as_deref().and_then(|id| names.get(id)) {
+                item.label = format!("{parent} › {}", session.name);
+            }
+            if let Some(peer) = marked {
+                let detail = item.subtitle.take().filter(|detail| !detail.is_empty());
+                item.subtitle = Some(detail.map_or_else(
+                    || peer.name().to_owned(),
+                    |detail| format!("{}  ·  {detail}", peer.name()),
+                ));
+            }
+            item
+        })
+        .collect()
 }
 
 impl Core {
@@ -638,18 +670,15 @@ impl Core {
 
     /// The listing arrived: the window's picker asks which session to attach.
     fn listed(&mut self, mut flow: AttachFlow, host: &str, result: &RemoteCommandResult) -> Option<AttachFlow> {
-        // a page companion attaches only under its parent's row, which the picker has no place for
-        let (endpoint, sessions) = match read_remote_tree(result, host) {
-            Ok(remote) => {
-                let sessions: Vec<ControlRemoteSession> = remote.sessions.into_iter().filter(is_pickable).collect();
-                (remote.endpoint, sessions)
-            }
+        let remote = match read_remote_tree(result, host) {
+            Ok(remote) => remote,
             Err(error) => {
                 self.attach_failed(&mut flow, &format!("{host}: {error}"));
                 return None;
             }
         };
-        if sessions.len() > MAX_PICK_ITEMS {
+        let offered: usize = remote.apps().map(|app| pickable(app).count()).sum();
+        if offered > MAX_PICK_ITEMS {
             self.attach_failed(&mut flow, &format!("{host} offers too many sessions"));
             return None;
         }
@@ -658,15 +687,16 @@ impl Core {
         if !self.library().is_open(flow.window) {
             return None;
         }
-        let items = self.session_items(&sessions, host, &endpoint);
+        let items = self.session_items(&remote, host);
         let pick = self.open_internal_pick(flow.window, items, &format!("Attach from {host}"))?;
         flow.step = Step::ChoosingSession {
             host: host.to_owned(),
-            peer: endpoint.peer(),
+            peer: remote.endpoint.peer(),
             pick,
-            parents: sessions
-                .iter()
-                .filter(|row| row.parent.is_none() && row.content.is_none())
+            parents: remote
+                .apps()
+                .flat_map(pickable)
+                .filter(|row| row.parent.is_none())
                 .map(|row| row.id.clone())
                 .collect(),
         };
@@ -675,32 +705,17 @@ impl Core {
 
     /// The session picker's rows: each listed session, then an Attach All row when it would attach more than one and a
     /// New Session row while the picker has room. Last, as the picker's selection goes to the first row on opening and on
-    /// every filter edit, and Enter takes it; with nothing to attach, New Session is the only row.
-    fn session_items(
-        &self,
-        sessions: &[ControlRemoteSession],
-        host: &str,
-        endpoint: &ControlLiveEndpoint,
-    ) -> Vec<PickItem> {
-        let rows = self.rows_attached_from(host, endpoint);
-        let missing = sessions
-            .iter()
-            .filter(|session| !rows.contains_key(&session.id))
-            .count();
-        let names: HashMap<&str, &str> = sessions
-            .iter()
-            .map(|row| (row.id.as_str(), row.name.as_str()))
-            .collect();
-        let mut items: Vec<PickItem> = sessions
-            .iter()
-            .map(|session| {
-                let mut item = pick_item(session);
-                if let Some(parent) = session.parent.as_deref().and_then(|id| names.get(id)) {
-                    item.label = format!("{parent} › {}", session.name);
-                }
-                item
-            })
-            .collect();
+    /// every filter edit, and Enter takes it; with nothing to attach, New Session is the only row. On a host that runs
+    /// both apps the other app's sessions follow ngterm's, each naming its app.
+    fn session_items(&self, tree: &ControlRemoteTree, host: &str) -> Vec<PickItem> {
+        let mut missing = 0;
+        let mut items: Vec<PickItem> = Vec::new();
+        for app in tree.apps() {
+            let rows = self.rows_attached_from(host, &app.endpoint);
+            missing += pickable(app).filter(|session| !rows.contains_key(&session.id)).count();
+            let named = tree.beside.is_some().then(|| app.endpoint.peer());
+            items.extend(app_items(app, named.filter(|peer| *peer != RemotePeer::Ngterm)));
+        }
         if missing > 1 && items.len() < MAX_PICK_ITEMS {
             items.push(PickItem {
                 id: ATTACH_ALL_ID.to_owned(),
@@ -785,22 +800,29 @@ impl Core {
         self.action_failed(flow.action, flow.window, selected, &text);
     }
 
-    /// Attaches every session `tree` offers that no row here shows: each companion under its parent's row wherever
-    /// that row is, the rest in `window`'s current workspace, the first of those selected.
+    /// Attaches every session `tree` offers that no row here shows, each app's through its own endpoint: each
+    /// companion under its parent's row wherever that row is, the rest in `window`'s current workspace, the first of
+    /// those selected.
     fn attach_all(&mut self, tree: &ControlRemoteTree, host: &str, window: Uuid) -> AttachAllReport {
         let mut report = AttachAllReport::default();
+        for app in tree.apps() {
+            self.attach_all_of(app, host, window, &mut report);
+        }
+        report
+    }
+
+    fn attach_all_of(&mut self, tree: &ControlRemoteTree, host: &str, window: Uuid, report: &mut AttachAllReport) {
         let mut rows = self.rows_attached_from(host, &tree.endpoint);
-        let mut selected = false;
         for remote in attach_all_sessions(tree, &rows) {
             let parent = remote.parent.as_ref().and_then(|parent| rows.get(parent).copied());
             let under = parent.and_then(|parent| Placement::under(self.library(), parent, false));
-            let placement = under.or_else(|| self.workspace_placement(window, !selected));
+            let placement = under.or_else(|| self.workspace_placement(window, !report.selected));
             let attached = placement
                 .ok_or(ControlError::NoOpenWindow)
                 .and_then(|placement| self.attach_remote_session(remote, tree, host, placement));
             match attached {
                 Ok(result) => {
-                    selected |= under.is_none();
+                    report.selected |= under.is_none();
                     report.attached += 1;
                     if let Some(row) = result.id.as_deref().and_then(frames::parse_uuid) {
                         rows.insert(remote.id.clone(), row);
@@ -809,7 +831,6 @@ impl Core {
                 Err(error) => report.failures.push(format!("{}: {error}", remote.name)),
             }
         }
-        report
     }
 
     /// A row of its own in `window`'s current workspace; `None` once the window has none.

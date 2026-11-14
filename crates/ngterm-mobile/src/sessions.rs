@@ -94,14 +94,34 @@ impl RemoteSession {
 }
 
 /// The sessions of `tree` the app lists: desktop's picker's (no page companions, parents first), each naming the app
-/// that listed it.
+/// that listed it. On a machine that runs both apps, agterm's follow ngterm's.
 #[must_use]
 pub fn listed_sessions(tree: &ControlRemoteTree) -> Vec<RemoteSession> {
-    let peer = tree.endpoint.peer();
-    pickable_sessions(tree)
-        .into_iter()
-        .map(|session| RemoteSession::listed(session, peer))
+    tree.apps()
+        .flat_map(|app| {
+            let peer = app.endpoint.peer();
+            pickable_sessions(app)
+                .into_iter()
+                .map(move |session| RemoteSession::listed(session, peer))
+        })
         .collect()
+}
+
+/// `fresh`, a listing of one app alone (New Session's and Duplicate's), as the machine's whole listing: with the
+/// other app's sessions as `kept`, the machine's last listing, has them, when the machine runs both.
+#[must_use]
+pub fn beside_kept(mut fresh: ControlRemoteTree, kept: Option<&ControlRemoteTree>) -> ControlRemoteTree {
+    let Some(kept) = kept.filter(|kept| kept.beside.is_some() && fresh.beside.is_none()) else {
+        return fresh;
+    };
+    if kept.endpoint.peer() == fresh.endpoint.peer() {
+        fresh.beside.clone_from(&kept.beside);
+        return fresh;
+    }
+    ControlRemoteTree {
+        beside: Some(Box::new(fresh)),
+        ..kept.clone()
+    }
 }
 
 /// `message` with desktop's `ngtermctl live attach` advice replaced by [`ATTACH_FROM_LIST`]; any other message as it
@@ -204,20 +224,16 @@ async fn run_tree<C: Connection>(
     run(connection, &tree_tail_for(OriginShell::Windows, pin), deadline).await
 }
 
-/// Runs `ARGUMENTS --json` of the CLI of the app on `host`. On a connection no listing has yet told the app of, a
-/// listing runs first, so a first line to an agterm Mac is never ngterm's.
-async fn control<C: Connection, S: AsRef<str>>(
-    connection: &C,
-    host: &str,
-    arguments: &[S],
-) -> Result<RemoteCommandResult, String> {
-    let form = known_form(connection, host).await?;
-    control_in(connection, form, arguments).await
-}
-
-/// The form of the connection's commands, once a listing has told it the app: a connection no listing has told yet
-/// lists first.
-async fn known_form<C: Connection>(connection: &C, host: &str) -> Result<OriginForm, String> {
+/// The form of the commands for `app` on the connection's machine, the app whose listing shows the session they are
+/// about. With none named it is the machine's own, once a listing has told it: a connection no listing has told yet
+/// lists first, so a first line to an agterm Mac is never ngterm's.
+async fn known_form<C: Connection>(connection: &C, host: &str, app: Option<RemotePeer>) -> Result<OriginForm, String> {
+    if let Some(peer) = app {
+        return Ok(OriginForm {
+            peer,
+            ..connection.origin_form()
+        });
+    }
     if !connection.learned().peer_known {
         read_tree(connection, host, TREE_DEADLINE)
             .await
@@ -272,10 +288,10 @@ pub async fn create<C: Connection>(
     name: Option<&str>,
     listing_starts: impl FnMut(),
 ) -> Result<(ControlRemoteSession, ControlRemoteTree), String> {
-    make(connection, host, &new_session_arguments(name), listing_starts).await
+    make(connection, (host, None), &new_session_arguments(name), listing_starts).await
 }
 
-/// Duplicate on `host` of its session `source`, as [`create`] answers.
+/// Duplicate on `host` of its session `source`, a session of `app` (`None`: the machine's own), as [`create`] answers.
 ///
 /// # Errors
 ///
@@ -283,23 +299,29 @@ pub async fn create<C: Connection>(
 pub async fn duplicate<C: Connection>(
     connection: &C,
     host: &str,
-    source: &str,
+    (source, app): (&str, Option<RemotePeer>),
     listing_starts: impl FnMut(),
 ) -> Result<(ControlRemoteSession, ControlRemoteTree), String> {
     if !is_plain(source) {
         return Err(INVALID_REMOTE_SESSION.to_owned());
     }
-    make(connection, host, &duplicate_session_arguments(source), listing_starts).await
+    make(
+        connection,
+        (host, app),
+        &duplicate_session_arguments(source),
+        listing_starts,
+    )
+    .await
 }
 
 async fn make<C: Connection, S: AsRef<str>>(
     connection: &C,
-    host: &str,
+    (host, app): (&str, Option<RemotePeer>),
     arguments: &[S],
     mut listing_starts: impl FnMut(),
 ) -> Result<(ControlRemoteSession, ControlRemoteTree), String> {
     // the app asked to create is the one whose listing shows the session, whichever app answers the machine meanwhile
-    let form = known_form(connection, host).await?;
+    let form = known_form(connection, host, app).await?;
     let mode = control_in(connection, form, &RESTORE_MODE_ARGUMENTS).await?;
     check_restore_mode(&mode, host)?;
     let created = control_in(connection, form, arguments).await?;
@@ -324,24 +346,34 @@ async fn make<C: Connection, S: AsRef<str>>(
     }
 }
 
-/// End Session: `host` closes its session `session`, its programs and companions with it.
+/// End Session: `host` closes its session `session`, a session of `app` (`None`: the machine's own), its programs and
+/// companions with it.
 ///
 /// # Errors
 ///
 /// [`INVALID_REMOTE_SESSION`] for an id that is not one plain token, otherwise why it did not end there (desktop's
 /// `end_failure`) or the transport's text.
-pub async fn end<C: Connection>(connection: &C, host: &str, session: &str) -> Result<(), String> {
+pub async fn end<C: Connection>(
+    connection: &C,
+    host: &str,
+    session: &str,
+    app: Option<RemotePeer>,
+) -> Result<(), String> {
     if !is_plain(session) {
         return Err(INVALID_REMOTE_SESSION.to_owned());
     }
-    let result = control(connection, host, &end_session_arguments(session)).await?;
+    let form = known_form(connection, host, app).await?;
+    let result = control_in(connection, form, &end_session_arguments(session)).await?;
     end_failure(&result, host).map_or(Ok(()), Err)
 }
 
-/// `tree` without session `session` and its companions, as the far side's close took them.
+/// `tree` without session `session` and its companions, as the far side's close took them, whichever app listed it.
 pub fn forget(tree: &mut ControlRemoteTree, session: &str) {
     tree.sessions
         .retain(|listed| listed.id != session && listed.parent.as_deref() != Some(session));
+    if let Some(beside) = tree.beside.as_deref_mut() {
+        forget(beside, session);
+    }
 }
 
 /// The clock New Session's wait and the presentation streams read: tokio's, so a test's paused clock drives it.

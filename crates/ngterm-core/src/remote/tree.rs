@@ -326,7 +326,7 @@ impl MergeError {
 /// `ngtermctl --json` prints a refusal to stdout and exits nonzero, so stderr is empty on exactly these failures.
 #[must_use]
 pub fn remote_error(stdout: &str) -> Option<String> {
-    let response: Response<ControlResult> = serde_json::from_str(super::peer::split_answer(stdout).1).ok()?;
+    let response: Response<ControlResult> = serde_json::from_str(super::peer::split_answers(stdout).first()).ok()?;
     if response.ok {
         return None;
     }
@@ -336,17 +336,36 @@ pub fn remote_error(stdout: &str) -> Option<String> {
         .filter(|error| !error.is_empty())
 }
 
-/// Reads back what the far side's own `live tree` printed (upstream's `decode(stdout:)`), stamping on its endpoint the
-/// app that answered ([`super::peer::split_answer`]). The caller rejects a nonzero exit before calling this, and stamps
-/// the host it was given onto the result.
+/// Reads back what the far side's own `live tree` printed (upstream's `decode(stdout:)`), stamping on each endpoint
+/// the app that answered ([`super::peer::split_answers`]): ngterm's answer with agterm's beside it when both gave
+/// one, else the one there is. The caller rejects a nonzero exit before calling this, and stamps the host it was given
+/// onto the result.
 ///
 /// # Errors
 ///
-/// The output is not a response, the far side refused, or an older far side answered without a session list.
+/// The output is not a response, the far side refused, or an older far side answered without a session list. An
+/// unreadable agterm answer beside a readable ngterm one is left out.
 pub fn decode(stdout: &str) -> Result<ControlRemoteTree, MergeError> {
-    let (peer, stdout) = super::peer::split_answer(stdout);
+    let answers = super::peer::split_answers(stdout);
+    let agterm = answers
+        .agterm
+        .map(|answer| decode_app(answer, Some(super::peer::RemotePeer::Agterm)));
+    match (answers.ngterm, agterm) {
+        (Some(own), beside) => {
+            let mut tree = decode_app(own, None)?;
+            tree.beside = beside.and_then(Result::ok).map(Box::new);
+            Ok(tree)
+        }
+        (None, Some(agterm)) => agterm,
+        (None, None) => Err(MergeError::MalformedProjection),
+    }
+}
+
+/// One app's answer, its endpoint stamped `peer` and nothing beside it: neither is the origin's to say.
+fn decode_app(stdout: &str, peer: Option<super::peer::RemotePeer>) -> Result<ControlRemoteTree, MergeError> {
     let mut tree = decode_answer(stdout)?;
-    tree.endpoint.peer = (peer != super::peer::RemotePeer::Ngterm).then_some(peer);
+    tree.endpoint.peer = peer;
+    tree.beside = None;
     Ok(tree)
 }
 
@@ -438,6 +457,7 @@ pub fn candidates(
         endpoint,
         sessions: terminals.into_iter().chain(pages).collect(),
         presentation: Some(frames::VERSION),
+        beside: None,
     })
 }
 
@@ -970,6 +990,7 @@ mod tests {
                 companions: None,
             }],
             presentation: Some(1),
+            beside: None,
         };
         let stdout = serde_json::to_string(&json!({"ok": true, "result": {"remote": remote}})).unwrap();
         let decoded = decode(&stdout).unwrap();
@@ -985,6 +1006,50 @@ mod tests {
         let older =
             r#"{"ok":true,"result":{"remote":{"endpoint":{"executable":"/z","socketDirectory":"/t"},"sessions":[]}}}"#;
         assert_eq!(decode(older).unwrap().presentation, None);
+    }
+
+    fn answer_of(executable: &str, session: &str) -> String {
+        json!({"ok": true, "result": {"remote": {
+            "endpoint": {"executable": executable, "socketDirectory": "/t", "peer": "agterm"},
+            "beside": {"endpoint": {"executable": "/forged", "socketDirectory": "/t"}, "sessions": []},
+            "sessions": [{
+                "id": session, "name": session, "windowID": "w", "windowName": "main", "workspaceID": "ws",
+                "workspaceName": "work", "cwd": "/repo", "panes": [{"pane": "left", "daemon": "d"}]
+            }],
+        }}})
+        .to_string()
+    }
+
+    #[test]
+    fn a_host_running_both_apps_decodes_to_ngterms_sessions_with_agterms_beside() {
+        use crate::remote::peer::{AGTERM_ANSWER, RemotePeer};
+
+        let (own, theirs) = (answer_of("/ngterm-session", "N1"), answer_of("/zmx", "A1"));
+        let tree = decode(&format!("{own}\n{AGTERM_ANSWER}\n{theirs}\n"))
+            .unwrap()
+            .stamped("studio");
+        // what an origin says of its own app or of another beside it is never taken
+        assert_eq!(tree.endpoint.peer, None);
+        assert_eq!(tree.endpoint.executable, "/ngterm-session");
+        let beside = tree.beside.as_deref().unwrap();
+        assert_eq!(beside.endpoint.peer, Some(RemotePeer::Agterm));
+        assert_eq!(beside.endpoint.executable, "/zmx");
+        assert_eq!((beside.host.as_deref(), &beside.beside), (Some("studio"), &None));
+        let ids = |tree: &ControlRemoteTree| tree.sessions.iter().map(|s| s.id.clone()).collect::<Vec<_>>();
+        assert_eq!(tree.apps().map(ids).collect::<Vec<_>>(), [["N1"], ["A1"]]);
+        assert_eq!(tree.listing("A1").endpoint.executable, "/zmx");
+        assert_eq!(tree.listing("N1").endpoint.executable, "/ngterm-session");
+        assert_eq!(tree.listing("gone").endpoint.executable, "/ngterm-session");
+
+        let alone = decode(&format!("{AGTERM_ANSWER}\n{theirs}")).unwrap();
+        assert_eq!((alone.endpoint.peer, &alone.beside), (Some(RemotePeer::Agterm), &None));
+        // agterm's unreadable answer beside ngterm's leaves ngterm's listing whole
+        let half = decode(&format!("{own}\n{AGTERM_ANSWER}\nnot json")).unwrap();
+        assert_eq!((ids(&half), &half.beside), (vec!["N1".to_owned()], &None));
+        assert_eq!(
+            decode(&format!("not json\n{AGTERM_ANSWER}\n{theirs}")),
+            Err(MergeError::MalformedProjection)
+        );
     }
 
     #[test]
@@ -1037,20 +1102,24 @@ mod tests {
         )
     }
 
-    /// One ssh call tells the peer: ngterm's listing whenever it answers, agterm's under its marker line when ngterm is
-    /// missing or fails, ngterm's failure when both fail, and the shell's command-not-found when neither is installed.
+    /// One ssh call asks each app installed: a host that runs both answers with ngterm's listing, then agterm's under
+    /// its marker line. An app that fails beside one that answers is left out; with no answer the failure is ngterm's
+    /// when it is installed, else agterm's, and the shell's command-not-found when neither is.
     #[cfg(unix)]
     #[test]
-    fn the_remote_line_prefers_ngterm_and_marks_an_agterm_answer() {
+    fn the_remote_line_lists_each_app_that_answers_and_marks_agterms_answer() {
         let ngterm = "ngtermctl live tree --json\n";
         let agterm = "ngterm-peer: agterm\nagtermctl zmx tree --json\n";
-        let cases: [(Clis<'_>, Option<i32>, &str); 6] = [
-            (&[("ngtermctl", 0), ("agtermctl", 0)], Some(0), ngterm),
+        let both = format!("{ngterm}{agterm}");
+        let cases: [(Clis<'_>, Option<i32>, &str); 8] = [
+            (&[("ngtermctl", 0), ("agtermctl", 0)], Some(0), &both),
             (&[("ngtermctl", 0)], Some(0), ngterm),
             (&[("agtermctl", 0)], Some(0), agterm),
-            (&[("ngtermctl", 1), ("agtermctl", 0)], Some(0), agterm),
-            (&[("ngtermctl", 1), ("agtermctl", 1)], Some(1), ngterm),
-            (&[("agtermctl", 1)], Some(1), agterm),
+            (&[("ngtermctl", 0), ("agtermctl", 3)], Some(0), ngterm),
+            (&[("ngtermctl", 2), ("agtermctl", 0)], Some(0), agterm),
+            (&[("ngtermctl", 2), ("agtermctl", 3)], Some(2), ngterm),
+            (&[("ngtermctl", 2)], Some(2), ngterm),
+            (&[("agtermctl", 3)], Some(3), agterm),
         ];
         for (clis, status, stdout) in cases {
             assert_eq!(
@@ -1059,6 +1128,11 @@ mod tests {
                 "{clis:?}"
             );
         }
+        let answers = crate::remote::peer::split_answers(&both);
+        assert_eq!(
+            (answers.ngterm, answers.agterm),
+            (Some(ngterm), Some("agtermctl zmx tree --json\n"))
+        );
         let none = run_remote_line("buildbox", &[]);
         assert_eq!(none.status.code(), Some(127), "the shell's command-not-found: {none:?}");
         assert!(none.stdout.is_empty());

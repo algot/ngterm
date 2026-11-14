@@ -9,10 +9,13 @@
 //! Which peer a host is:
 //! - a destination may pin it, `agterm:HOST` or `ngterm:HOST` ([`destination`]): the prefix stays in the row's host, so
 //!   every later command and a relaunch reach the same app, and ssh is given only `HOST`;
-//! - otherwise the listing finds it: the far side's `ngtermctl live tree` when it answers, else its `agtermctl zmx tree`,
-//!   in one ssh call ([`super::ssh::tree_tail`]), whose agterm answer starts with [`AGTERM_ANSWER`]. What it found is
-//!   stamped on the endpoint ([`ngterm_proto::ControlLiveEndpoint::peer`]) and learned for the host ([`learn`]); a
-//!   listing pinned to one app learns nothing.
+//! - otherwise the listing finds it: the far side's `ngtermctl live tree` and its `agtermctl zmx tree`, whichever is
+//!   installed and answers, in one ssh call ([`super::ssh::tree_tail`]), whose agterm answer follows the
+//!   [`AGTERM_ANSWER`] line. What it found is stamped on the endpoint ([`ngterm_proto::ControlLiveEndpoint::peer`])
+//!   and learned for the host ([`learn`]); a listing pinned to one app learns nothing.
+//! - a host that runs both answers with both: ngterm's sessions, and agterm's beside them
+//!   ([`ngterm_proto::ControlRemoteTree::beside`]), each with the endpoint its own sessions attach through. Such a
+//!   host is learned as ngterm, which a New Session there is asked of.
 //!
 //! A row attached from a host keeps the peer its endpoint was stamped with: every later command for that row, and its
 //! relaunch, go to that app, whichever one a later listing of the host finds. A new session asked of a host from the
@@ -115,13 +118,41 @@ pub fn learn(host: &str, peer: RemotePeer) {
         .insert(host.to_owned(), peer);
 }
 
-/// A listing's output without its [`AGTERM_ANSWER`] line, and the peer that line names (ngterm when there is none).
+/// What each app answered a listing with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Answers<'a> {
+    /// ngterm's: the output ahead of the [`AGTERM_ANSWER`] line, all of it when there is none.
+    pub ngterm: Option<&'a str>,
+    /// agterm's: the output after that line.
+    pub agterm: Option<&'a str>,
+}
+
+impl<'a> Answers<'a> {
+    /// The answer a failed listing's reason is read from: ngterm's when it gave one.
+    #[must_use]
+    pub fn first(self) -> &'a str {
+        self.ngterm.or(self.agterm).unwrap_or_default()
+    }
+}
+
+/// A listing's output split at its [`AGTERM_ANSWER`] line: a host that runs both apps answers with ngterm's output,
+/// the line, then agterm's; an agterm host with the line first. Only a whole line is the marker.
 #[must_use]
-pub fn split_answer(stdout: &str) -> (RemotePeer, &str) {
-    let trimmed = stdout.trim_start_matches(['\r', '\n']);
-    match trimmed.strip_prefix(AGTERM_ANSWER) {
-        Some(rest) if rest.is_empty() || rest.starts_with(['\r', '\n']) => (RemotePeer::Agterm, rest),
-        _ => (RemotePeer::Ngterm, stdout),
+pub fn split_answers(stdout: &str) -> Answers<'_> {
+    let mut start = 0;
+    for line in stdout.split_inclusive('\n') {
+        if line.trim_end_matches(['\r', '\n']) == AGTERM_ANSWER {
+            let own = &stdout[..start];
+            return Answers {
+                ngterm: (!own.trim().is_empty()).then_some(own),
+                agterm: Some(&stdout[start + line.len()..]),
+            };
+        }
+        start += line.len();
+    }
+    Answers {
+        ngterm: Some(stdout),
+        agterm: None,
     }
 }
 
@@ -318,16 +349,28 @@ mod tests {
 
     #[test]
     fn only_a_whole_marker_line_says_agterm() {
+        let both = |ngterm, agterm| Answers { ngterm, agterm };
         assert_eq!(
-            split_answer("ngterm-peer: agterm\n{\"ok\":true}"),
-            (RemotePeer::Agterm, "\n{\"ok\":true}")
+            split_answers("ngterm-peer: agterm\n{\"ok\":true}"),
+            both(None, Some("{\"ok\":true}"))
         );
-        assert_eq!(split_answer("ngterm-peer: agterm"), (RemotePeer::Agterm, ""));
-        assert_eq!(split_answer("{\"ok\":true}"), (RemotePeer::Ngterm, "{\"ok\":true}"));
+        assert_eq!(split_answers("\r\nngterm-peer: agterm\r\n{}"), both(None, Some("{}")));
+        assert_eq!(split_answers("ngterm-peer: agterm"), both(None, Some("")));
+        assert_eq!(split_answers("{\"ok\":true}"), both(Some("{\"ok\":true}"), None));
         assert_eq!(
-            split_answer("ngterm-peer: agtermx\n{}"),
-            (RemotePeer::Ngterm, "ngterm-peer: agtermx\n{}")
+            split_answers("ngterm-peer: agtermx\n{}"),
+            both(Some("ngterm-peer: agtermx\n{}"), None)
         );
+        assert_eq!(split_answers("{} ngterm-peer: agterm\n{}").agterm, None);
+    }
+
+    #[test]
+    fn a_host_running_both_answers_with_ngterms_output_then_agterms() {
+        let answers = split_answers("{\"own\":1}\nngterm-peer: agterm\n{\"theirs\":2}\n");
+        assert_eq!(answers.ngterm, Some("{\"own\":1}\n"));
+        assert_eq!(answers.agterm, Some("{\"theirs\":2}\n"));
+        assert_eq!(answers.first(), "{\"own\":1}\n");
+        assert_eq!(split_answers("ngterm-peer: agterm\n{}").first(), "{}");
     }
 
     #[test]

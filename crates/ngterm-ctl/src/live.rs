@@ -599,6 +599,14 @@ impl RequestCommand for Present {
 /// An empty answer says so rather than printing nothing, which a caller cannot tell from a failed read.
 #[must_use]
 pub fn format_remote_tree(tree: &ngterm_proto::ControlRemoteTree) -> String {
+    tree.apps()
+        .map(|app| format_app_tree(app, tree.beside.is_some()))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// One app's sessions; `beside` when the host's other app is listed too, so an empty answer names its app either way.
+fn format_app_tree(tree: &ngterm_proto::ControlRemoteTree, beside: bool) -> String {
     let place = tree
         .host
         .as_deref()
@@ -606,7 +614,7 @@ pub fn format_remote_tree(tree: &ngterm_proto::ControlRemoteTree) -> String {
         .unwrap_or_default();
     let peer = tree.endpoint.peer();
     if tree.sessions.is_empty() {
-        let app = if peer == ngterm_proto::RemotePeer::Ngterm {
+        let app = if peer == ngterm_proto::RemotePeer::Ngterm && !beside {
             String::new()
         } else {
             format!(" ({})", peer.name())
@@ -744,6 +752,38 @@ mod tests {
         );
         tree.endpoint.peer = None;
         assert_eq!(format_remote_tree(&tree), "  main/work/build  [S1]  /repo");
+    }
+
+    #[test]
+    fn a_host_running_both_apps_prints_ngterms_sessions_then_agterms_under_its_header() {
+        let session = |id: &str, name: &str| {
+            serde_json::json!({
+                "id": id, "name": name, "windowID": "w", "windowName": "main", "workspaceID": "ws",
+                "workspaceName": "work", "cwd": "/repo", "panes": [{"pane": "left", "daemon": "d"}]
+            })
+        };
+        let mut tree: ngterm_proto::ControlRemoteTree = serde_json::from_value(serde_json::json!({
+            "host": "studio",
+            "endpoint": {"executable": "/ngterm-session", "socketDirectory": "/tmp/n"},
+            "sessions": [session("N1", "build")],
+            "beside": {
+                "host": "studio",
+                "endpoint": {"executable": "/zmx", "socketDirectory": "/tmp/z", "peer": "agterm"},
+                "sessions": [session("A1", "notes")]
+            }
+        }))
+        .unwrap();
+        assert_eq!(
+            format_remote_tree(&tree),
+            "  main/work/build  [N1]  /repo\nagterm on studio: the agent chat view, Kitty clipboard paste, renames \
+             made there and page companions opened there later are not available\n  main/work/notes  [A1]  /repo"
+        );
+        tree.sessions.clear();
+        tree.beside.as_mut().unwrap().sessions.clear();
+        assert_eq!(
+            format_remote_tree(&tree),
+            "no attachable sessions on studio (ngterm)\nno attachable sessions on studio (agterm)"
+        );
     }
 
     #[test]

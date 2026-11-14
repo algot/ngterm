@@ -136,6 +136,7 @@ fn discovered(
     result: &super::tree::RemoteCommandResult,
 ) -> Result<Attached, ControlError> {
     let tree = read_remote_tree(result, &request.host).map_err(ControlError::rejected)?;
+    let tree = tree.listing(&request.session).clone();
     let remote = tree
         .sessions
         .iter()

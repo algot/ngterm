@@ -2146,6 +2146,7 @@ fn initial_remote_panes_pair_their_capability_gated_commands_and_nonces() {
             },
             sessions: vec![remote.clone()],
             presentation: None,
+            beside: None,
         };
         let result = fixture
             .core
@@ -2280,4 +2281,107 @@ fn a_row_agterm_answered_keeps_its_app_when_a_later_listing_finds_ngterm() {
     let line = attach.runner.lines()[2].clone();
     assert!(line.contains("agtermctl") && !line.contains("ngtermctl"), "{line}");
     assert!(line.contains("close") && line.contains(REMOTE_SESSION), "{line}");
+}
+
+/// What a Mac that runs both apps answers an unpinned listing with: ngterm's answer, the marker line, agterm's.
+fn both_listing(ngterm: &[serde_json::Value], agterm: &[serde_json::Value]) -> RemoteCommandResult {
+    RemoteCommandResult {
+        stdout: format!("{}\n{}\n", listing(ngterm).stdout, agterm_listing(agterm).stdout),
+        ..listing(ngterm)
+    }
+}
+
+const AGTERM_SESSION: &str = "A6000000-0000-0000-0000-0000000000A6";
+
+/// A session of the agterm on a Mac that runs both: its own id and name, its daemon zmx's.
+fn agterm_notes_session() -> serde_json::Value {
+    let mut session = agterm_build_session();
+    session["id"] = json!(AGTERM_SESSION);
+    session["name"] = json!("notes");
+    session
+}
+
+/// A Mac that runs both apps offers the sessions of both, agterm's named as such, and a picked agterm session
+/// attaches through agterm's zmx and keeps sending agterm its lines.
+#[test]
+fn a_host_running_both_apps_offers_both_and_attaches_each_through_its_own_app() {
+    let host = "both-listed.example";
+    let mut attach = Attach::new(Some(&format!("{host} Both\n")));
+    let window = attach.fixture.window;
+    attach.core().attach_remote(window);
+    attach.wait_for_runs(1);
+    let answer = || both_listing(&[build_session()], &[agterm_notes_session()]);
+    attach.runner.answer(0, answer());
+    attach.drive("the session picker opens", |attach| attach.pending().is_some());
+    let picker = attach.pending().unwrap();
+    let rows: Vec<(&str, &str)> = picker
+        .items
+        .iter()
+        .map(|item| (item.label.as_str(), item.subtitle.as_deref().unwrap_or_default()))
+        .collect();
+    assert_eq!(rows[0].0, "build");
+    assert!(!rows[0].1.contains("agterm"), "{rows:?}");
+    assert_eq!(rows[1].0, "notes");
+    assert!(rows[1].1.starts_with("agterm  ·  "), "{rows:?}");
+    assert_eq!(rows[2], ("Attach All", "2 sessions not attached here"));
+    assert_eq!(picker.items.len(), 4, "{rows:?}");
+
+    attach.resolve(&picker, picker.picked(1).unwrap());
+    attach.wait_for_runs(2);
+    attach.runner.answer(1, answer());
+    attach.drive("the attach lands", |attach| attach.remote_rows() == ["notes"]);
+    let row = attach.fixture.store().selected_session_id().unwrap();
+    let session = attach.fixture.store().session(row).unwrap();
+    assert_eq!(session.remote_host(), Some(host));
+    let command = crate::remote::viewer_run::readable(session.launch.command.as_ref().unwrap());
+    assert!(command.contains("'ZMX_DIR=/tmp/agterm-zmx-x'"), "{command}");
+    assert!(
+        command.contains("/Applications/agterm.app/Contents/MacOS/zmx"),
+        "{command}"
+    );
+    let saved = attach.fixture.store().snapshot().remote_sessions.unwrap();
+    assert_eq!(saved[0].peer, Some(crate::remote::peer::RemotePeer::Agterm));
+    // the host is still ngterm's for a line no row names
+    assert_eq!(
+        crate::remote::peer::peer_of(host),
+        crate::remote::peer::RemotePeer::Ngterm
+    );
+    attach.session = row;
+    assert!(attach.act(SidebarAction::EndRemoteSession(row)));
+    attach.wait_for_runs(3);
+    let line = attach.runner.lines()[2].clone();
+    assert!(line.contains("agtermctl") && !line.contains("ngtermctl"), "{line}");
+    assert!(line.contains("close") && line.contains(AGTERM_SESSION), "{line}");
+}
+
+/// Attach All on a Mac that runs both apps attaches the sessions of both, each through its own endpoint.
+#[test]
+fn attach_all_on_a_host_running_both_apps_attaches_the_sessions_of_both() {
+    let mut attach = Attach::new(Some("both-all.example Both\n"));
+    let window = attach.fixture.window;
+    attach.core().attach_remote(window);
+    attach.wait_for_runs(1);
+    let answer = || both_listing(&[build_session()], &[agterm_notes_session()]);
+    attach.runner.answer(0, answer());
+    attach.drive("the session picker opens", |attach| attach.pending().is_some());
+    let picker = attach.pending().unwrap();
+    let all = picker.items.iter().position(|item| item.label == "Attach All").unwrap();
+    attach.resolve(&picker, picker.picked(all).unwrap());
+    attach.wait_for_runs(2);
+    attach.runner.answer(1, answer());
+    attach.drive("both attach", |attach| attach.remote_rows().len() == 2);
+    assert_eq!(attach.remote_rows(), ["build", "notes"]);
+    let store = attach.fixture.store();
+    let command = |name: &str| {
+        let row = store.sessions().find(|row| row.display_name() == name).unwrap();
+        crate::remote::viewer_run::readable(row.launch.command.as_ref().unwrap())
+    };
+    assert!(command("build").contains("/ngterm-session"), "{}", command("build"));
+    assert!(
+        command("notes").contains("'ZMX_DIR=/tmp/agterm-zmx-x'"),
+        "{}",
+        command("notes")
+    );
+    let selected = store.session(store.selected_session_id().unwrap()).unwrap();
+    assert_eq!(selected.display_name(), "build", "only the first row is selected");
 }

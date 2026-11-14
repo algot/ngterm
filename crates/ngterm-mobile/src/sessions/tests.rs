@@ -189,7 +189,7 @@ async fn an_agterm_machine_is_learned_from_its_listing_and_gets_agterms_lines() 
     assert_eq!(tree.endpoint.peer, Some(RemotePeer::Agterm));
     let listed = listed_sessions(&tree);
     assert_eq!(listed[0].peer, Some(crate::peer::PeerKind::Agterm));
-    end(&connection, HOST, PARENT).await.expect("ended on agterm");
+    end(&connection, HOST, PARENT, None).await.expect("ended on agterm");
     let lines = commands(&transport);
     assert!(
         lines[1].contains("agtermctl") && !lines[1].contains("ngtermctl"),
@@ -228,7 +228,7 @@ async fn a_fresh_connections_first_control_line_lists_the_app_first() {
     );
     let connection = fresh(&transport).await;
 
-    end(&connection, HOST, PARENT).await.expect("ended on agterm");
+    end(&connection, HOST, PARENT, None).await.expect("ended on agterm");
 
     assert_eq!(
         commands(&transport),
@@ -250,7 +250,7 @@ async fn a_fresh_connection_whose_listing_fails_sends_no_control_line() {
     );
     let connection = fresh(&transport).await;
 
-    let error = end(&connection, HOST, PARENT).await.expect_err("nothing answers");
+    let error = end(&connection, HOST, PARENT, None).await.expect_err("nothing answers");
 
     assert!(error.contains("ngtermctl: not found"), "{error}");
     assert_eq!(
@@ -652,7 +652,7 @@ async fn duplicate_checks_live_duplicates_the_source_and_lists_until_the_copy_is
     let connection = connected(&transport).await;
     let mut listings = 0;
 
-    let (copy, tree) = duplicate(&connection, HOST, PARENT, || listings += 1)
+    let (copy, tree) = duplicate(&connection, HOST, (PARENT, None), || listings += 1)
         .await
         .expect("duplicated");
 
@@ -678,7 +678,9 @@ async fn duplicate_failures_say_why_and_nothing_is_duplicated_off_live_sessions(
     let transport = FakeTransport::new();
     transport.script(&restore_line(), restore_mode("off"));
     let connection = connected(&transport).await;
-    let error = duplicate(&connection, HOST, PARENT, || {}).await.expect_err("not live");
+    let error = duplicate(&connection, HOST, (PARENT, None), || {})
+        .await
+        .expect_err("not live");
     assert!(
         error.starts_with(&format!("{HOST} does not run live sessions")),
         "{error}"
@@ -690,7 +692,7 @@ async fn duplicate_failures_say_why_and_nothing_is_duplicated_off_live_sessions(
     transport.script(&duplicate_line(PARENT), refusal("no session matches"));
     let connection = connected(&transport).await;
     assert_eq!(
-        duplicate(&connection, HOST, PARENT, || {}).await.map(|_| ()),
+        duplicate(&connection, HOST, (PARENT, None), || {}).await.map(|_| ()),
         Err("no session matches".to_owned())
     );
 }
@@ -701,7 +703,7 @@ async fn duplicate_refuses_an_id_that_is_not_one_token_before_running_anything()
     let connection = connected(&transport).await;
 
     assert_eq!(
-        duplicate(&connection, HOST, "a; b", || {}).await.map(|_| ()),
+        duplicate(&connection, HOST, ("a; b", None), || {}).await.map(|_| ()),
         Err(INVALID_REMOTE_SESSION.to_owned())
     );
     assert!(transport.execs().is_empty());
@@ -715,7 +717,7 @@ async fn end_closes_the_session_there() {
     transport.script(&end_line(PARENT), ok(&json!({"ok": true, "result": {}})));
     let connection = connected(&transport).await;
 
-    assert_eq!(end(&connection, HOST, PARENT).await, Ok(()));
+    assert_eq!(end(&connection, HOST, PARENT, None).await, Ok(()));
     assert_eq!(commands(&transport), [end_line(PARENT)]);
 }
 
@@ -740,7 +742,7 @@ async fn end_failures_say_why() {
         transport.script(&end_line(PARENT), answer);
         let connection = connected(&transport).await;
 
-        assert_eq!(end(&connection, HOST, PARENT).await, Err(expected));
+        assert_eq!(end(&connection, HOST, PARENT, None).await, Err(expected));
     }
 }
 
@@ -750,10 +752,13 @@ async fn end_refuses_an_id_that_is_not_one_token_before_running_anything() {
     let connection = connected(&transport).await;
 
     assert_eq!(
-        end(&connection, HOST, "a b").await,
+        end(&connection, HOST, "a b", None).await,
         Err(INVALID_REMOTE_SESSION.to_owned())
     );
-    assert_eq!(end(&connection, HOST, "").await, Err(INVALID_REMOTE_SESSION.to_owned()));
+    assert_eq!(
+        end(&connection, HOST, "", None).await,
+        Err(INVALID_REMOTE_SESSION.to_owned())
+    );
     assert!(transport.execs().is_empty());
 }
 
@@ -775,6 +780,66 @@ fn forget_drops_the_session_and_its_companions() {
 
     let ids: Vec<&str> = tree.sessions.iter().map(|session| session.id.as_str()).collect();
     assert_eq!(ids, [CREATED]);
+}
+
+/// A listing of `ids` as `peer` answers it alone.
+fn app_tree(peer: RemotePeer, ids: &[&str]) -> ControlRemoteTree {
+    let sessions: Vec<serde_json::Value> = ids.iter().map(|id| session(id, id, None, None)).collect();
+    let script = listing(&sessions);
+    let stdout = String::from_utf8(script.stdout).expect("utf-8");
+    let stdout = match peer {
+        RemotePeer::Ngterm => stdout,
+        RemotePeer::Agterm => format!("{}\n{stdout}", ngterm_core::remote::peer::AGTERM_ANSWER),
+    };
+    let result = RemoteCommandResult {
+        status: 0,
+        stdout,
+        stderr: String::new(),
+    };
+    origin_replies::read_peer_tree(&result, HOST).expect("a listing")
+}
+
+fn listed_ids(tree: &ControlRemoteTree) -> Vec<(String, Option<crate::peer::PeerKind>)> {
+    listed_sessions(tree)
+        .into_iter()
+        .map(|session| (session.id, session.peer))
+        .collect()
+}
+
+/// New Session and Duplicate read one app's listing: on a machine that runs both, the other app's sessions stay as
+/// last listed, and an ended session leaves whichever app listed it.
+#[test]
+fn one_apps_listing_keeps_the_other_apps_sessions_of_a_machine_running_both() {
+    use crate::peer::PeerKind::{Agterm, Ngterm};
+
+    let both = ControlRemoteTree {
+        beside: Some(Box::new(app_tree(RemotePeer::Agterm, &[COMPANION]))),
+        ..app_tree(RemotePeer::Ngterm, &[PARENT])
+    };
+    let own = |id: &str| (id.to_owned(), Some(Ngterm));
+    let theirs = |id: &str| (id.to_owned(), Some(Agterm));
+
+    let made_on_own = beside_kept(app_tree(RemotePeer::Ngterm, &[PARENT, CREATED]), Some(&both));
+    assert_eq!(listed_ids(&made_on_own), [own(PARENT), own(CREATED), theirs(COMPANION)]);
+    let made_on_theirs = beside_kept(app_tree(RemotePeer::Agterm, &[COMPANION, CREATED]), Some(&both));
+    assert_eq!(
+        listed_ids(&made_on_theirs),
+        [own(PARENT), theirs(COMPANION), theirs(CREATED)]
+    );
+
+    // a machine that runs one app, or one never listed, keeps the fresh listing as it is
+    let alone = app_tree(RemotePeer::Agterm, &[CREATED]);
+    assert_eq!(beside_kept(alone.clone(), None), alone);
+    assert_eq!(
+        beside_kept(alone.clone(), Some(&app_tree(RemotePeer::Ngterm, &[PARENT]))),
+        alone
+    );
+    // a whole listing replaces what was kept
+    assert_eq!(beside_kept(both.clone(), Some(&made_on_theirs)), both);
+
+    let mut ended = made_on_theirs;
+    forget(&mut ended, COMPANION);
+    assert_eq!(listed_ids(&ended), [own(PARENT), theirs(CREATED)]);
 }
 
 // MARK: - phone wording
