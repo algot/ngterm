@@ -41,10 +41,17 @@ case "$1" in
     unpack)
         archive="$2" stage="$3"
         [[ -f "$archive" ]] || die "no archive at $archive"
+        # Before anything on disk changes: what is not STAGE_DIR would land beside it, over a sibling stage.
+        name="$(basename "$stage")"
+        members="$(tar -tf "$archive")" || die "$archive is not a readable archive"
+        while IFS= read -r member; do
+            [[ "$member" == "$name" || "$member" == "$name"/* ]] \
+                || die "$archive does not hold $name alone: ${member:-it is empty}"
+        done <<<"$members"
         mkdir -p "$(dirname "$stage")"
         rm -rf "$stage"
         tar -C "$(dirname "$stage")" -xf "$archive"
-        [[ -d "$stage" ]] || die "$archive does not hold $(basename "$stage")"
+        [[ -d "$stage" ]] || die "$archive does not hold $name as a directory"
         id_names_its_binary "$stage" \
             || die "$stage: its session build id no longer names bin/ngterm-session (size or modification time changed)"
         ;;

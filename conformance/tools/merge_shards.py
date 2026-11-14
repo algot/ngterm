@@ -140,15 +140,17 @@ def check_split(reports: list[ShardReport]) -> None:
 
 def merged_mode(reports: list[ShardReport]) -> tuple[bool, Any]:
     """The whole run's `partial` and `mode`. One `-k` or `-m` may narrow some shards' files and none of another's, so
-    the shards of one run differ there: the run is as narrowed as its most narrowed shard."""
+    the shards of one run differ there: the run is as narrowed as its most narrowed shard. No run holds two of the
+    other modes, a narrowed shard among them or not."""
     modes = {report.header.get("mode") for report in reports}
     partial = any(report.header.get("partial") for report in reports)
+    whole = modes - {selection.PARTIAL}
+    if len(whole) > 1:
+        raise MergeError(f"the shards ran in different modes ({', '.join(sorted(map(repr, whole)))}): "
+                         f"{', '.join(str(report.directory) for report in reports)}")
     if selection.PARTIAL in modes:
         return True, selection.PARTIAL
-    if len(modes) > 1:
-        raise MergeError(f"the shards ran in different modes ({', '.join(sorted(map(repr, modes)))}): "
-                         f"{', '.join(str(report.directory) for report in reports)}")
-    return partial, modes.pop()
+    return partial, whole.pop()
 
 
 def merged_records(reports: list[ShardReport]) -> list[dict[str, Any]]:

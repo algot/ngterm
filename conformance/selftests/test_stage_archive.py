@@ -53,6 +53,24 @@ def test_a_stage_whose_build_id_names_another_binary_is_refused(tmp_path: Path, 
     assert "its session build id no longer names bin/ngterm-session" in done.stderr
 
 
+def test_an_archive_with_more_than_the_stage_leaves_the_disk_as_it_was(tmp_path: Path, stage: Path) -> None:
+    """Nothing lands beside the stage, and the stage of an earlier unpack stays."""
+    (stage.parent / "other").write_text("beside the stage")
+    tar = tmp_path / "stage.tar"
+    subprocess.run(["tar", "--format=posix", "-C", stage.parent, "-cf", tar, stage.name, "other"], check=True)
+    unpacked = tmp_path / "shard" / "conformance-stage"
+    unpacked.mkdir(parents=True)
+    (unpacked / "earlier").write_text("of an earlier unpack")
+    done = archive("unpack", tar, unpacked)
+    assert done.returncode == 1 and "does not hold conformance-stage alone: other" in done.stderr
+    assert sorted(path.name for path in unpacked.parent.iterdir()) == ["conformance-stage"]
+    assert (unpacked / "earlier").exists()
+    tar.write_bytes(b"not a tar")
+    done = archive("unpack", tar, unpacked)
+    assert done.returncode == 1 and "is not a readable archive" in done.stderr
+    assert (unpacked / "earlier").exists()
+
+
 def test_a_stage_without_the_server_has_no_id_to_keep(tmp_path: Path) -> None:
     stage = tmp_path / "built" / "conformance-stage"
     (stage / "bin").mkdir(parents=True)
@@ -66,7 +84,8 @@ def test_an_archive_of_another_directory_or_a_missing_one_is_refused(tmp_path: P
     tar = tmp_path / "stage.tar"
     assert archive("pack", stage, tar).returncode == 0
     done = archive("unpack", tar, tmp_path / "shard" / "conformance-stage-cov")
-    assert done.returncode == 1 and "does not hold conformance-stage-cov" in done.stderr
+    assert done.returncode == 1 and "does not hold conformance-stage-cov alone: conformance-stage/" in done.stderr
+    assert not (tmp_path / "shard").exists()
     done = archive("unpack", tmp_path / "none.tar", tmp_path / "shard" / "conformance-stage")
     assert done.returncode == 1 and "no archive at" in done.stderr
     done = archive("pack", tmp_path / "none", tar)

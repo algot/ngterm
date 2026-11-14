@@ -310,6 +310,20 @@ def test_a_full_shard_and_a_ratchet_only_one_do_not_merge(pytester: pytest.Pytes
     assert "the shards ran in different modes ('full', 'ratchet-only')" in done.stderr
 
 
+def test_a_narrowed_shard_does_not_let_a_full_and_a_ratchet_only_one_merge(
+    pytester: pytest.Pytester, tmp_path: Path
+) -> None:
+    pytester.makepyfile(**{name.removesuffix(".py"): body for name, body in FILES.items()})
+    directories = run_shards(pytester, 3)
+    for directory, mode in zip(directories[1:], ("ratchet-only", "partial"), strict=True):
+        records = read(directory / "nodeids.jsonl")
+        records[0].update(partial=True, mode=mode)
+        (directory / "nodeids.jsonl").write_text("".join(json.dumps(record) + "\n" for record in records))
+    done = merge("--out", tmp_path / "merged", *directories)
+    assert done.returncode == 2
+    assert "the shards ran in different modes ('full', 'ratchet-only')" in done.stderr
+
+
 def test_a_shard_given_twice_or_a_test_in_two_shards_is_refused(pytester: pytest.Pytester, tmp_path: Path) -> None:
     pytester.makepyfile(**{name.removesuffix(".py"): body for name, body in FILES.items()})
     first, second = run_shards(pytester, 2)
