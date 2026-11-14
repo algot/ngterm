@@ -12,8 +12,11 @@
 # (conformance/agterm_conformance/fake_agterm.py: its `agtermctl` and bundled `zmx`, no `ngtermctl`), seeded with one
 # session; no live agterm is involved.
 #
-# On exit it stops the instance and sshd by the pids they recorded, ends the stand-in agterm's processes (those with
-# its private home), ends every session of the private namespace through that namespace's own session server and
+# On a third port it answers as one host that runs both apps (BothAppsE2eTest): its logins see this run's ngterm and a
+# second stand-in agterm with a session of its own, so a listing asks both.
+#
+# On exit it stops the instance and sshd by the pids they recorded, ends the stand-in agterms' processes (those with
+# their private homes), ends every session of the private namespace through that namespace's own session server and
 # removes the namespace's directory, and drops the port reverses. The scratch directory is removed after a pass and
 # kept after a failure (headless.log, sshd/sshd.log). With --evidence DIR, the tests' screenshots and the
 # device's log of the run are copied into DIR.
@@ -95,15 +98,17 @@ PRIVATE=(env -i "NGTERM_STATE_DIR=$WORK/s" "HOME=$WORK/home" "PATH=$WORK/stage/b
   "USER=$USER_NAME" "LOGNAME=$USER_NAME" LANG=C.UTF-8)
 PORT=
 AGTERM_PORT=
+BOTH_PORT=
 AGTERM="$WORK/agterm"
+BOTH="$WORK/both"
 
-# of the given pids (all this user's when none is given), those of the processes the stand-in agterm's logins started:
-# each has its private home
+# of the given pids (all this user's when none is given), those of the processes the logins of the stand-in agterm
+# machine and of the host that runs both started: each has that machine's private home
 agterm_procs() {
   local pid pids=("$@")
   (($#)) || mapfile -t pids < <(pgrep -u "$(id -u)" 2>/dev/null || true)
   for pid in "${pids[@]}"; do
-    grep -qzxF "HOME=$AGTERM/home" "/proc/$pid/environ" 2>/dev/null && echo "$pid"
+    grep -qzxF -e "HOME=$AGTERM/home" -e "HOME=$BOTH/home" "/proc/$pid/environ" 2>/dev/null && echo "$pid"
   done
   return 0
 }
@@ -142,9 +147,9 @@ reap() {
       rm -rf "$namespace"
     fi
   fi
-  # the stand-in agterm's streams and shells, which outlive a connection the device dropped unclosed: every process its
-  # logins started has its private home. An interactive shell ignores TERM, so HUP goes with it and KILL ends what is
-  # left a moment later
+  # the stand-in agterms' streams and shells, which outlive a connection the device dropped unclosed: every process
+  # their logins started has their machine's private home. An interactive shell ignores TERM, so HUP goes with it and
+  # KILL ends what is left a moment later
   pids="$(agterm_procs)"
   # shellcheck disable=SC2086 # one pid per word
   if [[ -n "$pids" ]]; then
@@ -159,6 +164,7 @@ reap() {
   fi
   [[ -z "$PORT" ]] || "$ADB" reverse --remove "tcp:$PORT" >/dev/null 2>&1 || true
   [[ -z "$AGTERM_PORT" ]] || "$ADB" reverse --remove "tcp:$AGTERM_PORT" >/dev/null 2>&1 || true
+  [[ -z "$BOTH_PORT" ]] || "$ADB" reverse --remove "tcp:$BOTH_PORT" >/dev/null 2>&1 || true
 }
 collect() {
   [[ -n "$EVIDENCE" ]] || return 0
@@ -219,18 +225,20 @@ exec /bin/sh -c "\$SSH_ORIGINAL_COMMAND"
 EOF
 chmod 755 "$WORK/force-command.sh"
 
-# the stand-in agterm Mac: agterm's CLI on its PATH and its app bundle's zmx, as conformance's AgtermMac lays them out,
-# with one live session; its logins never see this build's binaries
-mkdir -p "$AGTERM/bin" "$AGTERM/agterm.app" "$AGTERM/home" "$AGTERM/zmx-sockets"
+# a stand-in agterm in the directory $1: agterm's CLI in its bin and its app bundle's zmx, as conformance's AgtermMac
+# lays them out, with one live session named $2
 FAKE_AGTERM="$NATIVE_ROOT/conformance/agterm_conformance/fake_agterm.py"
 PYTHON="$(command -v python3)"
-for program in agtermctl zmx; do
-  wrapper="$AGTERM/bin/agtermctl"
-  [[ "$program" == zmx ]] && wrapper="$AGTERM/agterm.app/zmx"
-  printf '#!/bin/sh\nexec %q -I %q %q %s "$@"\n' "$PYTHON" "$FAKE_AGTERM" "$AGTERM" "$program" >"$wrapper"
-  chmod 755 "$wrapper"
-done
-python3 -I - "$FAKE_AGTERM" "$AGTERM" <<'PY'
+stand_in_agterm() {
+  local root="$1" program wrapper
+  mkdir -p "$root/bin" "$root/agterm.app" "$root/home" "$root/zmx-sockets"
+  for program in agtermctl zmx; do
+    wrapper="$root/bin/agtermctl"
+    [[ "$program" == zmx ]] && wrapper="$root/agterm.app/zmx"
+    printf '#!/bin/sh\nexec %q -I %q %q %s "$@"\n' "$PYTHON" "$FAKE_AGTERM" "$root" "$program" >"$wrapper"
+    chmod 755 "$wrapper"
+  done
+  python3 -I - "$FAKE_AGTERM" "$root" "$2" <<'PY'
 import importlib.util, os, sys, uuid
 spec = importlib.util.spec_from_file_location("fake_agterm", sys.argv[1])
 fake = importlib.util.module_from_spec(spec)
@@ -240,7 +248,7 @@ daemon = f"agterm-{uuid.uuid4().hex}"
 window = {"id": str(uuid.uuid4()).upper(), "name": "Main"}
 workspace = {"id": str(uuid.uuid4()).upper(), "name": "work"}
 session = {
-    "id": str(uuid.uuid4()).upper(), "name": "qa-agterm-work",
+    "id": str(uuid.uuid4()).upper(), "name": sys.argv[3],
     "windowID": window["id"], "windowName": window["name"],
     "workspaceID": workspace["id"], "workspaceName": workspace["name"],
     "cwd": os.path.join(root, "home"), "panes": [{"pane": "left", "daemon": daemon}],
@@ -251,6 +259,10 @@ fake.save_state(fake.Path(root), {
     "window": window, "workspace": workspace, "sessions": [session], "daemons": [daemon],
 })
 PY
+}
+
+# the stand-in agterm Mac: its logins never see this build's binaries
+stand_in_agterm "$AGTERM" qa-agterm-work
 cat >"$WORK/agterm-command.sh" <<EOF
 #!/bin/sh
 export HOME='$AGTERM/home'
@@ -259,18 +271,30 @@ exec /bin/sh -c "\$SSH_ORIGINAL_COMMAND"
 EOF
 chmod 755 "$WORK/agterm-command.sh"
 
+# the host that runs both apps: this run's ngterm, and beside it a stand-in agterm of its own, in one login
+stand_in_agterm "$BOTH" qa-both-agterm
+cat >"$WORK/both-command.sh" <<EOF
+#!/bin/sh
+export NGTERM_STATE_DIR='$WORK/s'
+export HOME='$BOTH/home'
+export PATH='$WORK/stage/bin:$BOTH/bin:/usr/bin:/bin'
+exec /bin/sh -c "\$SSH_ORIGINAL_COMMAND"
+EOF
+chmod 755 "$WORK/both-command.sh"
+
 # a free port is taken back from the kernel before sshd binds it, so another process may win it: three tries
 for ((try = 0; try < 3; try++)); do
-  read -r PORT AGTERM_PORT < <(python3 -I -c '
+  read -r PORT AGTERM_PORT BOTH_PORT < <(python3 -I -c '
 import socket
-a, b = socket.socket(), socket.socket()
-a.bind(("127.0.0.1", 0))
-b.bind(("127.0.0.1", 0))
-print(a.getsockname()[1], b.getsockname()[1])')
+sockets = [socket.socket() for _ in range(3)]
+for one in sockets:
+    one.bind(("127.0.0.1", 0))
+print(*(one.getsockname()[1] for one in sockets))')
   cat >"$WORK/sshd/sshd_config" <<EOF
 ListenAddress 127.0.0.1
 Port $PORT
 Port $AGTERM_PORT
+Port $BOTH_PORT
 HostKey "$WORK/sshd/host_ed25519"
 PidFile "$WORK/sshd/sshd.pid"
 AuthorizedKeysFile "${WORK//%/%%}/sshd/authorized_keys"
@@ -291,22 +315,27 @@ ForceCommand '$WORK/force-command.sh'
 LogLevel VERBOSE
 Match LocalPort $AGTERM_PORT
   ForceCommand '$WORK/agterm-command.sh'
+Match LocalPort $BOTH_PORT
+  ForceCommand '$WORK/both-command.sh'
 EOF
   env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin "$SSHD" -D -f "$WORK/sshd/sshd_config" -E "$WORK/sshd/sshd.log" \
     </dev/null >/dev/null 2>&1 &
   for ((i = 0; i < 150; i++)); do
     banner="$(timeout 2 bash -c "exec 3<>/dev/tcp/127.0.0.1/$PORT && head -c 4 <&3" 2>/dev/null || true)"
     other="$(timeout 2 bash -c "exec 3<>/dev/tcp/127.0.0.1/$AGTERM_PORT && head -c 4 <&3" 2>/dev/null || true)"
-    [[ "$banner" == SSH- && "$other" == SSH- ]] && break 2
+    third="$(timeout 2 bash -c "exec 3<>/dev/tcp/127.0.0.1/$BOTH_PORT && head -c 4 <&3" 2>/dev/null || true)"
+    [[ "$banner" == SSH- && "$other" == SSH- && "$third" == SSH- ]] && break 2
     sleep 0.1
   done
   [[ -s "$WORK/sshd/sshd.pid" ]] && kill -TERM "$(<"$WORK/sshd/sshd.pid")" 2>/dev/null || true
   PORT=
   AGTERM_PORT=
+  BOTH_PORT=
 done
 [[ -n "$PORT" ]] || die "sshd never answered: $WORK/sshd/sshd.log"
 "$ADB" reverse "tcp:$PORT" "tcp:$PORT" >/dev/null
 "$ADB" reverse "tcp:$AGTERM_PORT" "tcp:$AGTERM_PORT" >/dev/null
+"$ADB" reverse "tcp:$BOTH_PORT" "tcp:$BOTH_PORT" >/dev/null
 
 "$ADB" shell rm -rf "$DEVICE_EVIDENCE"
 "$ADB" shell mkdir -p "$DEVICE_EVIDENCE"
@@ -327,6 +356,7 @@ for test in "${TESTS[@]}"; do
     -Pandroid.testInstrumentationRunnerArguments.e2eHost=127.0.0.1 \
     -Pandroid.testInstrumentationRunnerArguments.e2ePort="$PORT" \
     -Pandroid.testInstrumentationRunnerArguments.e2eAgtermPort="$AGTERM_PORT" \
+    -Pandroid.testInstrumentationRunnerArguments.e2eBothPort="$BOTH_PORT" \
     -Pandroid.testInstrumentationRunnerArguments.e2eUser="$USER_NAME" \
     -Pandroid.testInstrumentationRunnerArguments.e2eKey="$(base64 -w0 "$WORK/client_ed25519")"
 done
