@@ -916,13 +916,16 @@ zmx under zmx's attach and lead variables, its role reports read under zmx's tit
 viewer: a Unix desktop's pane runs ssh from its `/bin/sh` script, a Windows desktop's through `ngtermctl viewer-run`, the
 mobile core over its own ssh channels, and each only sends that Mac the command strings.
 
-- Which app: a listing runs the far side's `ngtermctl live tree` when it is installed and answers, else its
+- Which app: a listing asks each app installed on the far side, its `ngtermctl live tree` and its
   `agtermctl zmx tree` under a marker line, in one ssh call. The viewer stamps the answer on the endpoint
-  (`endpoint.peer`, in `live tree HOST --json` too). A row keeps the app its endpoint names: its later lines, the
+  (`endpoint.peer`, in `live tree HOST --json` too). A Mac that runs both answers with both: ngterm's sessions, and
+  agterm's beside them with their own endpoint (`beside` in `live tree HOST --json`), so the picker, Attach All,
+  `live attach HOST ID` and the mobile core's listing offer the sessions of both, each attached, streamed and ended
+  through the app that listed it. An app that fails beside one that answers is left out. A row keeps the app its endpoint names: its later lines, the
   listings its own flows wait on (split, companion, New/Duplicate Session) and its relaunch go to that app only, so an
   app that starts or stops on that Mac later moves none of them, and a saved row records its app (`peer` in
   `remoteSessions`) for a relaunch listing pinned to it. A line for no row (New Session from the picker) follows what
-  the host's last listing found. A destination may pin the app, `agterm:HOST` or `ngterm:HOST` (`remotes.conf`,
+  the host's last listing found, ngterm on a Mac that runs both. A destination may pin the app, `agterm:HOST` or `ngterm:HOST` (`remotes.conf`,
   `live tree`, `live attach`); the pin stays in the row's host, and ssh gets only `HOST`. The mobile core lists a fresh
   connection's machine before its first control line, so that line is never guessed at the app.
 - What agterm lacks (`peer::Capabilities`): the agent chat view (the mobile core refuses its calls), the Kitty clipboard

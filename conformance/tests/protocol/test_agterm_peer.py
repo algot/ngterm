@@ -4,7 +4,7 @@ as agterm v0.41.1 does (`agterm_conformance.fake_agterm`), reached by the instan
 (`agterm_conformance.loopback_ssh`).
 
 The module's viewer runs with the machines' ssh client first on its PATH. `studio` runs agterm alone; `both` runs agterm
-and an ngterm (another instance of the build, Live on), so the listing's choice between them shows. Each test adds the
+and an ngterm (another instance of the build, Live on), so a listing of both apps shows. Each test adds the
 sessions it needs to the app on `studio` and closes the rows it attached; the app keeps no state between tests that a
 test reads."""
 
@@ -180,25 +180,61 @@ def both(world, adapter, request):
         adapter.stop(origin)
 
 
-def test_a_host_running_both_apps_answers_with_ngterm_unless_pinned_to_agterm(vcli, both):
-    mac, _origin = both
+def test_a_host_running_both_apps_lists_the_sessions_of_both_and_a_pin_lists_one(vcli, both):
+    mac, origin = both
     mac.remove_all()
     agterm_session = mac.add_session("from-agterm")
+    ngterm_ids = {s["id"] for s in sessions(origin.tree())}
     plain = vcli("live", "tree", "both", "--json")
     assert plain.returncode == 0, plain.stderr
     remote = plain.json()["result"]["remote"]
+    # ngterm's answer, with agterm's beside it: each app's sessions under the endpoint they attach through
     assert "peer" not in remote["endpoint"], remote["endpoint"]
-    assert agterm_session["id"] not in {s["id"] for s in remote["sessions"]}
-    assert not [c for c in mac.calls("agtermctl") if c["argv"][:2] == ["zmx", "tree"]], "ngterm answered first"
+    assert {s["id"] for s in remote["sessions"]} <= ngterm_ids, remote["sessions"]
+    beside = remote["beside"]
+    assert beside["host"] == "both"
+    assert beside["endpoint"] == {**mac.endpoint, "peer": "agterm"}
+    assert [s["id"] for s in beside["sessions"]] == [agterm_session["id"]]
+    assert mac.calls("agtermctl")[-1]["argv"] == ["zmx", "tree", "--json"], "one listing asked both apps"
 
     text = vcli("live", "tree", "both")
-    assert "agterm" not in text.stdout, text.stdout
+    assert (text.returncode, text.stderr) == (0, ""), text.stdout
+    lines = text.stdout.splitlines()
+    header = lines.index(f"agterm on both: {MISSING}")
+    assert header > 0 and "agterm" not in "".join(lines[:header]), text.stdout
+    assert lines[header + 1 :] == [f"  Main/work/from-agterm  [{agterm_session['id']}]  {agterm_session['cwd']}"]
 
     pinned = vcli("live", "tree", "agterm:both", "--json")
     assert pinned.returncode == 0, pinned.stderr
     remote = pinned.json()["result"]["remote"]
     assert remote["endpoint"]["peer"] == "agterm"
     assert [s["id"] for s in remote["sessions"]] == [agterm_session["id"]]
+    assert "beside" not in remote, remote
+
+    own = vcli("live", "tree", "ngterm:both", "--json").json()["result"]["remote"]
+    assert {s["id"] for s in own["sessions"]} <= ngterm_ids and "beside" not in own, own
+
+
+def test_an_agterm_session_beside_an_ngterm_attaches_through_the_macs_own_zmx(viewer, vcli, both):
+    mac, _origin = both
+    mac.remove_all()
+    build = mac.add_session("beside")
+    daemon = build["panes"][0]["daemon"]
+    before = {s["id"] for s in _sessions(viewer)}
+    try:
+        local = _attach(vcli, "both", build["id"])
+        session = find_session(viewer.tree(), local)
+        assert (session["name"], session["remoteHost"]) == ("beside", "both")
+        wait_text(viewer, local, re.escape(f"attached {daemon}"), timeout=30)
+        env = _zmx_attaches(mac, daemon)[0]["env"]
+        assert env.get("ZMX_DIR") == mac.endpoint["socketDirectory"], env
+        # the row's stream opens with agterm's CLI, though the host's own listing is ngterm's
+        mac.wait_call(lambda call: call["argv"] == ["zmx", "present", build["id"]], program="agtermctl")
+    finally:
+        for session in _sessions(viewer):
+            if session["id"] not in before:
+                viewer.request("session.close", session["id"])
+        mac.remove_all()
 
 
 # -- attaching
