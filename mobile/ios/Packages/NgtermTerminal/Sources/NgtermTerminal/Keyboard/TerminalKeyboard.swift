@@ -228,7 +228,7 @@ public final class TerminalKeyboard {
         guard hardware.isAttached, target == nil, chatField == nil else {
             return
         }
-        guard !otherHoldsKeyboard else {
+        guard !otherHoldsKeyboard() else {
             handingOver = nil
             return
         }
@@ -240,14 +240,14 @@ public final class TerminalKeyboard {
 
     // whether a view that is neither a terminal nor a chat's field is the first responder in a window the terminals
     // are in: one of a sheet over the session, which tells this keyboard nothing
-    private var otherHoldsKeyboard: Bool {
+    private func otherHoldsKeyboard() -> Bool {
         let windows = Set(terminals.allObjects.compactMap(\.window))
         return windows.contains { window in
-            Self.firstResponder(in: window).map { !($0 is TerminalView) } ?? false
+            firstResponder(in: window).map { !($0 is TerminalView) } ?? false
         }
     }
 
-    private static func firstResponder(in view: UIView) -> UIView? {
+    private func firstResponder(in view: UIView) -> UIView? {
         if view.isFirstResponder {
             return view
         }
