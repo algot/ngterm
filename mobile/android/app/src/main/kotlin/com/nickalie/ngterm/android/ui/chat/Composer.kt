@@ -107,12 +107,12 @@ private fun HeldLine(modifier: Modifier = Modifier) {
 fun KeepDraft(
     pane: PaneRef,
     composer: ChatComposer,
-    conversation: String?,
+    conversation: () -> String?,
     onRestore: (conversation: String, text: String) -> Unit,
 ) {
     val named by rememberUpdatedState(conversation)
     val restore by rememberUpdatedState(onRestore)
-    val kept = rememberSaveable(pane, saver = keptDraftSaver(pane, composer) { named }) { KeptDraft(null, "") }
+    val kept = rememberSaveable(pane, saver = keptDraftSaver(pane, composer) { named() }) { KeptDraft(null, "") }
     LaunchedEffect(kept) {
         val written = kept.conversation ?: return@LaunchedEffect
         restore(written, kept.text)

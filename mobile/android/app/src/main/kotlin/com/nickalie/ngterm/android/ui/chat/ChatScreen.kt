@@ -67,8 +67,7 @@ fun ChatPane(
                 onUploadShown = chat::uploadShown,
             )
         }
-    // a conversation with nothing said yet has no events to name it: the one its pane announced stands in
-    KeepDraft(chat.pane, chat.composer, state.conversation?.conversationId ?: chat.conversation, chat::restoreDraft)
+    KeepDraft(chat.pane, chat.composer, chat::conversation, chat::restoreDraft)
     ChatScreen(state, machine, actions, modifier, chat.composer, focusRequester, selected)
 }
 

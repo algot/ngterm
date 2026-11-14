@@ -190,6 +190,8 @@ class ChatViewModel internal constructor(
     val pane: PaneRef,
     // the conversation the pane announced as the chat opened: the one it follows until its events name it
     private val opened: String?,
+    // the conversation the pane's agent announces now
+    private val announced: () -> String?,
     private val core: MobileCoreInterface,
     private val handle: () -> PaneInterface?,
     // how many times each machine's link has come up (MachineState.Connected), by id
@@ -207,11 +209,15 @@ class ChatViewModel internal constructor(
     val state: StateFlow<ChatUiState> = chat.asStateFlow()
 
     /**
-     * The conversation the chat follows: the one its events named, else the one its pane announced as it opened,
-     * until a `reset` says the pane has moved on to one still to be named.
+     * The conversation the chat follows: the one its events named, else the one its pane announced as it opened. After
+     * a `reset` (the pane moved on, or a chat with nothing said yet came back from a lost link) it is the one the pane
+     * announces now, until the events name it.
      */
     internal val conversation: String?
-        get() = chat.value.let { now -> now.conversation?.conversationId ?: opened.takeIf { now.epoch == 0 } }
+        get() {
+            val now = chat.value
+            return now.conversation?.conversationId ?: if (now.epoch == 0) opened else announced()
+        }
 
     /** The prompt being written and its `/` menu. Main thread only. */
     val composer =

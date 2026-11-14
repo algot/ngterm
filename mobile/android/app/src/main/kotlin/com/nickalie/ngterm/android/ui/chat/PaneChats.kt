@@ -244,6 +244,7 @@ class PaneChats(
             ChatViewModel(
                 pane = pane,
                 opened = opened,
+                announced = { sessions.value.agent(pane)?.conversation },
                 core = connections.core,
                 handle = { shown.value[pane]?.pane },
                 connects = connects,

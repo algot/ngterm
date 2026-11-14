@@ -79,11 +79,7 @@ class ChatComposerTest {
     private fun names(): List<String>? = (composer.menu as? SlashMenu.Commands)?.commands?.map { it.name }
 
     // what saving the app's state keeps of [chat]'s draft
-    private fun saver(chat: ChatViewModel) =
-        keptDraftSaver(chat.pane, chat.composer) {
-            chat.state.value.conversation
-                ?.conversationId
-        }
+    private fun saver(chat: ChatViewModel) = keptDraftSaver(chat.pane, chat.composer, chat::conversation)
 
     private fun asked() =
         bed.test.core.calls
@@ -406,7 +402,9 @@ class ChatComposerTest {
     @Test
     fun aKeptDraftStaysOutOfTheConversationThatTookItsOwnsPlace() {
         // the pane moved on from the conversation it announced as the chat opened
+        bed.agent("p1", conversation = "c2")
         bed.emit("p1", reset)
+        assertTrue(bed.chat("p1") === chat)
         chat.restoreDraft("c1", "Fix the guide")
         assertEquals("", composer.draft.text)
         bed.emit("p1", event("conv2", ChatBody.Conversation("claude", "c2", null, null)))
@@ -415,6 +413,19 @@ class ChatComposerTest {
         assertEquals("", composer.draft.text)
         chat.restoreDraft("c2", "the new one's")
         assertEquals("the new one's", composer.draft.text)
+    }
+
+    @Test
+    fun aChatBackFromALostLinkStillKeepsTheDraftOfTheConversationItsPaneAnnounces() {
+        // a chat with nothing said yet comes back with a reset, its pane still in the same conversation
+        bed.emit("p1", reset)
+        type("Fix the guide")
+        val saved = with(saver(chat)) { SaverScope { true }.save(KeptDraft(null, "")) }!!
+        val kept = saver(chat).restore(saved)!!
+        assertEquals("c1", kept.conversation)
+        type("")
+        chat.restoreDraft("c1", kept.text)
+        assertEquals("Fix the guide", composer.draft.text)
     }
 
     @Test
@@ -449,6 +460,7 @@ class ChatComposerTest {
         assertFalse(keeps(again))
         again.composer.edit(TextFieldValue("x"))
         assertTrue(keeps(again))
+        bed.agent("p1", conversation = null)
         bed.emit("p1", reset)
         assertFalse(keeps(again))
     }
