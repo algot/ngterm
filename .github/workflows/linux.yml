@@ -456,16 +456,18 @@ jobs:
   # (vulkan-swrast) and the harness makes it the only Vulkan driver; its weston gets --fake-seat
   # (scripts/build-weston.sh builds the pinned one where Arch's lacks it).
   #
-  # Four jobs make it:
-  # - conformance-build: the stage, built once for every shell (run-linux.sh --build-only) and once more instrumented
-  #   (--coverage), each kept a day as an artifact (a tar: an artifact drops the programs' mode bits). It waits for no
-  #   other job: the build takes as long as the `linux` job, which the suite waits for.
+  # Four kinds of job make it, the instrumented stage's in jobs of their own (`-cov`, the same steps), so a build
+  # that fails takes only its own stage's shards and reports with it:
+  # - conformance-build, conformance-build-cov: the stage, built once for every shell (run-linux.sh --build-only),
+  #   and the instrumented one (--coverage), each kept a day as an artifact (tools/stage-archive.sh: a tar that keeps
+  #   the programs' mode bits and the modification time the live sessions' server's build id names). They wait for
+  #   no other job: a build takes as long as the `linux` job, which the suite waits for.
   # - process-tests: the app's process tests with the HTML overlays on.
-  # - conformance: the suite, each leg split by test file into the shards of its matrix (run-linux.sh --stage
-  #   --shard I/N, agterm_conformance/shards.py; the matrix's `shard` list and the N of its run step go together), on
-  #   the stage the build job made. A shard builds nothing; it judges the listed ids it ran, so a red one fails its
-  #   own job, with its log and traces.
-  # - conformance-report: a leg's shards joined into its one report (tools/merge_shards.py: nodeids.jsonl, junit.xml,
+  # - conformance, conformance-cov: the suite, each leg split by test file into the shards of its matrix
+  #   (run-linux.sh --stage --shard I/N, agterm_conformance/shards.py; the matrix's `shard` list and the N of its run
+  #   step go together), on the stage its build job made. A shard builds nothing; it judges the listed ids it ran, so
+  #   a red one fails its own job, with its log and traces.
+  # - conformance-report, conformance-report-cov: a leg's shards joined into its one report (tools/merge_shards.py: nodeids.jsonl, junit.xml,
   #   pytest.log, traces/), the ratchet judged on it whole. A shard that left no report, or a set that is not one
   #   whole split, fails it: no listed id goes unjudged. `--must-pass` capabilities are held there too, over all the
   #   shards. The report keeps the leg's artifact name; each shard's own is kept three days beside it.
@@ -482,7 +484,8 @@ jobs:
   #   `--must-pass agterm-peer` (the Rust-only attach of an upstream agterm Mac, whose tests reach a loopback sshd:
   #   openssh below), `--must-pass shell-profiles` (the Rust-only shell profiles a pane runs in place of the login
   #   shell) and `--must-pass web-worker-faults` (the page worker's faults a launch asks for, Rust-only).
-  # - coverage: the zsh entry again on the instrumented stage (run-linux.sh --coverage: the toolchain's llvm-tools read
+  # - coverage (the `-cov` jobs): the zsh entry again on the instrumented stage (run-linux.sh --coverage: the
+  #   toolchain's llvm-tools read
   #   each shard's profiles against the staged programs), every layer. The report job joins the shards' lcov into the
   #   desktop app's e2e line coverage on Linux (code_coverage.py e2e: a line run in any shard counts as run; the
   #   total, its distance to 90% and the share markers exclude, per crate), judged by
@@ -501,17 +504,15 @@ jobs:
         include:
           - build: release
             stage: conformance-stage
-          - build: coverage
-            stage: conformance-stage-cov
-            flag: --coverage
-    container:
+            flag: ""
+    container: &conformance-container
       # archlinux:base-devel-20261011.0.609700
       image: archlinux:base-devel@sha256:061679925e5d5028f2df9395d441ce6c4b9accf0157ff3486c06b6962e014ef1
       options: --privileged --init
-    env:
+    env: &conformance-env
       CARGO_TERM_COLOR: always
       ARCH_SNAPSHOT: "2026/10/14"
-    steps:
+    steps: &conformance-build-steps
       - name: system packages from the Arch Linux Archive snapshot
         run: |
           echo "Server = https://archive.archlinux.org/repos/$ARCH_SNAPSHOT/\$repo/os/\$arch" > /etc/pacman.d/mirrorlist
@@ -575,7 +576,8 @@ jobs:
       - name: build and stage
         run: conformance/tools/run-linux.sh ${{ matrix.flag }} --build-only
       - name: pack the stage
-        run: tar -C target -cf "target/${{ matrix.stage }}.tar" ${{ matrix.stage }}
+        run: >-
+          conformance/tools/stage-archive.sh pack "target/${{ matrix.stage }}" "target/${{ matrix.stage }}.tar"
       - name: upload the stage
         uses: actions/upload-artifact@v7
         with:
@@ -583,6 +585,20 @@ jobs:
           path: target/${{ matrix.stage }}.tar
           retention-days: 1
           if-no-files-found: error
+
+  conformance-build-cov:
+    name: conformance build (${{ matrix.build }})
+    runs-on: ubuntu-26.04
+    timeout-minutes: 90
+    strategy:
+      matrix:
+        include:
+          - build: coverage
+            stage: conformance-stage-cov
+            flag: --coverage
+    container: *conformance-container
+    env: *conformance-env
+    steps: *conformance-build-steps
 
   # instance: forwarding, activation and the SIGTERM quit; privileges: the app, a Live pane and its session keep the
   # user's privileges while a page runs (with the system's wpewebkit its worker runs plainly here); quit: SIGTERM
@@ -678,12 +694,14 @@ jobs:
           - shell: bash
             out: rust-linux
             stage: conformance-stage
+            coverage: false
             must-pass: >-
               --must-pass live-any-shell --must-pass agent-chat --must-pass kitty-clipboard --must-pass agterm-peer
               --must-pass shell-profiles --must-pass web-worker-faults
           - shell: zsh
             out: rust-linux-zsh
             stage: conformance-stage
+            coverage: false
             must-pass: >-
               --must-pass live-sessions --must-pass live-any-shell --must-pass agent-chat --must-pass pages-survive
               --must-pass kitty-clipboard --must-pass agterm-peer --must-pass shell-profiles
@@ -691,22 +709,14 @@ jobs:
           - shell: fish
             out: rust-linux-fish
             stage: conformance-stage
+            coverage: false
             must-pass: >-
               --must-pass live-sessions --must-pass live-any-shell --must-pass agent-chat --must-pass pages-survive
               --must-pass kitty-clipboard --must-pass agterm-peer --must-pass shell-profiles
               --must-pass web-worker-faults
-          - shell: zsh
-            out: rust-linux-coverage
-            stage: conformance-stage-cov
-            coverage: true
-    container:
-      # archlinux:base-devel-20261011.0.609700
-      image: archlinux:base-devel@sha256:061679925e5d5028f2df9395d441ce6c4b9accf0157ff3486c06b6962e014ef1
-      options: --privileged --init
-    env:
-      CARGO_TERM_COLOR: always
-      ARCH_SNAPSHOT: "2026/10/14"
-    steps:
+    container: *conformance-container
+    env: *conformance-env
+    steps: &conformance-steps
       - name: system packages from the Arch Linux Archive snapshot
         run: |
           echo "Server = https://archive.archlinux.org/repos/$ARCH_SNAPSHOT/\$repo/os/\$arch" > /etc/pacman.d/mirrorlist
@@ -769,7 +779,9 @@ jobs:
           name: ${{ matrix.leg.stage }}-linux
           path: target
       - name: unpack the stage
-        run: tar -C target -xf "target/${{ matrix.leg.stage }}.tar"
+        run: >-
+          conformance/tools/stage-archive.sh unpack "target/${{ matrix.leg.stage }}.tar"
+          "target/${{ matrix.leg.stage }}"
       # Exits with the ratchet's status over the listed ids this shard ran; check_ratchet.py lists the newly green ids
       # in the job summary.
       - name: shard ${{ matrix.shard }}/3 under a ${{ matrix.leg.shell }} login shell (protocol, cli, behaviors, ui)
@@ -834,10 +846,30 @@ jobs:
           retention-days: 3
           if-no-files-found: warn
 
+  conformance-cov:
+    name: conformance (${{ matrix.leg.out }}, ${{ matrix.shard }}/3)
+    needs: [linux, conformance-build-cov]
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+        leg:
+          - shell: zsh
+            out: rust-linux-coverage
+            stage: conformance-stage-cov
+            coverage: true
+            must-pass: ""
+    container: *conformance-container
+    env: *conformance-env
+    steps: *conformance-steps
+
   conformance-report:
     name: conformance (${{ matrix.out }})
     needs: conformance
-    # a failed shard still has its report to join; shards that never started (the `linux` job failed) have none
+    # a failed shard still has its report to join; shards that never started (the `linux` job or the build failed)
+    # have none
     if: ${{ !cancelled() && needs.conformance.result != 'skipped' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -846,11 +878,12 @@ jobs:
       matrix:
         include:
           - out: rust-linux
+            coverage: false
           - out: rust-linux-zsh
+            coverage: false
           - out: rust-linux-fish
-          - out: rust-linux-coverage
-            coverage: true
-    steps:
+            coverage: false
+    steps: &conformance-report-steps
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
@@ -906,3 +939,16 @@ jobs:
           # report under shards/
           path: conformance/reports/${{ matrix.out }}/
           if-no-files-found: warn
+
+  conformance-report-cov:
+    name: conformance (${{ matrix.out }})
+    needs: conformance-cov
+    if: ${{ !cancelled() && needs.conformance-cov.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        include:
+          - out: rust-linux-coverage
+            coverage: true
+    steps: *conformance-report-steps

@@ -1377,8 +1377,10 @@ already holds changes no file, so the path-filtered workflows don't start on it.
   (OpenSSH in the container for its loopback `sshd`), the zsh and fish ones
   with `--must-pass live-sessions` and `--must-pass pages-survive`
   too, and a `coverage` entry that runs the suite on
-  an instrumented build, judged by `conformance/coverage/e2e-floor-desktop-linux.txt` only
-  ([Sharded suite](#sharded-suite) below: `conformance-build`, `conformance`, `conformance-report`); `process-tests`,
+  an instrumented build (`conformance-cov`), judged in `conformance-report-cov` by
+  `conformance/coverage/e2e-floor-desktop-linux.txt` only
+  ([Sharded suite](#sharded-suite) below: `conformance-build`, `conformance`, `conformance-report`, and the
+  instrumented build's `-cov` jobs); `process-tests`,
   the app's process tests with the overlays on; `unit-coverage`, the workspace's
   `cargo test` under cargo-llvm-cov in the `wpe` job's Arch container (`scripts/unit-coverage.sh`), judged by
   `scripts/unit-coverage-floor-linux.txt`; and `headless-e2e`, the headless app's e2e on an instrumented build
@@ -1392,13 +1394,13 @@ already holds changes no file, so the path-filtered workflows don't start on it.
   natively (aarch64 Linux and x86_64 macOS on Ubuntu, aarch64 Windows on Windows). The macOS leg also checks the frontend with and without WKWebView HTML overlays. The Windows leg also runs the
   vendored portable-pty's Windows patch tests and builds the app: `ngterm-gpui`'s clippy and tests without and with
   its HTML overlays (WebView2, which the runner image carries). Beside it, `windows-build` (the harness's Windows
-  self-tests, then the staged release build and the instrumented one), `windows`: the suite against the staged
+  self-tests, then the staged release build) and `windows-build-cov` (the instrumented one), `windows`: the suite against the staged
   release build (`conformance/tools/run-windows.sh`, with `--must-pass
   live-any-shell`, as the runner's login shell is Windows PowerShell, `--must-pass agent-chat` and `--must-pass
   agterm-peer`), held by `rust-passing-windows.txt`; the report
-  and the stage are kept as artifacts; `coverage-windows`, the suite on the instrumented build, judged by
-  `conformance/coverage/e2e-floor-desktop-windows.txt` only; and `windows-report`, which joins the two
-  ([Sharded suite](#sharded-suite)).
+  and the stage are kept as artifacts; `coverage-windows`, the suite on the instrumented build; and `windows-report`
+  and `windows-report-cov`, which join the two, the second judging the instrumented run by
+  `conformance/coverage/e2e-floor-desktop-windows.txt` only ([Sharded suite](#sharded-suite)).
 - `android.yml` (path-filtered to the mobile core, the crates under it, `mobile/android/` and the Android scripts and
   pins): `app` sets up the pinned toolchain (`scripts/setup-android.sh`), runs
   `scripts/build-android.sh check assembleDebug` (Spotless, detekt, Android Lint, the JVM unit and Roborazzi screenshot
@@ -1428,11 +1430,18 @@ already holds changes no file, so the path-filtered workflows don't start on it.
 ### Sharded suite
 
 CI builds each stage once and runs the suite on it in shards, side by side: a build job (`conformance-build` in
-`linux.yml`, `windows-build` in `cross-platform.yml`) stages the release build and the instrumented one
-(`run-linux.sh --build-only`, `run-windows.sh --build-only`) and keeps each as an artifact; every leg (a login shell
-on Linux, the coverage run, Windows) then runs as the shards of its matrix (`--stage DIR --shard I/N`), which build
-nothing; and a report job (`conformance-report`, `windows-report`) joins a leg's shards with
-`conformance/tools/merge_shards.py`.
+`linux.yml`, `windows-build` in `cross-platform.yml`) stages the release build and another (`conformance-build-cov`,
+`windows-build-cov`) the instrumented one (`run-linux.sh --build-only`, `run-windows.sh --build-only`), each kept as
+an artifact; every leg (a login shell on Linux, the coverage run, Windows) then runs as the shards of its matrix
+(`--stage DIR --shard I/N`), which build nothing; and a report job (`conformance-report`, `windows-report`) joins a
+leg's shards with `conformance/tools/merge_shards.py`. The instrumented build's shards and report are jobs of their
+own (`conformance-cov`, `conformance-report-cov`, `coverage-windows`, `windows-report-cov`): a build that fails
+takes only its own stage's shards and report with it, and the ratchet's report does not wait for the coverage run.
+
+- A stage travels as a tar made by `conformance/tools/stage-archive.sh`, which keeps the programs' mode bits and
+  their modification times whole: the live sessions' server takes its staged build id only for a binary of the
+  time, to the nanosecond, the id was written for. `stage-archive.sh unpack` refuses a stage whose id no longer
+  names its binary, so a shard never runs a build that verifies no id.
 
 - The split is by test file, made by every shard itself from the whole collection
   (`conformance/agterm_conformance/shards.py`): no list of files exists, so a new test file lands in a shard by

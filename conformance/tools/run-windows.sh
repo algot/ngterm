@@ -213,7 +213,8 @@ if [[ -n "$coverage" ]]; then
     stage_bin="$(win "$(cygpath -ua "$stage/bin")")"
     coverage_out="$(win "$(cygpath -ua "$out/coverage")")"
     # a --stage from another machine comes without the build's target dir (and needs no cargo-llvm-cov here): the
-    # staged programs' own maps are read, with the toolchain's llvm-tools
+    # staged programs' own maps are read, with the toolchain's llvm-tools. They name the sources by the builder's
+    # checkout path: with this checkout elsewhere the report finds no app code and the run exits 2
     release_dir="$cov_target/release"
     foreign_stage=""
     if [[ ! -d "$release_dir" ]]; then

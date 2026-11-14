@@ -25,7 +25,8 @@
 # --coverage builds instrumented (cargo llvm-cov show-env, into target/llvm-cov-target after cargo llvm-cov clean
 # --workspace), stages into target/conformance-stage-cov, and gives every process of the build a pooled
 # LLVM_PROFILE_FILE in target/llvm-cov-target (agterm_conformance/llvm_profiles.py); a --stage not built so exits 2.
-# A --stage from another machine comes without the build's target dir: its report reads the staged programs' own maps.
+# A --stage from another machine comes without the build's target dir: its report reads the staged programs' own maps,
+# which name the sources by the builder's checkout path, so this checkout must be at that path (CI's jobs share one).
 # The processes the harness had to end past their exit are listed in DIR/lost-profiles.txt. After the suite
 # the profiles are merged and read against the desktop app's own programs into its e2e report in DIR/coverage
 # (agterm_conformance/code_coverage.py e2e --app desktop --platform linux: lcov.info, lcov-measured.info, summary.json
@@ -307,7 +308,8 @@ if [[ -n "$coverage" ]]; then
     stage_bin="$(realpath -m -- "$stage/bin")"
     coverage_out="$(realpath -m -- "$out/coverage")"
     # a --stage from another machine comes without the build's target dir (and needs no cargo-llvm-cov here): the
-    # staged programs' own maps are read, with the toolchain's llvm-tools
+    # staged programs' own maps are read, with the toolchain's llvm-tools. They name the sources by the builder's
+    # checkout path: with this checkout elsewhere the report finds no app code and the run exits 2
     release_dir="$cov_target/release"
     [[ -d "$release_dir" ]] || release_dir="$stage_bin"
     if ! coverage_error="$(

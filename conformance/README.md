@@ -440,15 +440,18 @@ that could reach it:
   `--must-pass live-sessions` too); the matrix's `coverage` entry runs the zsh leg's suite (the widest: the bash leg's
   tests and the live ones) on the instrumented build (`--coverage`) and judges `coverage/e2e-floor-desktop-linux.txt`
   only, its report uploaded as `rust-linux-coverage-conformance` and its `coverage/` as `e2e-coverage-desktop-linux`.
-  Each leg runs as shards on a stage built once (`conformance-build`), joined by `conformance-report`
+  Each leg runs as shards on a stage built once (`conformance-build`), joined by `conformance-report`; the coverage
+  entry's build, shards and report are the `-cov` jobs beside them, where the floors are judged
   (docs/development.md > Sharded suite).
 - `cross-platform`'s `windows` job (`windows-2025`): the harness's Windows self-tests (the pipe transport, the client,
   the launch and stop, the UIA driver's mappings), then `tools/run-windows.sh` with `--must-pass live-any-shell` (the
   login shell is Windows PowerShell): protocol, cli, behaviors and ui (UI Automation and `SendInput`,
   `drivers/uia.py`, its windows on the runner's desktop) against the staged Windows build, held by
   `rust-passing-windows.txt`. The
-  staged tree is kept as an artifact, for a run on a Windows VM against the same build (`--stage DIR`).
+  staged tree is kept as an artifact (a tar: `tools/stage-archive.sh unpack`), for a run on a Windows VM against the
+  same build (`--stage DIR`).
   `coverage-windows` runs the same suite on the instrumented build (`run-windows.sh --coverage`) and judges
   `coverage/e2e-floor-desktop-windows.txt` only, its report uploaded as `rust-windows-coverage-conformance` and its
-  `coverage/` as `e2e-coverage-desktop-windows`. Both run as shards on the stages `windows-build` makes (the
-  self-tests run there), joined by `windows-report`.
+  `coverage/` as `e2e-coverage-desktop-windows`. Both run as shards on the stages `windows-build` (the self-tests
+  run there) and `windows-build-cov` make, joined by `windows-report` and `windows-report-cov`, which judges the
+  floors.

@@ -604,7 +604,8 @@ theme's background, the sidebar tint washing the sidebar alone).
 On Windows. `run-windows.sh` builds the release app with its `html` feature (the HTML overlays on WebView2, which
 needs the WebView2 Runtime), `ngterm-ctl` and `ngterm-session`, and stages them with the same script
 (`bin\ngterm.exe`, `bin\ngtermctl.exe`, `bin\ngterm-session.exe` beside the same `share\`); `--stage DIR` runs a tree
-staged elsewhere, such as the `windows-build` job's `rust-windows-stage` artifact on a VM. No lavapipe, weston or bus: the
+staged elsewhere, such as the `windows-build` job's `rust-windows-stage` artifact on a VM (a tar:
+`tools/stage-archive.sh unpack TAR DIR` puts it back with the server's build id still good). No lavapipe, weston or bus: the
 build renders through DirectX on the machine's adapter, on the desktop the run is on (Launch contract above). The
 probes are Linux's.
 
