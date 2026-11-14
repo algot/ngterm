@@ -7,9 +7,9 @@ import UIKit
 @testable import NgtermFeatures
 
 /// A pane turned from its chat to its terminal (the toolbar's Show terminal) while the chat's prompt field has the
-/// keyboard, in the session view: the terminal takes the keyboard from the field once the view update that shows it
-/// is over, never inside it (a first responder moved inside the update has the hosting view read its graph mid-update,
-/// which can spin for good), and the chat shown again takes it back.
+/// keyboard, in the session view: the terminal, under the chat, takes the keyboard straight from the field before the
+/// view changes, so the soft keyboard stays up and no first responder moves inside the view update (which has the
+/// hosting view read its graph mid-update, and can spin for good); the chat shown again takes it back.
 @MainActor
 @Suite("a pane turning between its chat and its terminal")
 internal struct PaneTurnTests {
@@ -38,7 +38,7 @@ internal struct PaneTurnTests {
         ((view as? TerminalView).map { [$0] } ?? []) + view.subviews.flatMap(terminals)
     }
 
-    @Test("the terminal takes the prompt's keyboard after the view update, and the chat shown again takes it back")
+    @Test("the terminal takes the prompt's keyboard before the view changes, and the chat shown again takes it back")
     internal func turn() async throws {
         let world = ChatWorld()
         defer { world.remove() }
@@ -61,19 +61,16 @@ internal struct PaneTurnTests {
         let terminal = try #require(Self.terminals(in: window).first)
         #expect(!terminal.drawsFocused, "under its chat")
 
-        // the toolbar's Show terminal
-        keyboard.handOver()
-        world.graph.chats.pick(ChatWorld.pane, .terminal)
-        host.view.setNeedsLayout()
-        host.view.layoutIfNeeded()
-        #expect(terminal.drawsFocused, "the view update ran")
-        #expect(!terminal.isFirstResponder, "the first responder moved inside the view update")
-        await Wait.until { terminal.isFirstResponder }
+        let model = SessionModel(graph: world.graph, key: SessionWorld.key, keyboard: keyboard)
+        model.showTerminal(of: ChatWorld.pane.paneId)
+        #expect(terminal.isFirstResponder, "the keyboard goes from the field straight to the terminal")
         #expect(keyboard.target === terminal)
         #expect(terminal.softKeyboardWanted, "the field had the soft keyboard")
+        await Wait.until { terminal.drawsFocused }
+        #expect(terminal.isFirstResponder)
+        await Wait.until { keyboard.chatField == nil }
 
-        // Show chat
-        world.graph.chats.pick(ChatWorld.pane, .chat)
+        model.pick(ChatWorld.pane.paneId, .chat)
         await Wait.until { keyboard.chatField != nil && !terminal.isFirstResponder }
         #expect(keyboard.target == nil)
     }
