@@ -96,12 +96,15 @@ public struct TerminalViewRepresentable: UIViewRepresentable {
         take(into: view)
     }
 
-    // what changes with every update: the hooks, then the focus, which may take the focus handed over
+    // what changes with every update: the hooks, then the focus; a terminal drawn focused takes the focus handed over
+    // once the update is over (TerminalKeyboard.duringViewUpdate)
     private func take(into view: TerminalView) {
         view.onSelect = select
         view.onSwipe = swipe
         view.readsAloud = readsAloud
-        view.drawsFocused = focused
+        view.keyboard.duringViewUpdate {
+            view.drawsFocused = focused
+        }
         feed.view = view
     }
 }

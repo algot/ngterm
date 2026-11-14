@@ -18,6 +18,9 @@ public final class TerminalKeyboard {
     // the focus the terminal or chat that had it left when the selection moved on, or a session opened with a hardware
     // keyboard gives its selected pane: the pane selected next takes it
     private var handingOver: Handover?
+    // a SwiftUI view update is changing a terminal now, and whether the take put off for after it is on its way
+    private var isUpdatingViews = false
+    private var takesAfterUpdate = false
 
     /// The moves' actions, which the session view sets.
     public var shortcuts: TerminalShortcuts
@@ -215,9 +218,38 @@ public final class TerminalKeyboard {
 
     /// What ``handOver()`` left for the terminal selected next in `window`, taken once: the focus alone is dropped
     /// while a text field of a sheet there has the keyboard, which a terminal coming on under it leaves there.
+    ///
+    /// Nothing is taken inside a SwiftUI view update (``duringViewUpdate(_:)``): the handover waits for its end.
     internal func takeHandover(in window: UIWindow) -> Handover? {
+        guard !isUpdatingViews else {
+            return nil
+        }
         let handover = takeHandover()
         return handover == .focus && otherHoldsKeyboard(in: window) ? nil : handover
+    }
+
+    /// Runs `update`, a SwiftUI view update's changes to a terminal: the handover it would take then (it is drawn
+    /// focused) is taken once the update is over.
+    ///
+    /// A first responder that moves inside the update has UIKit tell the hosting view at once, which reads its graph
+    /// in the middle of that graph's update: a cycle, which can spin for good.
+    internal func duringViewUpdate(_ update: () -> Void) {
+        isUpdatingViews = true
+        update()
+        isUpdatingViews = false
+        guard handingOver != nil, !takesAfterUpdate else {
+            return
+        }
+        takesAfterUpdate = true
+        Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+            takesAfterUpdate = false
+            for terminal in terminals.allObjects {
+                terminal.takeHandover()
+            }
+        }
     }
 
     /// `terminal` types through this keyboard, so it hears of a hardware keyboard that comes.
