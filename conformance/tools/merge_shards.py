@@ -4,14 +4,15 @@
     merge_shards.py --out DIR [--list RATCHET] [--title NAME] [--coverage APP PLATFORM] SHARD_DIR...
 
 Each SHARD_DIR is one shard's report directory (`run-linux.sh --shard I/N --out SHARD_DIR`, or the Windows runner's).
-The shards must be one split, whole: the same N, every index of it once, the same collection size, file-to-shard
-table and mode in each header (agterm_conformance/shards.py), the same `--must-pass` capabilities, and no test id in
-two of them. A shard missing, come without a nodeid report (its run wrote none) or from another split exits 2: a test
+The shards must be one split, whole: the same N, every index of it once, the same collection size and file-to-shard
+table in each header (agterm_conformance/shards.py), one mode (full or ratchet-only; a `-k` or `-m` that narrows only
+some shards' files leaves those partial, and the whole run with them), the same `--must-pass` capabilities, and no
+test id in two of them. A shard missing, come without a nodeid report (its run wrote none) or from another split exits 2: a test
 no shard ran never reads as a holding run.
 
 Into DIR it writes what a whole run's runner writes:
 
-- `nodeids.jsonl`: the shards' test records under one run header (the shards' own mode, `"shards": N`), their
+- `nodeids.jsonl`: the shards' test records under one run header (the shards' mode, `"shards": N`), their
   collection errors once each, their `--must-pass` problems, and the problems only the whole run can have: a
   capability no shard's test requires, or none passed for (from the shards' counts).
 - `junit.xml`: the shards' test suites, each named after its shard; `pytest.log`: their logs, one after another.
@@ -43,7 +44,8 @@ TOOLS = Path(__file__).resolve().parent
 CONFORMANCE = TOOLS.parent
 sys.path.insert(0, str(CONFORMANCE))
 
-from agterm_conformance import shards as split  # noqa: E402 - after the path above
+from agterm_conformance import selection  # noqa: E402 - after the path above
+from agterm_conformance import shards as split  # noqa: E402
 
 NODEIDS, JUNIT, LOG, REPORT = "nodeids.jsonl", "junit.xml", "pytest.log", "report.md"
 # a shard's directories whose entries are named after their tests: joined as they are
@@ -116,11 +118,9 @@ def check_split(reports: list[ShardReport]) -> None:
                     f"{report.directory} and {first.directory} are not shards of one split: their `{key}` differ "
                     f"({report.header['shard'].get(key)!r}, {first.header['shard'].get(key)!r})"
                 )
-        for key in ("mode", "partial"):
-            if report.header.get(key) != first.header.get(key):
-                raise MergeError(f"{report.directory} and {first.directory} ran in different modes (`{key}`)")
         if sorted(report.capabilities) != sorted(first.capabilities):
             raise MergeError(f"{report.directory} and {first.directory} ran with different --must-pass capabilities")
+    merged_mode(reports)
     by_index: dict[int, ShardReport] = {}
     for report in reports:
         if report.index in by_index:
@@ -138,9 +138,24 @@ def check_split(reports: list[ShardReport]) -> None:
             seen[nodeid] = report.index
 
 
+def merged_mode(reports: list[ShardReport]) -> tuple[bool, Any]:
+    """The whole run's `partial` and `mode`. One `-k` or `-m` may narrow some shards' files and none of another's, so
+    the shards of one run differ there: the run is as narrowed as its most narrowed shard."""
+    modes = {report.header.get("mode") for report in reports}
+    partial = any(report.header.get("partial") for report in reports)
+    if selection.PARTIAL in modes:
+        return True, selection.PARTIAL
+    if len(modes) > 1:
+        raise MergeError(f"the shards ran in different modes ({', '.join(sorted(map(repr, modes)))}): "
+                         f"{', '.join(str(report.directory) for report in reports)}")
+    return partial, modes.pop()
+
+
 def merged_records(reports: list[ShardReport]) -> list[dict[str, Any]]:
     first = reports[0]
     run = {key: value for key, value in first.header.items() if key != "shard"}
+    partial, mode = merged_mode(reports)
+    run.update(partial=partial, mode=mode)
     run.update(shards=first.header["shard"]["count"], collected=first.header["shard"]["collected"])
     records: list[dict[str, Any]] = [run]
     for report in reports:

@@ -130,6 +130,8 @@ class Split:
         self.recorded = dict(recorded)
         self.collected = 0
         self.split = ""
+        # the whole collection, which `--ratchet-only` holds its extras to: another shard may hold an extra's tests
+        self.whole: list[pytest.Item] = []
 
     def header(self) -> dict[str, object]:
         return {"index": self.shard.index, "count": self.shard.count, "collected": self.collected, "split": self.split}
@@ -141,6 +143,7 @@ class Split:
         assignment = assign(tests_per_file(item.nodeid for item in items), self.recorded, self.shard.count)
         self.collected = len(items)
         self.split = split_digest(assignment)
+        self.whole = list(items)
         kept = [item for item in items if assignment[file_of(item.nodeid)] == self.shard.index]
         dropped = [item for item in items if assignment[file_of(item.nodeid)] != self.shard.index]
         if dropped:

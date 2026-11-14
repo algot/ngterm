@@ -89,10 +89,10 @@ class RatchetOnly:
     @pytest.hookimpl(trylast=True)
     def pytest_collection_modifyitems(self, config: pytest.Config, items: list[pytest.Item]) -> None:
         narrowed = bool(config.option.keyword or config.option.markexpr or any("::" in arg for arg in config.args))
-        # a narrower selection (-k, -m, node ids) may leave an extra out on purpose, and a shard (`--shard`) holds
-        # only its part of the collection: another shard may hold the extra
-        narrowed = narrowed or config.pluginmanager.has_plugin("agterm-shard")
-        if not narrowed and (unmatched := self.unmatched(items)):
+        # a narrower selection (-k, -m, node ids) may leave an extra out on purpose; a shard (`--shard`) holds only
+        # its part of the collection, so its extras are held to the whole one: another shard may run them
+        split = config.pluginmanager.get_plugin("agterm-shard")
+        if not narrowed and (unmatched := self.unmatched(items if split is None else split.whole)):
             raise pytest.UsageError(f"{', '.join(unmatched)}: matches no collected test")
         report = config.pluginmanager.get_plugin("agterm-nodeid-report")
         if report is not None and not report.partial and not any("::" in arg for arg in config.args):

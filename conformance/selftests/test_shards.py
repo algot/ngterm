@@ -151,6 +151,21 @@ def test_a_ratchet_only_extra_may_be_in_another_shard(pytester: pytest.Pytester)
     assert {(records[0]["partial"], records[0]["mode"]) for records in reports} == {(True, "ratchet-only")}
 
 
+def test_a_ratchet_only_extra_no_shard_holds_is_refused_in_every_shard(pytester: pytest.Pytester) -> None:
+    """A misspelled extra matches nothing in the whole collection: no shard may take it for another shard's."""
+    pytester.makepyfile(**{name.removesuffix(".py"): body for name, body in FILES.items()})
+    ratchet(pytester.path / "list.txt", "test_a.py::test_a1")
+    for extra, named in ((("--also", "test_e.py"), "--also 'test_e.py'"), (("--also-k", "test_d2"), "--also-k 'test_d2'")):
+        for index in (1, 2):
+            done = pytester.runpytest(
+                "--shard", f"{index}/2", "--nodeid-report", f"refused-{index}/nodeids.jsonl", "--trace-mode", "off",
+                "--ratchet-only", "list.txt", *extra,
+            )
+            assert done.ret == pytest.ExitCode.USAGE_ERROR
+            done.stderr.fnmatch_lines([f"*{named}: matches no collected test*"])
+            assert not (pytester.path / f"refused-{index}" / "nodeids.jsonl").exists()
+
+
 def test_the_records_carry_their_duration(pytester: pytest.Pytester) -> None:
     pytester.makepyfile("import time\n\ndef test_slow():\n    time.sleep(0.05)\n\ndef test_fast():\n    pass\n")
     pytester.runpytest("--nodeid-report", "nodeids.jsonl", "--trace-mode", "off")
@@ -267,6 +282,32 @@ def test_shards_of_two_splits_do_not_merge(pytester: pytest.Pytester, tmp_path: 
     done = merge("--out", tmp_path / "merged", first, second)
     assert done.returncode == 2
     assert "are not shards of one split: their `split` differ" in done.stderr
+
+
+def test_a_filter_that_narrows_one_shard_alone_merges_as_a_partial_run(pytester: pytest.Pytester, tmp_path: Path) -> None:
+    """One `-k` over every shard deselects in the shard that holds its file only: the same run, not two modes."""
+    pytester.makepyfile(**{name.removesuffix(".py"): body for name, body in FILES.items()})
+    directories = run_shards(pytester, 2, "-k", "not test_c2")
+    headers = [read(directory / "nodeids.jsonl")[0] for directory in directories]
+    assert sorted((header["partial"], header["mode"]) for header in headers) == [(False, "full"), (True, "partial")]
+    listed = ratchet(tmp_path / "list.txt", *ALL)
+    done = merge("--out", tmp_path / "merged", "--list", listed, *directories)
+    assert done.returncode == 0, done.stdout + done.stderr
+    records = read(tmp_path / "merged" / "nodeids.jsonl")
+    assert (records[0]["partial"], records[0]["mode"]) == (True, "partial")
+    assert sorted(ids(records)) == [nodeid for nodeid in ALL if nodeid != "test_c.py::test_c2"]
+    assert "- mode: partial, 2 shards" in (tmp_path / "merged" / "report.md").read_text()
+
+
+def test_a_full_shard_and_a_ratchet_only_one_do_not_merge(pytester: pytest.Pytester, tmp_path: Path) -> None:
+    pytester.makepyfile(**{name.removesuffix(".py"): body for name, body in FILES.items()})
+    first, second = run_shards(pytester, 2)
+    records = read(second / "nodeids.jsonl")
+    records[0].update(partial=True, mode="ratchet-only")
+    (second / "nodeids.jsonl").write_text("".join(json.dumps(record) + "\n" for record in records))
+    done = merge("--out", tmp_path / "merged", first, second)
+    assert done.returncode == 2
+    assert "the shards ran in different modes ('full', 'ratchet-only')" in done.stderr
 
 
 def test_a_shard_given_twice_or_a_test_in_two_shards_is_refused(pytester: pytest.Pytester, tmp_path: Path) -> None:
