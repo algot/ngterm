@@ -1,4 +1,4 @@
-import Foundation
+import UIKit
 
 /// The keyboard's side of the terminals on screen (mobile/android's `TerminalKeyboard`).
 ///
@@ -188,8 +188,20 @@ public final class TerminalKeyboard {
 
     /// Whether ``handOver()`` left the keyboard for the chat selected next, which takes its prompt field's focus;
     /// taken once.
+    ///
+    /// The focus without the soft keyboard goes to the chat only while a hardware keyboard is attached: the field
+    /// taking it opens the soft keyboard, which the terminal handing it over had closed.
     public func takeChatHandover() -> Bool {
-        takeHandover() != nil
+        switch takeHandover() {
+        case .withKeyboard:
+            true
+
+        case .focus:
+            hardware.isAttached
+
+        case nil:
+            false
+        }
     }
 
     /// What ``handOver()`` left for the terminal selected next, taken once.
@@ -209,16 +221,42 @@ public final class TerminalKeyboard {
     }
 
     // a keyboard came or went: the extra keys show or stand aside, and one that came with nothing holding the keyboard
-    // gives the selected pane the focus, now or as it comes on (a chat takes it as it sees the keyboard come)
+    // gives the selected pane the focus, now or as it comes on (a chat takes it as it sees the keyboard come); a text
+    // field of the app's own, a sheet's over the session, keeps it, and no pane takes it from there later
     private func hardwareChanged() {
         target?.reloadInputViews()
         guard hardware.isAttached, target == nil, chatField == nil else {
+            return
+        }
+        guard !otherHoldsKeyboard else {
+            handingOver = nil
             return
         }
         handingOver = handingOver ?? .focus
         for terminal in terminals.allObjects {
             terminal.takeHandover()
         }
+    }
+
+    // whether a view that is neither a terminal nor a chat's field is the first responder in a window the terminals
+    // are in: one of a sheet over the session, which tells this keyboard nothing
+    private var otherHoldsKeyboard: Bool {
+        let windows = Set(terminals.allObjects.compactMap(\.window))
+        return windows.contains { window in
+            Self.firstResponder(in: window).map { !($0 is TerminalView) } ?? false
+        }
+    }
+
+    private static func firstResponder(in view: UIView) -> UIView? {
+        if view.isFirstResponder {
+            return view
+        }
+        for subview in view.subviews {
+            if let found = firstResponder(in: subview) {
+                return found
+            }
+        }
+        return nil
     }
 
     private func set(_ modifier: StickyModifier, _ state: Sticky) {
