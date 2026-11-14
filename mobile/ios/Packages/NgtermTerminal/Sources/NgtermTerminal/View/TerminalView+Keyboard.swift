@@ -42,12 +42,20 @@ extension TerminalView {
     }
 
     /// The terminal drawn focused (the selected pane) in a window takes the focus the last selected one handed over,
-    /// opening the soft keyboard if that one had it open.
+    /// opening the soft keyboard if that one had it open; the one that has the keyboard leaves it for the next pane.
     internal func takeHandover() {
-        guard drawsFocused, window != nil, let handover = keyboard.takeHandover() else {
+        guard drawsFocused, window != nil, keyboard.target !== self, let handover = keyboard.takeHandover() else {
             return
         }
         focus(showingKeyboard: handover == .withKeyboard)
+    }
+
+    /// The terminal leaves its window: with the keyboard, it hands it over to what takes its pane's place (its chat,
+    /// the other layout's terminal).
+    internal func leavingWindow() {
+        if keyboard.target === self {
+            keyboard.handOver()
+        }
     }
 
     /// The terminal let the first responder go (`resigned`), or isn't it: the keys held are let go, the keys go

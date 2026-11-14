@@ -332,6 +332,14 @@ public final class TerminalView: UIView {
         try? pane.resize(size: fits)
     }
 
+    /// Hands the keyboard over as the view leaves its window (``leavingWindow()``).
+    override public func willMove(toWindow newWindow: UIWindow?) {
+        if newWindow == nil {
+            leavingWindow()
+        }
+        super.willMove(toWindow: newWindow)
+    }
+
     /// Runs the display link while the view is in a window, and stops it when it leaves.
     override public func didMoveToWindow() {
         super.didMoveToWindow()
