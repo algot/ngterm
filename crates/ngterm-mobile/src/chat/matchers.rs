@@ -379,14 +379,21 @@ impl Rows {
 
     /// The rule Claude draws in a session with a name (`-n`, `/rename`), over its prompt box and under its dialogs:
     /// the screen's whole width, the name before its last ` ─` (`──────── team-lead ─`), with no `─` before a name
-    /// too long for the row, which ends with `…`.
+    /// too long for the row, which ends with `…`. Its width is read in cells, as a name's wide characters (CJK, emoji)
+    /// take two each and its combining marks none.
     fn titled_rule(&self, index: usize) -> bool {
-        let line = self.get(index);
-        line.chars().count() == self.cols
-            && line.strip_suffix(" ─").is_some_and(|rest| {
+        self.ends_at_edge(index, "─")
+            && self.get(index).strip_suffix(" ─").is_some_and(|rest| {
                 let name = rest.trim_start_matches('─');
                 name.starts_with(' ') && !name.trim().is_empty()
             })
+    }
+
+    /// Whether row `index` has `text` in the screen's last column.
+    fn ends_at_edge(&self, index: usize, text: &str) -> bool {
+        let last = self.cols.checked_sub(1);
+        last.zip(self.cells.get(index))
+            .is_some_and(|(last, row)| row.text(last) == text)
     }
 
     /// The rows without the titled rule a named session draws as the screen's last row while a dialog is up: the

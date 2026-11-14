@@ -1360,18 +1360,38 @@ fn a_named_sessions_dialogs_are_read_over_the_titled_rule_that_closes_them() {
     assert_eq!(labels, ["Red", "Green", "Blue", "Type"]);
 }
 
-#[test]
-fn a_row_that_only_ends_like_a_titled_rule_is_no_prompts_rule() {
-    // in the rule's place, a row of text that ends as it does but is not the row's width
+// the named fixture's idle screen with `row` drawn in place of the rule over its prompt
+fn with_named_rule(row: &str) -> Screen {
     let capture = Capture::load(NAMED);
     let term = capture.term();
     term.feed(capture.at("idle"));
-    let row = term
+    let at = term
         .frame()
         .lines()
         .iter()
         .rposition(|line| line.ends_with("team-lead ─"))
         .unwrap();
-    term.feed(format!("\x1b[{};1H\x1b[0m\x1b[Kteam-lead ─", row + 1).as_bytes());
-    assert_eq!(Capture::read_term(&term, Agent::Claude), Screen::Unknown);
+    term.feed(format!("\x1b[{};1H\x1b[0m\x1b[K{row}", at + 1).as_bytes());
+    Capture::read_term(&term, Agent::Claude)
+}
+
+#[test]
+fn a_titled_rule_short_of_the_rows_width_is_no_prompts_rule() {
+    // a titled rule in every other way: only its width tells it from the prompt's
+    assert_eq!(with_named_rule("──── team-lead ─"), Screen::Unknown);
+    // and a row of text that only ends as the rule does
+    assert_eq!(with_named_rule("team-lead ─"), Screen::Unknown);
+}
+
+#[test]
+fn a_named_sessions_rule_is_read_by_its_cells_whatever_its_names_characters_take() {
+    // 44 columns: a name of wide characters (two cells each), then one with a combining mark (no cell of its own)
+    for (name, cells) in [("日本語 🚀", 9), ("cafe\u{301}", 4)] {
+        let rule = format!("{} {name} ─", "─".repeat(44 - cells - 3));
+        let screen = with_named_rule(&rule);
+        assert!(
+            matches!(screen, Screen::Prompt { working: false, .. }),
+            "{name}: {screen:?}"
+        );
+    }
 }
