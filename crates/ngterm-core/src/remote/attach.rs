@@ -460,11 +460,8 @@ fn app_items(app: &ControlRemoteTree, marked: Option<RemotePeer>) -> Vec<PickIte
                 item.label = format!("{parent} › {}", session.name);
             }
             if let Some(peer) = marked {
-                let detail = item.subtitle.take().filter(|detail| !detail.is_empty());
-                item.subtitle = Some(detail.map_or_else(
-                    || peer.name().to_owned(),
-                    |detail| format!("{}  ·  {detail}", peer.name()),
-                ));
+                let detail = item.subtitle.take().unwrap_or_default();
+                item.subtitle = Some(format!("{}  ·  {detail}", peer.name()));
             }
             item
         })

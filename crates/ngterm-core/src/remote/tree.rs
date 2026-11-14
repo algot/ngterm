@@ -346,19 +346,18 @@ pub fn remote_error(stdout: &str) -> Option<String> {
 /// The output is not a response, the far side refused, or an older far side answered without a session list. An
 /// unreadable agterm answer beside a readable ngterm one is left out.
 pub fn decode(stdout: &str) -> Result<ControlRemoteTree, MergeError> {
+    use super::peer::RemotePeer;
+
     let answers = super::peer::split_answers(stdout);
-    let agterm = answers
+    let Some(own) = answers.ngterm else {
+        return decode_app(answers.agterm.unwrap_or_default(), Some(RemotePeer::Agterm));
+    };
+    let mut tree = decode_app(own, None)?;
+    tree.beside = answers
         .agterm
-        .map(|answer| decode_app(answer, Some(super::peer::RemotePeer::Agterm)));
-    match (answers.ngterm, agterm) {
-        (Some(own), beside) => {
-            let mut tree = decode_app(own, None)?;
-            tree.beside = beside.and_then(Result::ok).map(Box::new);
-            Ok(tree)
-        }
-        (None, Some(agterm)) => agterm,
-        (None, None) => Err(MergeError::MalformedProjection),
-    }
+        .and_then(|answer| decode_app(answer, Some(RemotePeer::Agterm)).ok())
+        .map(Box::new);
+    Ok(tree)
 }
 
 /// One app's answer, its endpoint stamped `peer` and nothing beside it: neither is the origin's to say.
