@@ -8,7 +8,8 @@ import UIKit
 @testable import NgtermFeatures
 
 /// The chat's prompt field and the keyboard (mobile/android's `ChatPane` focus): a chat the selection moves to takes
-/// the keyboard when it was in use, and tells the keyboard its field has it; one the selection leaves lets it go.
+/// the keyboard when it was in use, and tells the keyboard its field has it; one the selection leaves lets it go. A
+/// selected chat takes it too when the system reports a hardware keyboard after the chat came on.
 @MainActor
 @Suite("the chat's focus")
 internal struct ChatFocusTests {
@@ -82,5 +83,25 @@ internal struct ChatFocusTests {
             await Task.yield()
         }
         #expect(keyboard.chatField == nil)
+    }
+
+    @Test("a selected chat takes the keyboard when the system reports a hardware keyboard after it came on")
+    internal func keyboardReportedLate() async throws {
+        let hardware = HardwareKeyboard(fixed: false)
+        let keyboard = TerminalKeyboard(hardware: hardware)
+        let chat = Self.chat()
+        let host = UIHostingController(rootView: Self.screen(chat, keyboard: keyboard, isSelected: true))
+        let made = (UIWindow.self as UIView.Type).init(frame: CGRect(origin: .zero, size: ScreenVariant.size))
+        let window = try #require(made as? UIWindow)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        for _ in 0..<Self.passes {
+            window.layoutIfNeeded()
+            await Task.yield()
+        }
+        #expect(keyboard.chatField == nil, "without a hardware keyboard the soft one waits for a tap")
+        hardware.update(attached: true)
+        await Wait.until { keyboard.chatField == Self.prompt }
     }
 }

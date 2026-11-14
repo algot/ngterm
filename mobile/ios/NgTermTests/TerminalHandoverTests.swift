@@ -7,7 +7,8 @@ import UIKit
 /// The keyboard's focus following the session view's selection, in a window of the app's scene (the first responder
 /// needs one): the terminal selected next takes the focus the last one had, with its soft keyboard, whether it is on
 /// screen already (a split) or comes on as the other goes (a phone's one pane); with a hardware keyboard, a session
-/// opened anew gives its selected terminal the focus.
+/// opened anew gives its selected terminal the focus, and so does one the system reports a keyboard to only after it
+/// opened.
 @MainActor
 @Suite("the focus handed over between panes")
 internal struct TerminalHandoverTests {
@@ -112,5 +113,51 @@ internal struct TerminalHandoverTests {
         window.addSubview(selected)
         #expect(selected.isFirstResponder)
         #expect(keyboard.target === selected)
+    }
+
+    @Test("a keyboard the system reports after the session opened gives its selected terminal the focus, now or later")
+    internal func keyboardReportedLate() throws {
+        let window = try Self.window()
+        defer { window.isHidden = true }
+        let hardware = HardwareKeyboard(fixed: false)
+        let keyboard = TerminalKeyboard(hardware: hardware)
+        let other = Self.terminal(keyboard, focused: false)
+        let selected = Self.terminal(keyboard, focused: true)
+        window.addSubview(other)
+        window.addSubview(selected)
+        #expect(!selected.isFirstResponder, "without a hardware keyboard the soft one waits for a tap")
+        hardware.update(attached: true)
+        #expect(selected.isFirstResponder)
+        #expect(!selected.softKeyboardWanted)
+        #expect(keyboard.target === selected)
+        #expect(!other.isFirstResponder, "a pane not selected takes nothing")
+
+        // a session whose terminal isn't on yet: it takes the focus as it comes on
+        let later = HardwareKeyboard(fixed: false)
+        let waiting = TerminalKeyboard(hardware: later)
+        later.update(attached: true)
+        let comesOn = Self.terminal(waiting, focused: true)
+        window.addSubview(comesOn)
+        #expect(comesOn.isFirstResponder)
+    }
+
+    @Test("a keyboard that comes while a terminal or a chat has the keyboard leaves the focus where it is")
+    internal func keyboardComesToFocus() throws {
+        let window = try Self.window()
+        defer { window.isHidden = true }
+        let hardware = HardwareKeyboard(fixed: false)
+        let keyboard = TerminalKeyboard(hardware: hardware)
+        let tapped = Self.terminal(keyboard, focused: true)
+        window.addSubview(tapped)
+        tapped.focus(showingKeyboard: true)
+        hardware.update(attached: true)
+        #expect(keyboard.target === tapped)
+        #expect(!keyboard.takeChatHandover(), "nothing is left for the next pane")
+
+        let chatHardware = HardwareKeyboard(fixed: false)
+        let chatKeyboard = TerminalKeyboard(hardware: chatHardware)
+        chatKeyboard.chatField = "P1"
+        chatHardware.update(attached: true)
+        #expect(!chatKeyboard.takeChatHandover(), "the chat's field keeps the keyboard")
     }
 }
