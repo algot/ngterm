@@ -53,6 +53,31 @@ internal final class SessionKeyboardTests: XCTestCase {
         row.tap()
     }
 
+    // waits until the chat's prompt field has the keyboard's focus: typing before that would go nowhere
+    @MainActor
+    private static func expectPromptFocus(in app: XCUIApplication, _ what: String) {
+        let focused = NSPredicate(format: "identifier == 'chat-prompt' AND hasKeyboardFocus == true")
+        FakeApp.expect(app.descendants(matching: .any).matching(focused).firstMatch, "the prompt's focus on \(what)")
+    }
+
+    // the chat's prompt field takes the focus, then the typing, its first letter a capital as the field starts a
+    // sentence
+    @MainActor
+    private static func expectTyping(in app: XCUIApplication, _ what: String) {
+        expectPromptFocus(in: app, what)
+        let field = app.descendants(matching: .any)["chat-prompt"].firstMatch
+        type("hi", in: app)
+        let typed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value ==[c] 'hi' AND hasKeyboardFocus == true"),
+            object: field
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [typed], timeout: wait),
+            .completed,
+            "the prompt field on \(what) reads '\(field.value as? String ?? "")', not the typing"
+        )
+    }
+
     // the app on `split`'s sessions, past the machines
     @MainActor
     private func openSplit(arguments: [String]) -> XCUIApplication {
@@ -114,18 +139,24 @@ internal final class SessionKeyboardTests: XCTestCase {
     internal func testASessionOpenedOnItsChatTakesTheTypingInItsPrompt() {
         let app = openSplit(arguments: ["-ngterm-fake-chat"])
         app.descendants(matching: .any)["session-work"].firstMatch.tap()
-        let field = app.descendants(matching: .any)["chat-prompt"].firstMatch
-        FakeApp.expect(field, "the chat's prompt field")
-        Self.type("hi", in: app)
-        let typed = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "value ==[c] 'hi' AND hasKeyboardFocus == true"),
-            object: field
-        )
-        XCTAssertEqual(
-            XCTWaiter.wait(for: [typed], timeout: Self.wait),
-            .completed,
-            "the prompt field reads '\(field.value as? String ?? "")', not the typing"
-        )
+        Self.expectTyping(in: app, "the chat opened first")
+    }
+
+    // `work` opens on its chat; Show terminal hands the prompt field's keyboard to the pane's terminal, and Show chat
+    // hands it back to the field, the pane keeping one terminal under its chat
+    @MainActor
+    internal func testAPaneTurningToItsTerminalAndBackKeepsTheTyping() {
+        let app = openSplit(arguments: ["-ngterm-fake-chat"])
+        app.descendants(matching: .any)["session-work"].firstMatch.tap()
+        Self.expectPromptFocus(in: app, "the chat opened first")
+        let viewSwitch = app.descendants(matching: .any)["session-view-switch"].firstMatch
+        FakeApp.expect(viewSwitch, "Show terminal")
+        viewSwitch.tap()
+        Self.expectFocus(on: "P1", in: app, "the terminal shown in the chat's place")
+        Self.type("ls", in: app)
+        FakeApp.expect(Self.screen("P1", in: app, typed: "ls"), "the typing on the terminal, with no tap")
+        viewSwitch.tap()
+        Self.expectTyping(in: app, "the chat shown again")
     }
 
     deinit {
