@@ -26,8 +26,9 @@ fun isMissingCli(reason: String): Boolean {
 /**
  * A session as the list shows it: the session, its parent's name when it is a companion, what is under way, whether
  * its panes running an agent show as a chat ([chatView]: its own choice, else Settings'), whether Duplicate takes
- * a tap ([canDuplicate]: not while a create is under way), and the app without a chat view its machine runs
- * ([noChatOn], its badge word; `null` when the machine has one).
+ * a tap ([canDuplicate]: not while a create is under way), the app without a chat view it is a session of
+ * ([noChatOn], its badge word; `null` when its app has one), and that app's badge word when the machine's own app is
+ * another ([peer]: an agterm session beside ngterm's on a machine that runs both).
  */
 data class SessionLine(
     val session: RemoteSession,
@@ -38,6 +39,7 @@ data class SessionLine(
     val duplicating: Boolean = false,
     val canDuplicate: Boolean = true,
     val noChatOn: String? = null,
+    val peer: String? = null,
 )
 
 /** What the body of a machine's sessions screen is, by its link and its listing. */
@@ -124,6 +126,8 @@ private fun MachineSessions.listingBody(): SessionsBody {
 private fun MachineSessions.lines(listed: List<RemoteSession>): SessionsBody.Sessions {
     val names = listed.associate { it.id to it.name }
     val line = { session: RemoteSession ->
+        // a machine whose own app is another than ngterm has only that app's sessions
+        val app = sessionPeers[session.id] ?: peer?.takeIf { it.foreign }
         SessionLine(
             session = session,
             companionOf = session.parent?.let { names[it] ?: it },
@@ -132,7 +136,9 @@ private fun MachineSessions.lines(listed: List<RemoteSession>): SessionsBody.Ses
             chatView = chatViews.on(SessionKey(machine.id, session.id)),
             duplicating = session.id == duplicating,
             canDuplicate = !creating,
-            noChatOn = peer?.takeUnless { it.offersChat }?.badge,
+            noChatOn = app?.takeUnless { it.offersChat }?.badge,
+            // the machine's own badge, in the top row, already says it when every session is that app's
+            peer = app?.takeIf { it.foreign && peer?.foreign != true }?.badge,
         )
     }
     val families = families(listed).map { family -> family.map(line) }

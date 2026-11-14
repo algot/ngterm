@@ -43,8 +43,8 @@ data class AgentStatus(
  * whether its panes running an agent show as a chat ([chatView]: its own choice, else Settings'), whether this
  * device is [taking] its lead, its parent's name when it is a companion ([companionOf]), whether it is [nested]
  * under that parent, attached too and listed above it, whether its Duplicate is under way ([duplicating]),
- * whether Duplicate takes a tap ([canDuplicate]: not while any create is under way, from any screen), and the app its
- * machine runs ([peer], when a listing said; `null`: ngterm, or not said).
+ * whether Duplicate takes a tap ([canDuplicate]: not while any create is under way, from any screen), and the app it
+ * is a session of ([peer], when a listing said another than ngterm; `null`: ngterm, or not said).
  */
 data class AttachedSession(
     val key: SessionKey,
@@ -62,7 +62,7 @@ data class AttachedSession(
     val canDuplicate: Boolean = true,
     val peer: MachinePeer? = null,
 ) {
-    /** The name of the app without a chat view its machine runs, or `null` when the machine has one. */
+    /** The name of the app without a chat view it is a session of, or `null` when its app has one. */
     val noChatOn: String? get() = peer?.takeUnless { it.offersChat }?.badge
 }
 
@@ -135,7 +135,7 @@ class SessionViewModel(
             connections.attached,
             connections.trees,
             connections.links,
-            connections.peers,
+            connections.sessionPeers,
         ) { machines, attached, trees, links, peers ->
             Listed(machines, attached, trees, links, peers)
         }
@@ -313,13 +313,16 @@ private data class Marks(
     val create: Create?,
 )
 
-/** What the lists are made of: the saved machines, what is attached, each machine's listing, link and app. */
+/**
+ * What the lists are made of: the saved machines, what is attached, each machine's listing and link, each session's
+ * app.
+ */
 private data class Listed(
     val machines: List<StoredMachine>,
     val attached: Map<String, Set<String>>,
     val trees: Map<String, List<RemoteSession>>,
     val links: Map<String, Link>,
-    val peers: Map<String, MachinePeer>,
+    val peers: Map<SessionKey, MachinePeer>,
 )
 
 // each machine's attached sessions in its listing's order by family (any it no longer lists after), remembering in
@@ -381,6 +384,6 @@ private fun attached(
         status = status,
         link = listed.links[machine.id] ?: Link.Offline,
         live = stream,
-        peer = listed.peers[machine.id],
+        peer = listed.peers[key],
     ).also { seen[key] = it }
 }

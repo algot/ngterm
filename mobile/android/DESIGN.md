@@ -182,7 +182,7 @@ white on nothing, as Android masks it. The status glyphs are 16dp filled or stro
 | `StatusGlyph`, `StatusBadge`, `AgentStatusBadge` | a status's glyph; glyph and word for an app tone; for an origin's status |
 | `MachineCard` | a machine: name, mono address (with its app's `PeerBadge` beside it, moving under it when both don't fit), connection badge, and a summary slot for its sessions' status |
 | `PeerBadge` | the app a machine runs when it isn't ngterm ("agterm"): the word in `labelMedium`, on-surface-variant ink, inside a 1dp `outline` hairline at the badges' 6dp radius; no fill and no status color, since it is a fact about the machine, not a state or a place. With the app's note it takes a tap (48dp target) or a long press and shows the note in a rich tooltip under it, titled with the word; TalkBack reads "agterm. Attached from agterm: …" with the action "Show what it lacks". Without one it is a plain label |
-| `SessionRow` | a session: name, context or companion line (a machine's list indents every companion; Sessions only one under its attached parent), status slot, Attached mark, the bus bar when on screen, and an optional menu at the end (Attach or Detach, Duplicate session, Chat view, End session) |
+| `SessionRow` | a session: name, context or companion line (a machine's list indents every companion; Sessions only one under its attached parent), status slot, its app's `PeerBadge` as a plain label when the machine's own app is another, Attached mark, the bus bar when on screen, and an optional menu at the end (Attach or Detach, Duplicate session, Chat view, End session) |
 | `SectionHeader` | a group's heading with an optional count and one text action |
 | `MessagePanel` with `EmptyState`, `ErrorState`, `OfflineState` | what a screen shows instead of content: icon, title, what to do, and the one action that does it (busy while it runs: a small spinner, no taps); at most one quieter text-button action under it, for a retry after the fix the main one points to |
 | `Banner` | a strip about the whole screen while it stays usable, with an optional action and dismiss; announced politely |
@@ -286,7 +286,7 @@ reading, not a poster), the mark on top of the welcome.
   own) shows a `PeerBadge` "agterm" after its address from its first listing until it is disconnected, removed or edited
   (a lost or unreachable connection keeps it); the card isn't the place for its note, which the sessions screen and
   the session bar give on a tap. A machine with no sessions listed yet says nothing either way: its listing names the
-  app.
+  app. A Mac that runs both apps is ngterm's and shows no badge here: its agterm sessions carry their own, below.
 - **Remove** asks nothing: the machine goes at once and a snackbar offers Undo, which puts it back where it was, with
   its pinned key.
 - **Add and Edit machine:** a `ScreenFrame` with Close and Save. Name, Host, Port and User (mono for what is compared
@@ -341,7 +341,9 @@ machine is the subject: the list is quiet rows on the ground, not cards, since a
 - **List:** 640dp at most, centered. "Attached" (what this app has attached) first, then "On build-01" (the rest);
   each heading with its count, a group with nothing in it left out. A row is a `SessionRow`: the name, the context (or
   the working directory when it has none), the agent's status badge, and a More menu with Attach or Detach, Duplicate
-  session, Chat view (off on an agterm machine, below) and End session (in the error color). Companions sit indented under their parent with "Companion
+  session, Chat view (off on an agterm session, below) and End session (in the error color). On a machine that runs
+  both apps, ngterm's sessions come first and each agterm session has the `PeerBadge` "agterm" at the row's end, before
+  its menu, as a plain label: the top row has no badge then, the row's tap attaches, and the session bar gives the note. Companions sit indented under their parent with "Companion
   of …" as their line. Tapping a row attaches it (the session view opens from there). A row being ended says "Ending",
   one being duplicated "Duplicating", with a small spinner in place of its status. Pull to refresh lists again; on a machine not connected it connects.
 - **New session** takes one tap: the machine creates a session it names, the app attaches it and the session view
@@ -614,7 +616,7 @@ compact                            medium (rail open)               expanded
   width up it is the content beside the rail or the sidebar, which list the attached sessions (below).
 - **The bar** (`surfaceContainer`, under the status bar): Back on a phone; the session's name (titleMedium) over its
   agent status (`AgentStatusBadge`, or the stream's own state while it isn't live: Connecting, Reconnecting, or Can't stream) and its
-  context in one line; the machine's `PeerBadge` when it runs agterm (in the bar's row, not the state line, so its
+  context in one line; the session's `PeerBadge` when it is agterm's, on a machine that runs both too (in the bar's row, not the state line, so its
   48dp target doesn't grow the bar); the pane switcher; the view switch; More. The bar is the one place the session's state shows;
   nothing in the terminal repeats it.
 - **The pane switcher** (`PaneSwitcher`): only with two panes. A tab per pane, numbered in the origin's order, 48dp
@@ -670,9 +672,9 @@ compact                            medium (rail open)               expanded
   session's own Agent chat view, a menu item with a checkbox at its end, checked while the session's panes running an
   agent show as a chat; TalkBack reads it as a checkbox. It starts at Settings' Agent chat view, and a tap sets the
   other for that session alone, kept on this device (`SessionChatViews`, the newest 256 sessions); one set back to
-  Settings' value follows Settings again. The menu closes on the tap. On a machine whose app has no chat view
-  (agterm) it is disabled and unchecked, with "agterm has no chat view" under its label in `bodySmall`, and that
-  machine's panes always show their terminal: no view switch, no chat opened, so the composer's commands and uploads
+  Settings' value follows Settings again. The menu closes on the tap. On a session whose app has no chat view
+  (agterm's, beside ngterm's on one machine too) it is disabled and unchecked, with "agterm has no chat view" under its
+  label in `bodySmall`, and that session's panes always show their terminal: no view switch, no chat opened, so the composer's commands and uploads
   never come up there.
 - **The keyboard:** one `TerminalKeyboard` for the view, shared by every pane and the extra-keys row, so a held Ctrl
   stays as the selection moves; the row sits under the panes over the soft keyboard (a held word takes its top line,

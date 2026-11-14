@@ -22,6 +22,8 @@ import com.nickalie.ngterm.android.R
 import com.nickalie.ngterm.android.ui.theme.NgtermTheme
 
 /**
+ * [peer] is the app the session is one of when its machine's own is another (`PeerBadge`, a plain label here: the
+ * row's tap attaches, and the session bar gives the app's note).
  * [nested] is separate from [companionOf] because Sessions indents a companion only under its attached parent, so one
  * whose parent isn't attached never reads as another session's; a machine's list indents every companion.
  */
@@ -35,6 +37,7 @@ fun SessionRow(
     selected: Boolean = false,
     companionOf: String? = null,
     nested: Boolean = companionOf != null,
+    peer: String? = null,
     menu: (@Composable () -> Unit)? = null,
     status: @Composable () -> Unit = {},
 ) {
@@ -65,6 +68,7 @@ fun SessionRow(
             Detail(companionOf?.let { stringResource(R.string.session_companion, it) } ?: context)
             status()
         }
+        peer?.let { PeerBadge(it, Modifier.padding(start = spacing.sm)) }
         if (attached) {
             Text(
                 text = stringResource(R.string.session_attached),

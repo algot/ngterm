@@ -87,6 +87,31 @@ class ConnectionsTest {
         }
 
     @Test
+    fun aMachineRunningBothAppsIsNgtermsAndNamesItsAgtermSessions() =
+        runTest {
+            val connections = connections()
+            core.sessions["m1"] =
+                mutableListOf(fakeSession("s1", peer = PeerKind.NGTERM), fakeSession("s2", peer = PeerKind.AGTERM))
+            connections.connect(machine)
+            advanceUntilIdle()
+            assertEquals(false, connections.peers.value["m1"]?.foreign)
+            val apps = connections.sessionPeers.value
+            assertEquals(setOf(SessionKey("m1", "s2")), apps.keys)
+            assertEquals(false, apps[SessionKey("m1", "s2")].offersChat)
+            assertEquals(true, apps[SessionKey("m1", "s1")].offersChat)
+
+            // agterm's sessions alone are left: the machine reads as agterm's, as one that runs only agterm does
+            core.sessions["m1"]?.removeAt(0)
+            connections.listSessions("m1")
+            advanceUntilIdle()
+            assertEquals(PeerKind.AGTERM, connections.peers.value["m1"]?.kind)
+            assertEquals(setOf(SessionKey("m1", "s2")), connections.sessionPeers.value.keys)
+
+            connections.disconnect("m1")
+            assertEquals(emptyMap<SessionKey, MachinePeer>(), connections.sessionPeers.value)
+        }
+
+    @Test
     fun aListingThatNamesNoAppLeavesTheMachineAsNgterm() =
         runTest {
             val connections = connections()

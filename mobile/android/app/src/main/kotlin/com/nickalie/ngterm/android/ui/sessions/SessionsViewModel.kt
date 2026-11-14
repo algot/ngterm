@@ -46,6 +46,8 @@ data class MachineSessions(
     val chatViews: ChatViews = ChatViews(),
     // the app the machine runs, when a listing said (null: ngterm, or not said)
     val peer: MachinePeer? = null,
+    // the app of each session that isn't ngterm's, by session id: a machine may run both
+    val sessionPeers: Map<String, MachinePeer> = emptyMap(),
 )
 
 /** What a machine's sessions screen shows. */
@@ -98,8 +100,8 @@ class SessionsViewModel(
             connections.trees,
             connections.treeFailures,
             connections.attached,
-            combine(graph.chats.chatViews, connections.peers, ::Pair),
-        ) { links, trees, failures, attached, (chatViews, peers) ->
+            combine(graph.chats.chatViews, connections.peers, connections.sessionPeers, ::Triple),
+        ) { links, trees, failures, attached, (chatViews, peers, sessionPeers) ->
             Live(
                 links[machineId] ?: Link.Offline,
                 trees[machineId],
@@ -107,6 +109,7 @@ class SessionsViewModel(
                 attached[machineId].orEmpty(),
                 chatViews,
                 peers[machineId],
+                sessionPeers.filterKeys { it.machineId == machineId }.mapKeys { it.key.sessionId },
             )
         }
 
@@ -117,6 +120,7 @@ class SessionsViewModel(
         val attached: Set<String>,
         val chatViews: ChatViews,
         val peer: MachinePeer?,
+        val sessionPeers: Map<String, MachinePeer>,
     )
 
     private val creates = graph.creates
@@ -148,6 +152,7 @@ class SessionsViewModel(
                         creating = underWay.create != null,
                         chatViews = live.chatViews,
                         peer = live.peer,
+                        sessionPeers = live.sessionPeers,
                     ),
                 )
             }

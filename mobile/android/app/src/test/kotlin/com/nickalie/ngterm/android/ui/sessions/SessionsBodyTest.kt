@@ -1,8 +1,11 @@
 package com.nickalie.ngterm.android.ui.sessions
 
 import com.nickalie.ngterm.android.data.Link
+import com.nickalie.ngterm.android.data.MachinePeer
 import com.nickalie.ngterm.android.testMachine
+import com.nickalie.ngterm.core.fake.fakePeerCapabilities
 import com.nickalie.ngterm.core.fake.fakeSession
+import com.nickalie.ngterm.core.ffi.PeerKind
 import com.nickalie.ngterm.core.ffi.RemoteSession
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -85,6 +88,21 @@ class SessionsBodyTest {
             assertEquals(listOf("a", "a2").map { it in attached }, body.attached.map { it.attached })
             assertEquals(listOf("b"), body.others.map { it.session.id })
         }
+    }
+
+    @Test
+    fun anAgtermSessionBesideNgtermsNamesItsAppAndOffersNoChatView() {
+        val agterm = MachinePeer(PeerKind.AGTERM, fakePeerCapabilities(PeerKind.AGTERM))
+        val listed = listOf(fakeSession("own"), fakeSession("theirs", peer = PeerKind.AGTERM))
+        val both = sessions(listed = listed).copy(sessionPeers = mapOf("theirs" to agterm))
+        val lines = (both.body() as SessionsBody.Sessions).others.associateBy { it.session.id }
+        assertEquals(listOf(null, null), listOf(lines["own"]?.peer, lines["own"]?.noChatOn))
+        assertEquals(listOf("agterm", "agterm"), listOf(lines["theirs"]?.peer, lines["theirs"]?.noChatOn))
+
+        // a machine that runs agterm alone says so once, in its top row: its rows only lose the chat view
+        val alone = sessions(listed = listed.drop(1)).copy(peer = agterm)
+        val line = (alone.body() as SessionsBody.Sessions).others.single()
+        assertEquals(listOf(null, "agterm"), listOf(line.peer, line.noChatOn))
     }
 
     @Test

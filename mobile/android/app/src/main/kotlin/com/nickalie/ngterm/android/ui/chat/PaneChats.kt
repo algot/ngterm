@@ -41,7 +41,7 @@ enum class PaneView { Terminal, Chat }
  * because its chat ended or the origin couldn't open it (a link that is down only defers the open until it is back).
  * A terminal so picked holds until the pane's next conversation (or the agent leaves); picking the chat again lifts
  * it. With its session's chat view off every pane shows its terminal, as on a machine whose app has no chat view
- * (agterm: [Connections.peers]).
+ * (agterm: [Connections.sessionPeers]).
  *
  * [views] has every pane with an agent whose session's chat view is on. A pane in chat view that is shown ([shown])
  * has its chat open in [chats], one [ChatViewModel] each, so the core's chat channels stay as few as the panes on
@@ -94,7 +94,7 @@ class PaneChats(
         }
         scope.launch { sessions.collect(::keepHolds) }
         scope.launch {
-            combine(sessions, holds, chatViewState, connections.peers, ::views).collect { viewState.value = it }
+            combine(sessions, holds, chatViewState, connections.sessionPeers, ::views).collect { viewState.value = it }
         }
         scope.launch {
             combine(viewState, shown) { views, shown -> views to shown.keys }
@@ -270,15 +270,15 @@ private data class Hold(
     val conversation: String?,
 )
 
-// every pane with an agent, in its view, while its session's chat view is on and its machine's app has one
+// every pane with an agent, in its view, while its session's chat view is on and its session's app has one
 private fun views(
     sessions: Map<SessionKey, LiveSession>,
     holds: Map<PaneRef, Hold>,
     chatViews: ChatViews,
-    peers: Map<String, MachinePeer>,
+    peers: Map<SessionKey, MachinePeer>,
 ): Map<PaneRef, PaneView> =
     sessions
-        .filterKeys { key -> chatViews.on(key) && peers[key.machineId].offersChat }
+        .filterKeys { key -> chatViews.on(key) && peers[key].offersChat }
         .flatMap { (key, session) ->
             session.agents.map { (paneId, agent) ->
                 val pane = PaneRef(key.machineId, key.sessionId, paneId)

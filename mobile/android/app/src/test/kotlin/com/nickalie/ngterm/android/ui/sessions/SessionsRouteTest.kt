@@ -207,6 +207,27 @@ class SessionsRouteTest {
     }
 
     @Test
+    fun aMachineRunningBothAppsBadgesItsAgtermSessionAndKeepsNgtermsChatView() {
+        test.core.sessions["m1"] =
+            mutableListOf(
+                fakeSession("s1", "build", peer = PeerKind.NGTERM),
+                fakeSession("s2", "notes", peer = PeerKind.AGTERM),
+            )
+        connect()
+        route()
+        compose.awaitText("notes")
+        // one badge, the agterm session's own: the machine is ngterm's
+        compose.onNodeWithContentDescription("agterm").assertExists()
+        menu()
+        compose.onNodeWithText("Chat view").assertIsOn().assertIsEnabled()
+        compose.onNodeWithText("agterm has no chat view").assertDoesNotExist()
+        compose.onNodeWithText("Chat view").performClick()
+        compose.onNodeWithContentDescription("More options for notes").performClick()
+        compose.onNodeWithText("Chat view").assertIsOff().assertIsNotEnabled()
+        compose.onNodeWithText("agterm has no chat view").assertExists()
+    }
+
+    @Test
     fun anNgtermMachineShowsNoAppBadge() {
         test.core.sessions["m1"] = mutableListOf(fakeSession("s1", "build", peer = PeerKind.NGTERM))
         connect()

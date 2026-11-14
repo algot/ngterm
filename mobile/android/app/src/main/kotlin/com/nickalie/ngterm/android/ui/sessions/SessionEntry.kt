@@ -53,6 +53,7 @@ internal fun SessionEntry(
         // the Attached group's heading says it: the mark would only crowd the row
         attached = false,
         companionOf = line.companionOf,
+        peer = line.peer,
         menu = {
             SessionMenu(
                 name = session.name,
