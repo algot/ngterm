@@ -416,8 +416,25 @@ class ChatComposerTest {
     }
 
     @Test
+    fun aResetNamesItsConversationWhateverThePaneStillAnnounces() {
+        // the pane moved on while the link was down, to a conversation with nothing said yet: the chat is back first
+        // and the origin names the new one, while the pane's last announcement is still the one before
+        bed.emit("p1", reset, event("conv2", ChatBody.Conversation("claude", "c2", null, null)), live)
+        assertEquals("c2", chat.conversation)
+        chat.restoreDraft("c1", "Fix the guide")
+        assertEquals("", composer.draft.text)
+        bed.agent("p1", conversation = "c2")
+        assertTrue(bed.chat("p1") === chat)
+        assertEquals("", composer.draft.text)
+        type("the new one's")
+        val saved = with(saver(chat)) { SaverScope { true }.save(KeptDraft(null, "")) }!!
+        assertEquals("c2", saver(chat).restore(saved)!!.conversation)
+    }
+
+    @Test
     fun aChatBackFromALostLinkStillKeepsTheDraftOfTheConversationItsPaneAnnounces() {
-        // a chat with nothing said yet comes back with a reset, its pane still in the same conversation
+        // an older origin's chat with nothing said yet comes back with a reset that names no conversation, its pane
+        // still in the same one
         bed.emit("p1", reset)
         type("Fix the guide")
         val saved = with(saver(chat)) { SaverScope { true }.save(KeptDraft(null, "")) }!!

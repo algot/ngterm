@@ -18,7 +18,8 @@
 //!   origin sends the cursor's line again, and an event identical to one already delivered (its id, parent and body:
 //!   not its cursor, which a carried `conversation` changes) is dropped here, so the app sees no repeats and no gaps.
 //!   A cursor is an offset into one transcript, so it always goes with the conversation it was read in
-//!   (`--conversation`, the id the chat's last main `conversation` event named, empty when none came): the origin
+//!   (`--conversation`, the id the chat's last main `conversation` event named; empty when none came, as from an
+//!   origin that names a conversation only by its transcript's lines, before the first of them): the origin
 //!   weighs it against the pane's record when the command starts, and a pane that moved to another conversation
 //!   meanwhile (a `/clear` or a resume while the phone was away, the new file longer or shorter than the cursor)
 //!   answers a `reset` and the new backlog, which start the chat over as a `reset` on a live channel does. The

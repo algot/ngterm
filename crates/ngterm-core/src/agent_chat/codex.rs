@@ -37,7 +37,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
 
-use super::event::{DIFF_CAP, OUTPUT_CAP};
+use super::event::{CONVERSATION_ID, DIFF_CAP, OUTPUT_CAP};
 use super::{
     AgentKind, ChatEvent, EventBody, Line, NoticeKind, Out, Question, Tool, ToolKind, ToolStatus, TranscriptParser,
     cap, compaction, decode_line, finish, non_empty, notice, question, str_at, tag, title_line, unified, untitled_tool,
@@ -51,9 +51,6 @@ const IGNORED_EVENTS: &[&str] = &["token_count", "thread_settings_applied"];
 
 /// `response_item` types the chat has no use for.
 const IGNORED_RESPONSES: &[&str] = &["additional_tools"];
-
-/// The id of the one `conversation` item a stream has.
-const CONVERSATION_ID: &str = "conversation";
 
 /// The output of a call whose turn ended before it wrote one.
 const INTERRUPTED: &str = "Interrupted";

@@ -209,9 +209,12 @@ class ChatViewModel internal constructor(
     val state: StateFlow<ChatUiState> = chat.asStateFlow()
 
     /**
-     * The conversation the chat follows: the one its events named, else the one its pane announced as it opened. After
-     * a `reset` (the pane moved on, or a chat with nothing said yet came back from a lost link) it is the one the pane
-     * announces now, until the events name it.
+     * The conversation the chat follows: the one its events named. The origin names it with every backlog and after
+     * every `reset`, with nothing said yet too, so the rest is for an origin that names one only by what was said in
+     * it: the one the pane announced as the chat opened, and after a `reset` (the pane moved on, or such an origin's
+     * chat with nothing said yet came back from a lost link, which the chat can't tell apart) the one the pane
+     * announces now. That announcement comes on another stream, so it may still be the earlier conversation's for a
+     * moment after the pane moved on.
      */
     internal val conversation: String?
         get() {
@@ -367,8 +370,9 @@ class ChatViewModel internal constructor(
     /**
      * Puts back a draft ([text]) kept from before (the app was put away, or the pane showed its terminal meanwhile):
      * only into the [conversation] it was written for, and only into an empty field. A chat that follows that
-     * conversation takes it at once (one its pane announced as it opened, with nothing said yet, has no events to
-     * name it); one whose conversation has no name yet waits for its events to name it.
+     * conversation ([ChatViewModel.conversation]: named by its events, or the one its pane announces while an older
+     * origin's events name none) takes it at once; one whose conversation has no name yet waits for its events to
+     * name it.
      */
     internal fun restoreDraft(
         conversation: String,

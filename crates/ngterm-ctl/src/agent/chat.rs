@@ -14,6 +14,11 @@
 //!   An empty id (the caller saw none announced) never matches. The record's id is the transcript's own (both are
 //!   the agent's session id, and a resume appends to the same file), so a match means the cursor's file; an agent
 //!   whose ids differed would only start over at each reconnect, never read a cursor in the wrong file.
+//! - **The conversation's name.** A transcript's lines announce its `conversation`, so one with nothing said yet (no
+//!   line, or no file) would have no name: its reader could then resume only with an empty id, which never matches,
+//!   and could not tell the `reset` that answers it from a pane that moved on. So where a read starts over (the
+//!   backlog, and after each `reset`) and its lines announce no conversation, the record's is announced in their
+//!   place ([`named`]), without the working directory and model only the lines know.
 //! - **The record** is read again about once a second ([`RECHECK`]): a new transcript (a `/clear`, a resume) is a
 //!   `reset` and its backlog; a cleared record (the agent ended) ends the stream with a zero exit; its live permission
 //!   prompt becomes `approval` and `approval_done` events ([`Approvals`]).
@@ -33,6 +38,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use ngterm_core::agent_chat::approvals::Approvals;
+use ngterm_core::agent_chat::event::CONVERSATION_ID;
 use ngterm_core::agent_chat::follow::{BACKLOG, POLL_INTERVAL};
 use ngterm_core::agent_chat::hook::check_transcript;
 use ngterm_core::agent_chat::{AgentKind, ChatEvent, EventBody, Follower, NO_AGENT};
@@ -140,6 +146,7 @@ impl Chat {
             None => follower.backlog(limit),
         }
         .map_err(|error| read_failure(&error))?;
+        let first = named(first, &record, self.after.is_none());
         let account = source(&record).and_then(Watch::start);
         let mut stream = Stream {
             chat: self,
@@ -176,6 +183,41 @@ fn source(record: &ControlAgent) -> Option<Source> {
         agent: AgentKind::from_name(&record.agent)?,
         transcript: PathBuf::from(&record.transcript_path),
     })
+}
+
+/// `events` with `record`'s conversation announced wherever a read starts over and its lines announce none (the
+/// module docs): after each `reset`, and at the front of a `backlog`. It takes the cursor of the main event after it,
+/// as a window's does ([`Follower`]). A record with no id announces nothing.
+fn named(mut events: Vec<ChatEvent>, record: &ControlAgent, backlog: bool) -> Vec<ChatEvent> {
+    let Some(agent) = AgentKind::from_name(&record.agent).filter(|_| !record.conversation_id.is_empty()) else {
+        return events;
+    };
+    // the read the reader keeps: what follows the last `reset`, or all of a backlog
+    let start = match events.iter().rposition(|event| matches!(event.body, EventBody::Reset)) {
+        Some(reset) => reset + 1,
+        None if backlog => 0,
+        None => return events,
+    };
+    let mut read = events[start..].iter().filter(|event| event.parent.is_none());
+    if read
+        .clone()
+        .any(|event| matches!(event.body, EventBody::Conversation { .. }))
+    {
+        return events;
+    }
+    let conversation = ChatEvent {
+        id: CONVERSATION_ID.to_owned(),
+        cursor: read.next().map_or(0, |event| event.cursor),
+        parent: None,
+        body: EventBody::Conversation {
+            agent,
+            conversation_id: record.conversation_id.clone(),
+            cwd: None,
+            model: None,
+        },
+    };
+    events.insert(start, conversation);
+    events
 }
 
 /// The event that tells the reader to drop what it shows: another conversation follows.
@@ -273,7 +315,7 @@ impl Stream<'_> {
                 None
             };
             let polled = self.follower.poll().map_err(|error| read_failure(&error))?;
-            events = self.interleave(polled);
+            events = self.interleave(named(polled, &self.record, false));
             match looked {
                 Some(Some(record)) => events.extend(self.recheck(record)?),
                 Some(None) => {
@@ -303,7 +345,7 @@ impl Stream<'_> {
                     .backlog(self.limit)
                     .map_err(|error| read_failure(&error))?,
             );
-            events = self.interleave(fresh);
+            events = self.interleave(named(fresh, &record, false));
         }
         events.extend(self.approvals.observe(record.approval.as_ref()));
         self.record = record;
@@ -518,6 +560,82 @@ mod tests {
         assert!(matches!(stream.recheck(invalid), Err(Failure::Local(error)) if error == "unknown agent: unknown"));
     }
 
+    // the `conversation` event of `id`, as `named` announces it at `cursor`
+    fn announced(id: &str, cursor: u64) -> ChatEvent {
+        ChatEvent {
+            id: CONVERSATION_ID.to_owned(),
+            cursor,
+            parent: None,
+            body: EventBody::Conversation {
+                agent: AgentKind::Claude,
+                conversation_id: id.to_owned(),
+                cwd: None,
+                model: None,
+            },
+        }
+    }
+
+    fn live(cursor: u64) -> ChatEvent {
+        ChatEvent {
+            id: "live".to_owned(),
+            cursor,
+            parent: None,
+            body: EventBody::Live,
+        }
+    }
+
+    #[test]
+    fn a_read_that_starts_over_with_no_conversation_announced_takes_the_records() {
+        let record = record(Path::new("unused"));
+        // a backlog with nothing said yet: named at the cursor of what follows
+        assert_eq!(named(vec![live(7)], &record, true), [announced("c1", 7), live(7)]);
+        assert_eq!(named(Vec::new(), &record, true), [announced("c1", 0)]);
+        // a subagent's line is no main event: neither its cursor nor its conversation counts
+        let mut subagent = announced("sub", 99);
+        subagent.parent = Some("task".to_owned());
+        assert_eq!(
+            named(vec![subagent.clone(), live(7)], &record, true),
+            [announced("c1", 7), subagent, live(7)]
+        );
+        // what follows the last reset is the read the reader keeps
+        let lines = announced("c0", 3);
+        assert_eq!(
+            named(vec![lines.clone(), reset(), live(0), reset(), live(5)], &record, false),
+            [lines.clone(), reset(), live(0), reset(), announced("c1", 5), live(5)]
+        );
+        // the lines' own announcement stands, and a read that goes on is the reader's already
+        let own = vec![reset(), lines, live(9)];
+        assert_eq!(named(own.clone(), &record, false), own);
+        assert_eq!(named(own.clone(), &record, true), own);
+        assert_eq!(named(vec![live(7)], &record, false), [live(7)]);
+        // a record with no id, or of an agent unknown here, names nothing
+        for unnamed in [
+            ControlAgent {
+                conversation_id: String::new(),
+                ..record.clone()
+            },
+            ControlAgent {
+                agent: "other".to_owned(),
+                ..record
+            },
+        ] {
+            assert_eq!(named(vec![reset(), live(7)], &unnamed, true), [reset(), live(7)]);
+        }
+    }
+
+    #[test]
+    fn a_pane_that_moves_to_a_conversation_with_nothing_said_yet_is_reset_and_named() {
+        let directory = tempfile::tempdir().unwrap();
+        let chat = chat(&[]).unwrap();
+        let mut stream = stream(&chat, record(&transcript(directory.path(), "old.jsonl")));
+        // the new conversation's transcript is not written yet
+        let new = ControlAgent {
+            conversation_id: "c2".to_owned(),
+            ..record(&directory.path().join("projects/work/new.jsonl"))
+        };
+        assert_eq!(stream.recheck(new).unwrap(), [reset(), announced("c2", 0), live(0)]);
+    }
+
     #[test]
     fn stream_positions_ignore_subagents_and_reset_before_a_new_conversation() {
         let directory = tempfile::tempdir().unwrap();
@@ -620,15 +738,22 @@ mod tests {
             let stdout = String::from_utf8(output.stdout).unwrap();
             let events = probe_events(&stdout);
             let reset = reset().to_ndjson();
+            // the transcript's line announces no conversation: a read that starts over takes the record's
+            let named: Vec<usize> = (0..events.len())
+                .filter(|at| events[*at].contains(r#""type":"conversation","agent":"claude","conversation_id":"c1""#))
+                .collect();
             match (arguments.contains(&"old"), arguments.contains(&"--before")) {
                 (true, true) => assert_eq!(events, [reset.as_str()], "{stdout}"),
                 (true, false) => {
                     assert_eq!(events.first(), Some(&reset.as_str()), "{stdout}");
                     assert!(events[1..].iter().any(|event| event.contains("hello")), "{stdout}");
+                    assert_eq!(named, [1], "{stdout}");
                 }
                 (false, _) => {
                     assert!(!events.contains(&reset.as_str()), "{stdout}");
                     assert!(events.iter().any(|event| event.contains("hello")), "{stdout}");
+                    let backlog = arguments.len() == 2;
+                    assert_eq!(named, if backlog { vec![0] } else { Vec::new() }, "{stdout}");
                 }
             }
         }

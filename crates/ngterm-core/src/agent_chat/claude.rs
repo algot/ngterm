@@ -33,7 +33,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
 
-use super::event::{DIFF_CAP, OUTPUT_CAP};
+use super::event::{CONVERSATION_ID, DIFF_CAP, OUTPUT_CAP};
 use super::{
     AgentKind, ChatEvent, EventBody, Line, NoticeKind, Out, Tool, ToolKind, ToolStatus, TranscriptParser, cap,
     compaction, decode_line, finish, non_empty, notice, question, str_at, tag, title_line, unified, untitled_tool,
@@ -64,9 +64,6 @@ pub const IGNORED: &[&str] = &[
 
 /// `system` subtypes the chat has no use for.
 const IGNORED_SYSTEM: &[&str] = &["stop_hook_summary", "turn_duration", "informational"];
-
-/// The id of the one `conversation` item a stream has.
-const CONVERSATION_ID: &str = "conversation";
 
 /// The tool Claude asks the user questions with.
 const ASK_USER_QUESTION: &str = "AskUserQuestion";

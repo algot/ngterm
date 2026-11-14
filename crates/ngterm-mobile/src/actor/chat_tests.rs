@@ -1090,8 +1090,9 @@ fn a_channel_lost_between_a_polls_main_and_subagent_lines_loses_nothing() {
     });
 }
 
-/// A chat whose events named no conversation (an agent before its first prompt) resumes with an empty one, which
-/// the origin never takes for the pane's, and has no older page to read.
+/// A chat whose events named no conversation (an agent before its first prompt, on an origin that names a
+/// conversation only by its transcript's lines) resumes with an empty one, which the origin never takes for the
+/// pane's, and has no older page to read.
 #[test]
 fn a_chat_that_named_no_conversation_resumes_with_none_and_pages_nothing() {
     local(async {
@@ -1114,6 +1115,37 @@ fn a_chat_that_named_no_conversation_resumes_with_none_and_pages_nothing() {
         tokio::time::sleep(Duration::from_secs(2)).await;
         settle().await;
         fixture.chat(&resumed(Side::Left, 200, ""));
+    });
+}
+
+/// A conversation with nothing said yet, which the origin names all the same, resumes as that one: the origin
+/// answers a `reset` only when the pane has moved on.
+#[test]
+fn a_chat_named_with_nothing_said_yet_resumes_in_its_conversation() {
+    local(async {
+        let mut fixture = Fixture::start().await;
+        fixture.open(LEFT).await.unwrap();
+        let chat = fixture.chat(&chat_tail(
+            ngterm_core::remote::origin::OriginShell::Posix,
+            SESSION,
+            Side::Left,
+            None,
+        ));
+        feed(&chat, &[conversation("c1", 0), live(0)]).await;
+        assert_eq!(texts(&fixture.reported().0), ["conversation:c1", "live"]);
+        chat.end(FAILED).await;
+        settle().await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        settle().await;
+        let chat = fixture.chat(&resumed(Side::Left, 0, "c1"));
+        // the pane moved on meanwhile, to one with nothing said yet either
+        feed(&chat, &[reset(), conversation("c2", 0), live(0)]).await;
+        assert_eq!(texts(&fixture.reported().0), ["reset", "conversation:c2", "live"]);
+        chat.end(FAILED).await;
+        settle().await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        settle().await;
+        fixture.chat(&resumed(Side::Left, 0, "c2"));
     });
 }
 

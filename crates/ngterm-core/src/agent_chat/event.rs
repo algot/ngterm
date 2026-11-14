@@ -22,6 +22,9 @@ pub const DIFF_CAP: usize = 64 * 1024;
 /// The most bytes of a tool's one-line title.
 pub const TITLE_CAP: usize = 200;
 
+/// The id of the one `conversation` item a stream has.
+pub const CONVERSATION_ID: &str = "conversation";
+
 /// The `unknown` entry of a line that is not a JSON object.
 pub const MALFORMED: &str = "malformed";
 
