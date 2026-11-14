@@ -12,8 +12,8 @@ import SwiftUI
 /// while one waits. `onShowTerminal` shows the pane's terminal instead. VoiceOver names it "Chat with" the agent.
 ///
 /// Its prompt field's focus follows the selection (`isSelected`): a chat the selection leaves lets it go, and one it
-/// moves to takes it when the keyboard was in use (`keyboard`'s handover), or a hardware keyboard is attached. Only the selected chat takes the
-/// keyboard's chords: ⌘Return, and the ⌘⌥ arrows that move between panes and sessions.
+/// moves to takes it when the keyboard was in use (`keyboard`'s handover), or a hardware keyboard is attached. Only
+/// the selected chat takes the keyboard's chords: ⌘Return, and the ⌘⌥ arrows that move between panes and sessions.
 internal struct ChatScreen: View {
     // the most of the chat's height a card takes before it scrolls inside: the rows above it stay in sight
     private static let cardShare: CGFloat = 0.6

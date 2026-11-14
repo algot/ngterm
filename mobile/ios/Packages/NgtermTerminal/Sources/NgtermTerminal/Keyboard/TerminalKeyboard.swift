@@ -198,7 +198,7 @@ public final class TerminalKeyboard {
         return handingOver
     }
 
-    /// `terminal` types through this keyboard: it takes the focus a hardware keyboard that comes gives the selected pane.
+    /// `terminal` types through this keyboard, so it hears of a hardware keyboard that comes.
     internal func serve(_ terminal: TerminalView) {
         terminals.add(terminal)
     }
