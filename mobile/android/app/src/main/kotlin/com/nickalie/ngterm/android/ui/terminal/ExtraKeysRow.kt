@@ -4,12 +4,8 @@ import android.content.res.Configuration
 import androidx.annotation.StringRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.indication
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -18,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -33,8 +30,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.input.pointer.AwaitPointerEventScope
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -173,10 +168,6 @@ private val OneRowWidth = KeyHeight * OneRow.size
 /** The inset of a key's face in its cell, which takes the touch whole. */
 private val KeyInset = 2.dp
 
-/** How long a key is held before it repeats, and how often it repeats then. */
-private const val REPEAT_DELAY_MS = 400L
-private const val REPEAT_INTERVAL_MS = 50L
-
 /** Whether a hardware keyboard is attached and open: it has every key the row has, so the row stands aside. */
 @Composable
 @ReadOnlyComposable
@@ -189,8 +180,10 @@ fun hardwareKeyboardAttached(): Boolean {
 /**
  * The keys a phone's soft keyboard lacks, over it: Esc, Tab, a sticky Ctrl and Alt, the arrows, Home and End, PgUp
  * and PgDn, and `/`, `|`, `~` and `-`, going to [keyboard]'s terminal. Two lines of eight on a phone held upright, one
- * line of sixteen once the width gives each 48dp. A key acts as it goes down, with a tick; the arrows and the page
- * keys repeat while held. Ctrl and Alt hold for the next key (outlined in copper), lock on a second tap (filled), and
+ * line of sixteen once the width gives each 48dp. A key shows its press and ticks as the finger goes down, and acts as
+ * it lifts inside the key: a touch that slides off, or that the system takes as a gesture, sends nothing. The arrows
+ * and the page keys also act once held a moment, and repeat while held; the row keeps the system's edge gestures off
+ * itself. Ctrl and Alt hold for the next key (outlined in copper), lock on a second tap (filled), and
  * let go on a third. While a hardware keyboard is attached the row is not shown. Settings' [layout] keeps two lines
  * at every width ([ExtraKeysChoice.TwoLines]) or hides the row ([ExtraKeysChoice.Hidden]). While text waits to be
  * typed, its [CompositionStrip] takes the top line, so the row keeps its height and the terminal its size.
@@ -211,6 +204,7 @@ fun ExtraKeysRow(
         modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.surfaceContainer)
+            .systemGestureExclusion()
             .semantics { paneTitle = description },
     ) {
         val rows = if (oneLine(layout, maxWidth)) listOf(OneRow) else TwoRows
@@ -302,24 +296,20 @@ private fun ExtraKeyButton(
             Sticky.Once -> stringResource(R.string.sticky_once)
             Sticky.Locked -> stringResource(R.string.sticky_locked)
         }
-    val press by rememberUpdatedState {
+    val tick by rememberUpdatedState {
+        haptics.performHapticFeedback(
+            when {
+                action !is ExtraKeyAction.Hold -> HapticFeedbackType.KeyboardTap
+                sticky == Sticky.Locked -> HapticFeedbackType.ToggleOff
+                else -> HapticFeedbackType.ToggleOn
+            },
+        )
+    }
+    val send by rememberUpdatedState {
         when (action) {
-            is ExtraKeyAction.Press -> {
-                haptics.performHapticFeedback(HapticFeedbackType.KeyboardTap)
-                keyboard.press(action.name)
-            }
-
-            is ExtraKeyAction.Type -> {
-                haptics.performHapticFeedback(HapticFeedbackType.KeyboardTap)
-                keyboard.type(action.text)
-            }
-
-            is ExtraKeyAction.Hold -> {
-                val now = keyboard.toggle(action.key)
-                haptics.performHapticFeedback(
-                    if (now == Sticky.Off) HapticFeedbackType.ToggleOff else HapticFeedbackType.ToggleOn,
-                )
-            }
+            is ExtraKeyAction.Press -> keyboard.press(action.name)
+            is ExtraKeyAction.Type -> keyboard.type(action.text)
+            is ExtraKeyAction.Hold -> keyboard.toggle(action.key)
         }
     }
     val interactions = remember { MutableInteractionSource() }
@@ -332,10 +322,11 @@ private fun ExtraKeyButton(
                 role = Role.Button
                 if (action is ExtraKeyAction.Hold) stateDescription = stickyWords
                 onClick {
-                    press()
+                    tick()
+                    send()
                     true
                 }
-            }.keyPress(interactions, (action as? ExtraKeyAction.Press)?.repeats == true) { press() }
+            }.keyPress(interactions, (action as? ExtraKeyAction.Press)?.repeats == true, { tick() }) { send() }
             .padding(KeyInset)
             .clip(shape)
             .background(look.face)
@@ -390,35 +381,3 @@ private val SymbolLine = 24.sp
 /** The share of a key's room the widest word takes, leaving its glyphs' overhang room. */
 private const val FIT = 0.9f
 private const val QUARTER_TURN = 90f
-
-/**
- * Runs [onPress] as a finger or a button goes down on the key, showing the press through [interactions]; while held,
- * a key that [repeats] runs it again after a moment and then steadily until let go.
- */
-private fun Modifier.keyPress(
-    interactions: MutableInteractionSource,
-    repeats: Boolean,
-    onPress: () -> Unit,
-): Modifier =
-    pointerInput(interactions, repeats) {
-        awaitEachGesture {
-            val down = awaitFirstDown()
-            down.consume()
-            val pressed = PressInteraction.Press(down.position)
-            interactions.tryEmit(pressed)
-            onPress()
-            var lifted = liftedWithin(REPEAT_DELAY_MS)
-            while (!lifted) {
-                if (repeats) onPress()
-                lifted = liftedWithin(REPEAT_INTERVAL_MS)
-            }
-            interactions.tryEmit(PressInteraction.Release(pressed))
-        }
-    }
-
-/** Whether the press ends (the finger lifts, or the press is canceled) within [millis]. */
-private suspend fun AwaitPointerEventScope.liftedWithin(millis: Long): Boolean =
-    withTimeoutOrNull(millis) {
-        waitForUpOrCancellation()
-        true
-    } ?: false

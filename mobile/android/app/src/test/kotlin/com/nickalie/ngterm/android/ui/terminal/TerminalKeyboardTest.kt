@@ -17,8 +17,12 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.hapticfeedback.HapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsFocused
@@ -72,6 +76,13 @@ class TerminalKeyboardTest {
     private lateinit var state: TerminalState
     private lateinit var view: View
     private val moves = mutableListOf<String>()
+    private val ticks = mutableListOf<HapticFeedbackType>()
+    private val haptics =
+        object : HapticFeedback {
+            override fun performHapticFeedback(hapticFeedbackType: HapticFeedbackType) {
+                ticks += hapticFeedbackType
+            }
+        }
     private val keyboard =
         TerminalKeyboard(
             TerminalShortcuts(
@@ -93,9 +104,11 @@ class TerminalKeyboardTest {
                     pane.onWake = state::dirty
                     onDispose { pane.onWake = null }
                 }
-                Column(Modifier.fillMaxSize()) {
-                    TerminalView(state, Modifier.weight(1f).fillMaxWidth(), keyboard = keyboard)
-                    ExtraKeysRow(keyboard)
+                CompositionLocalProvider(LocalHapticFeedback provides haptics) {
+                    Column(Modifier.fillMaxSize()) {
+                        TerminalView(state, Modifier.weight(1f).fillMaxWidth(), keyboard = keyboard)
+                        ExtraKeysRow(keyboard)
+                    }
                 }
             }
         }
@@ -231,6 +244,102 @@ class TerminalKeyboardTest {
         key("Alt").performClick()
         compose.waitForIdle()
         assertEquals(Sticky.Off, keyboard.alt)
+    }
+
+    @Test
+    fun aKeyTicksAsTheFingerGoesDownAndActsAsItLifts() {
+        show()
+        focus()
+        key("Escape").performTouchInput { down(center) }
+        compose.mainClock.advanceTimeBy(HOLD_MS)
+        assertEquals("the tick is the touch's", listOf(HapticFeedbackType.KeyboardTap), ticks)
+        assertEquals("nothing goes while the finger is down", emptyList<PaneKey>(), presses())
+        key("Escape").performTouchInput { up() }
+        compose.waitForIdle()
+        assertEquals(listOf(press("escape")), presses())
+        assertEquals("one tick a tap", 1, ticks.size)
+
+        key("Control").performTouchInput { down(center) }
+        compose.waitForIdle()
+        assertEquals(HapticFeedbackType.ToggleOn, ticks.last())
+        assertEquals("Ctrl holds as the finger lifts", Sticky.Off, keyboard.ctrl)
+        key("Control").performTouchInput { up() }
+        compose.waitForIdle()
+        assertEquals(Sticky.Once, keyboard.ctrl)
+    }
+
+    @Test
+    fun aTouchThatSlidesOffItsKeySendsNothing() {
+        show()
+        focus()
+        for (name in listOf("Escape", "Vertical bar", "Control", "Left arrow")) {
+            key(name).performTouchInput {
+                down(center)
+                moveTo(Offset(center.x, -height.toFloat()))
+                up()
+            }
+        }
+        compose.waitForIdle()
+        assertEquals(emptyList<FakeInput>(), pane.inputs.toList())
+        assertEquals(Sticky.Off, keyboard.ctrl)
+    }
+
+    @Test
+    fun aTouchTheSystemTakesAsAGestureSendsNothing() {
+        show()
+        focus()
+        for (name in listOf("Escape", "Tab", "Alt", "Page down")) {
+            key(name).performTouchInput { down(center) }
+            key(name).performTouchInput { cancel() }
+        }
+        compose.waitForIdle()
+        assertEquals(emptyList<FakeInput>(), pane.inputs.toList())
+        assertEquals(Sticky.Off, keyboard.alt)
+        key("Escape").performClick()
+        compose.waitForIdle()
+        assertEquals("the key takes the next tap", listOf(press("escape")), presses())
+    }
+
+    @Test
+    fun anArrowSwipedAcrossSendsNothing() {
+        show()
+        focus()
+        key("Left arrow").performTouchInput {
+            down(center)
+            moveBy(Offset(viewConfiguration.touchSlop * 2, 0f))
+        }
+        compose.mainClock.advanceTimeBy(HOLD_MS)
+        key("Left arrow").performTouchInput { up() }
+        compose.waitForIdle()
+        assertEquals(emptyList<PaneKey>(), presses())
+    }
+
+    @Test
+    fun anArrowActsOnAQuickTapAndOnceHeldAMoment() {
+        show()
+        focus()
+        key("Left arrow").performClick()
+        compose.waitForIdle()
+        assertEquals("a tap is one key", listOf(press("arrow_left")), presses())
+
+        pane.inputs.clear()
+        key("Left arrow").performTouchInput { down(center) }
+        compose.mainClock.advanceTimeBy(BEFORE_HOLD_MS)
+        assertEquals("a touch may still become a gesture", emptyList<PaneKey>(), presses())
+        compose.mainClock.advanceTimeBy(HELD_MS - BEFORE_HOLD_MS)
+        assertEquals("held, its first key goes", listOf(press("arrow_left")), presses())
+        key("Left arrow").performTouchInput { up() }
+        compose.waitForIdle()
+        assertEquals("lifting sends no second key", listOf(press("arrow_left")), presses())
+    }
+
+    @Test
+    fun theRowKeepsTheSystemsEdgeGesturesOffItself() {
+        show()
+        val row = compose.onNodeWithContentDescription("Escape").fetchSemanticsNode().boundsInRoot
+        val kept = view.systemGestureExclusionRects
+        val inRow = row.center.y.toInt()
+        assertTrue("the row's edges are excluded: $kept", kept.any { it.left == 0 && it.contains(1, inRow) })
     }
 
     @Test
@@ -416,7 +525,11 @@ class TerminalKeyboardTest {
     private companion object {
         const val HOLD_MS = 700L
 
-        // the press, then repeats from 400 ms every 50 ms while held to 700 ms
+        // an arrow's first key goes once it is held 100 ms
+        const val BEFORE_HOLD_MS = 60L
+        const val HELD_MS = 200L
+
+        // the first key, then repeats from 400 ms every 50 ms while held to 700 ms
         const val MIN_REPEATS = 4
     }
 }
