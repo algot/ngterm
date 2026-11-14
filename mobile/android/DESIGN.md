@@ -540,16 +540,18 @@ sideways or wider (48dp a key or more): one line of sixteen
   `onSurface` on `surfaceContainer`.
 - **A key acts on a tap, not on a touch.** As the finger goes down the key shows its press and ticks (a keyboard
   tick; a toggle tick on Ctrl and Alt), so the row answers at once; the key itself goes as the finger lifts inside
-  the key. A touch that slides off its key, that turns into a swipe, or that the system takes as a back or home
-  gesture sends nothing: Esc at the screen's edge can't interrupt a program by accident. The arrows and the page keys
-  also go once held 100ms without moving past the touch slop (Android's tap timeout: by then a touch that was a swipe
-  has moved), so a hold needs no lift, and repeat while held (400ms after the touch, every 50ms, a tick each). Esc,
-  Tab and the symbols don't repeat. The row keeps the system's edge gestures off itself (gesture exclusion, which
+  the key. A touch that moves past the touch slop (a swipe, however short, even one that stays inside its key), that
+  slides off its key, or that the system takes as a back or home gesture sends nothing: Esc at the screen's edge can't
+  interrupt a program by accident. The arrows and the page keys also go once held 100ms without moving past the touch
+  slop (Android's tap timeout: by then a touch that was a swipe has moved), so a hold needs no lift, and repeat while
+  held (400ms after the touch, every 50ms, a tick each); once its first key went, a held key may drift inside itself.
+  Esc, Tab and the symbols don't repeat. The row keeps the system's edge gestures off itself (gesture exclusion, which
   Android honors for back up to 200dp of an edge and never for home), so a touch on an edge key is the key's.
 
   | First pass | Why it was wrong | Revised to |
   |---|---|---|
   | A key acts as the finger goes down, as a hardware key does | a back swipe from the edge or a scroll that starts on the row typed Esc or an arrow into the program | the press and the tick on the touch, the key on the lift inside it |
+  | A lift anywhere inside the key sends it | with the row's edges excluded from the back gesture, a short back flick that starts and ends on Esc is a plain touch inside the key, and sent Esc | a touch that moves past the touch slop is lost, on every key |
   | An arrow's first key on the lift too, like the others | a hold to move the cursor would wait for the repeat delay to move at all | its first key once held 100ms, the repeat as before |
 - **Ctrl and Alt are sticky:** a tap holds it for the next key (a 2dp copper outline, copper legend, a toggle tick); a
   second tap locks it (a copper face, `onPrimary` legend); a third lets it go. A held modifier joins the next key from

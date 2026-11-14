@@ -26,6 +26,15 @@ enum class Sticky {
     Off,
     Once,
     Locked,
+    ;
+
+    /** Where a tap takes it from here. */
+    internal fun next(): Sticky =
+        when (this) {
+            Off -> Once
+            Once -> Locked
+            Locked -> Off
+        }
 }
 
 /**
@@ -124,18 +133,10 @@ class TerminalKeyboard(
     /**
      * A tap on [modifier]'s key: off to once, once to locked, locked to off. What waits was typed before the
      * tap: the input method's composition ends there and a held accent goes first, under the modifiers as they stood.
-     * Returns where it stands now.
      */
-    fun toggle(modifier: StickyModifier): Sticky {
+    fun toggle(modifier: StickyModifier) {
         target?.let(pending::commitBefore) ?: pending.endComposition()
-        val next =
-            when (sticky(modifier)) {
-                Sticky.Off -> Sticky.Once
-                Sticky.Once -> Sticky.Locked
-                Sticky.Locked -> Sticky.Off
-            }
-        set(modifier, next)
-        return next
+        set(modifier, sticky(modifier).next())
     }
 
     private fun set(

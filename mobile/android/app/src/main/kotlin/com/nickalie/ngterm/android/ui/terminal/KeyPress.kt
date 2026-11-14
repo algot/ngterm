@@ -25,9 +25,9 @@ private enum class PressEnd { Lifted, Lost }
 
 /**
  * A press on the key, shown through [interactions]: [onDown] as a finger or a button goes down, [onKey] as it lifts
- * inside the key. A press that leaves the key, that another handler takes or that the system cancels runs no
- * [onKey]. A key that [repeats] also runs [onKey] once held a moment without moving, then again (with [onDown])
- * steadily until the press ends.
+ * inside the key. A press that leaves the key, that moves past the touch slop, that another handler takes or that the
+ * system cancels runs no [onKey]. A key that [repeats] also runs [onKey] once held a moment, then again (with
+ * [onDown]) steadily until the press ends, and may drift inside the key from then on.
  */
 internal fun Modifier.keyPress(
     interactions: MutableInteractionSource,
@@ -44,7 +44,7 @@ internal fun Modifier.keyPress(
             onDown()
             var shown: PressInteraction = PressInteraction.Cancel(pressed)
             try {
-                val end = if (repeats) held(down.position, onDown, onKey) else tapped(onKey)
+                val end = if (repeats) held(down.position, onDown, onKey) else tapped(down.position, onKey)
                 if (end == PressEnd.Lifted) shown = PressInteraction.Release(pressed)
             } finally {
                 interactions.tryEmit(shown)
@@ -52,8 +52,11 @@ internal fun Modifier.keyPress(
         }
     }
 
-private suspend fun AwaitPointerEventScope.tapped(onKey: () -> Unit): PressEnd {
-    val end = pressEnd(still = null)
+private suspend fun AwaitPointerEventScope.tapped(
+    from: Offset,
+    onKey: () -> Unit,
+): PressEnd {
+    val end = pressEnd(still = from)
     if (end == PressEnd.Lifted) onKey()
     return end
 }
@@ -84,18 +87,34 @@ private suspend fun AwaitPointerEventScope.endWithin(
 
 /** Waits for the press to end; a press that must stay [still] is also lost once it moves past the touch slop. */
 private suspend fun AwaitPointerEventScope.pressEnd(still: Offset?): PressEnd {
-    while (true) {
+    var end: PressEnd? = null
+    while (end == null) {
         val event = awaitPointerEvent(PointerEventPass.Main)
-        if (event.changes.all { it.changedToUp() }) {
-            event.changes.forEach { it.consume() }
-            return PressEnd.Lifted
-        }
         val lost =
             event.changes.any {
                 it.isConsumed ||
                     it.isOutOfBounds(size, extendedTouchPadding) ||
                     (still != null && (it.position - still).getDistance() > viewConfiguration.touchSlop)
             }
-        if (lost || awaitPointerEvent(PointerEventPass.Final).changes.any { it.isConsumed }) return PressEnd.Lost
+        end =
+            when {
+                lost -> {
+                    PressEnd.Lost
+                }
+
+                event.changes.all { it.changedToUp() } -> {
+                    event.changes.forEach { it.consume() }
+                    PressEnd.Lifted
+                }
+
+                awaitPointerEvent(PointerEventPass.Final).changes.any { it.isConsumed } -> {
+                    PressEnd.Lost
+                }
+
+                else -> {
+                    null
+                }
+            }
     }
+    return end
 }

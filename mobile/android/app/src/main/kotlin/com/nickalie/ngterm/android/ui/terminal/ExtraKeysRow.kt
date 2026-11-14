@@ -181,7 +181,7 @@ fun hardwareKeyboardAttached(): Boolean {
  * The keys a phone's soft keyboard lacks, over it: Esc, Tab, a sticky Ctrl and Alt, the arrows, Home and End, PgUp
  * and PgDn, and `/`, `|`, `~` and `-`, going to [keyboard]'s terminal. Two lines of eight on a phone held upright, one
  * line of sixteen once the width gives each 48dp. A key shows its press and ticks as the finger goes down, and acts as
- * it lifts inside the key: a touch that slides off, or that the system takes as a gesture, sends nothing. The arrows
+ * it lifts inside the key: a touch that moves, or that the system takes as a gesture, sends nothing. The arrows
  * and the page keys also act once held a moment, and repeat while held; the row keeps the system's edge gestures off
  * itself. Ctrl and Alt hold for the next key (outlined in copper), lock on a second tap (filled), and
  * let go on a third. While a hardware keyboard is attached the row is not shown. Settings' [layout] keeps two lines
@@ -300,7 +300,7 @@ private fun ExtraKeyButton(
         haptics.performHapticFeedback(
             when {
                 action !is ExtraKeyAction.Hold -> HapticFeedbackType.KeyboardTap
-                sticky == Sticky.Locked -> HapticFeedbackType.ToggleOff
+                keyboard.sticky(action.key).next() == Sticky.Off -> HapticFeedbackType.ToggleOff
                 else -> HapticFeedbackType.ToggleOn
             },
         )

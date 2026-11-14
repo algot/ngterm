@@ -24,7 +24,9 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.TouchInjectionScope
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.v2.createComposeRule
@@ -34,6 +36,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performMouseInput
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.test.swipeUp
@@ -135,6 +138,9 @@ class TerminalKeyboardTest {
     ) = KeyMapping.named(name, mods)
 
     private fun key(name: String) = compose.onNodeWithContentDescription(name)
+
+    /** A move just past the touch slop, short enough to stay inside a key from its centre. */
+    private fun TouchInjectionScope.pastSlop() = Offset(viewConfiguration.touchSlop * PAST_SLOP, 0f)
 
     @Test
     fun aTapFocusesTheTerminalAndOpensTheSoftKeyboard() {
@@ -312,6 +318,68 @@ class TerminalKeyboardTest {
         key("Left arrow").performTouchInput { up() }
         compose.waitForIdle()
         assertEquals(emptyList<PaneKey>(), presses())
+    }
+
+    @Test
+    fun aShortSwipeInsideAKeySendsNothing() {
+        show()
+        focus()
+        for (name in listOf("Escape", "Tab", "Control", "Left arrow")) {
+            key(name).performTouchInput {
+                down(center)
+                moveBy(pastSlop())
+                assertTrue("the swipe stays inside the key", center.x + pastSlop().x < width)
+                up()
+            }
+        }
+        compose.waitForIdle()
+        assertEquals(emptyList<FakeInput>(), pane.inputs.toList())
+        assertEquals(Sticky.Off, keyboard.ctrl)
+    }
+
+    @Test
+    fun aLiftAwayFromWhereTheFingerWentDownSendsNothing() {
+        show()
+        focus()
+        for (name in listOf("Escape", "Left arrow")) {
+            key(name).performTouchInput {
+                down(center)
+                updatePointerTo(0, center + pastSlop())
+                up()
+            }
+            key(name).performTouchInput {
+                down(center)
+                updatePointerTo(0, Offset(center.x, -height.toFloat()))
+                up()
+            }
+        }
+        compose.waitForIdle()
+        assertEquals(emptyList<FakeInput>(), pane.inputs.toList())
+    }
+
+    @Test
+    fun talkBacksClickTicksAndSendsTheKeyAtOnce() {
+        show()
+        focus()
+        key("Escape").performSemanticsAction(SemanticsActions.OnClick)
+        compose.waitForIdle()
+        assertEquals(listOf(press("escape")), presses())
+        assertEquals(listOf(HapticFeedbackType.KeyboardTap), ticks)
+
+        val taps =
+            listOf(
+                Sticky.Once to HapticFeedbackType.ToggleOn,
+                Sticky.Locked to HapticFeedbackType.ToggleOn,
+                Sticky.Off to HapticFeedbackType.ToggleOff,
+            )
+        for ((stands, tick) in taps) {
+            key("Control").performSemanticsAction(SemanticsActions.OnClick)
+            compose.waitForIdle()
+            assertEquals(stands, keyboard.ctrl)
+            assertEquals(tick, ticks.last())
+        }
+        assertEquals("one tick a click", 1 + taps.size, ticks.size)
+        assertEquals("a modifier's click sends no key", listOf(press("escape")), presses())
     }
 
     @Test
@@ -527,6 +595,7 @@ class TerminalKeyboardTest {
 
         // an arrow's first key goes once it is held 100 ms
         const val BEFORE_HOLD_MS = 60L
+        const val PAST_SLOP = 1.25f
         const val HELD_MS = 200L
 
         // the first key, then repeats from 400 ms every 50 ms while held to 700 ms
