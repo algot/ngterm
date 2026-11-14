@@ -66,6 +66,19 @@ def daemons(tmp_path: Path) -> Iterator[list[subprocess.Popen[bytes]]]:
         process.wait(timeout=5)
 
 
+def install_stdin_reader(program: Path) -> None:
+    """Puts at `program` an executable that reads stdin until it closes and then exits 0 under any file name: `cat`, or
+    where that is a multicall binary that refuses a name it does not know (uutils coreutils), the next that does."""
+    for candidate in ("cat", "gnucat", "sh"):
+        source = shutil.which(candidate)
+        if source is None:
+            continue
+        shutil.copy2(source, program)
+        if subprocess.run([program], stdin=subprocess.DEVNULL, capture_output=True, check=False).returncode == 0:
+            return
+    raise RuntimeError(f"no program here reads stdin under the name {program.name}")
+
+
 def spawn_daemon(
     tmp_path: Path,
     name: str,
@@ -74,12 +87,12 @@ def spawn_daemon(
     directory: str = "daemons",
     variable: str = "ZMX_DIR",
 ) -> int:
-    """A copy of `cat` under `name`, `variable` naming `live_dir` in its environment, blocked on a stdin pipe the test
+    """A stdin reader under `name`, `variable` naming `live_dir` in its environment, blocked on a stdin pipe the test
     holds."""
     program = tmp_path / directory / name
     program.parent.mkdir(exist_ok=True)
     if not program.exists():
-        shutil.copy2(shutil.which("cat") or "/bin/cat", program)
+        install_stdin_reader(program)
     process = subprocess.Popen([program], stdin=subprocess.PIPE, env={variable: live_dir})
     spawned.append(process)
     # Popen returns once exec passed its point of no return; the new image's argv pages may still be empty.
@@ -607,7 +620,7 @@ def test_stop_reports_a_compositor_client_left_behind(
     instance = adapter.launch()
     program = tmp_path / "clients" / "weston-desktop-shell"
     program.parent.mkdir()
-    shutil.copy2(shutil.which("cat") or "/bin/cat", program)
+    install_stdin_reader(program)
     client = subprocess.Popen([program], stdin=subprocess.PIPE, env={"XDG_RUNTIME_DIR": str(instance.root / "run")})
     daemons.append(client)
     with pytest.raises(StopError, match=rf"compositor or bus processes left .*{client.pid} "):
