@@ -265,6 +265,15 @@ public final class TerminalView: UIView {
         nil
     }
 
+    /// The terminal leaves its window: with the keyboard, it hands it over to what takes its pane's place (its chat,
+    /// the other layout's terminal).
+    override public func willMove(toWindow newWindow: UIWindow?) {
+        if newWindow == nil, keyboard.target === self {
+            keyboard.handOver()
+        }
+        super.willMove(toWindow: newWindow)
+    }
+
     /// The pane has a new frame (`PaneDirty`): the display link reads it on its next tick.
     public func dirty() {
         framePending = true
@@ -305,15 +314,6 @@ public final class TerminalView: UIView {
         // the terminal was busy and this is the frame it made last: ask again on the next tick
         framePending = update.header.stale
         link?.isPaused = !framePending
-    }
-
-    /// Draws the rows marked for drawing now, as the next screen update would.
-    public func displayNow() {
-        layoutIfNeeded()
-        for row in rowLayers {
-            row.displayIfNeeded()
-        }
-        textInput.layer.displayIfNeeded()
     }
 
     /// Lays the rows out over the bounds and gives the pane the grid that fits them.

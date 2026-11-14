@@ -10,15 +10,6 @@ extension TerminalView {
             .flatMap { $0.keyCommands(action: #selector(runKeyCommand)) }
     }
 
-    /// The terminal leaves its window: with the keyboard, it hands it over to what takes its pane's place (its chat,
-    /// the other layout's terminal).
-    override public func willMove(toWindow newWindow: UIWindow?) {
-        if newWindow == nil, keyboard.target === self {
-            keyboard.handOver()
-        }
-        super.willMove(toWindow: newWindow)
-    }
-
     /// The terminal became the first responder (`became`): every key goes here now.
     internal func tookKeyboard(_ became: Bool) -> Bool {
         if became {
