@@ -71,9 +71,9 @@ public final class TerminalKeyboard {
     ///
     /// A session opened while a hardware keyboard is attached gives its selected pane the focus as it comes on, so
     /// typing and the chords go on there without a tap (Android's `FollowFocus`); the soft keyboard still waits for
-    /// one. So does a session a hardware keyboard comes to while none of its terminals or chats has the keyboard,
-    /// unless a text field of a sheet over it does: the system reports a keyboard attached all along only after the
-    /// first session opened.
+    /// one. So does a session a hardware keyboard comes to while none of its terminals or chats has the keyboard: the
+    /// system reports a keyboard attached all along only after the first session opened. In both, a text field of a
+    /// sheet over the session that has the keyboard then keeps it.
     public init(shortcuts: TerminalShortcuts = TerminalShortcuts(), hardware: HardwareKeyboard? = nil) {
         self.shortcuts = shortcuts
         self.hardware = hardware ?? HardwareKeyboard()
@@ -190,9 +190,10 @@ public final class TerminalKeyboard {
     /// Whether ``handOver()`` left the keyboard for the chat selected next, which takes its prompt field's focus;
     /// taken once.
     ///
-    /// The focus without the soft keyboard goes to the chat only while a hardware keyboard is attached: the field
-    /// taking it opens the soft keyboard, which the terminal handing it over had closed. Without one, that terminal,
-    /// no longer drawn focused, lets the focus go, its extra keys with it.
+    /// The focus without the soft keyboard goes to the chat only while a hardware keyboard is attached, and not while
+    /// a text field of a sheet over the session has the keyboard: the field taking it opens the soft keyboard, which
+    /// the terminal handing it over had closed. Without one, that terminal, no longer drawn focused, lets the focus go,
+    /// its extra keys with it.
     public func takeChatHandover() -> Bool {
         switch takeHandover() {
         case .withKeyboard:
@@ -200,7 +201,7 @@ public final class TerminalKeyboard {
 
         case .focus:
             if hardware.isAttached {
-                return true
+                return !otherHoldsKeyboard()
             }
             if let target, !target.drawsFocused {
                 _ = target.resignFirstResponder()
@@ -210,12 +211,6 @@ public final class TerminalKeyboard {
         case nil:
             return false
         }
-    }
-
-    /// What ``handOver()`` left for the terminal selected next, taken once.
-    internal func takeHandover() -> Handover? {
-        defer { handingOver = nil }
-        return handingOver
     }
 
     /// What ``handOver()`` left for the terminal selected next in `window`, taken once: the focus alone is dropped
@@ -253,8 +248,14 @@ public final class TerminalKeyboard {
         }
     }
 
-    // whether a view that is neither a terminal nor a chat's field is the first responder in a window the terminals
-    // are in: one of a sheet over the session, which tells this keyboard nothing
+    // what handOver() left, taken once
+    private func takeHandover() -> Handover? {
+        defer { handingOver = nil }
+        return handingOver
+    }
+
+    // whether a view other than a terminal is the first responder in a window the terminals are in, a hidden one
+    // under a chat too: a sheet's field over the session, which tells this keyboard nothing
     private func otherHoldsKeyboard() -> Bool {
         Set(terminals.allObjects.compactMap(\.window)).contains(where: otherHoldsKeyboard(in:))
     }
