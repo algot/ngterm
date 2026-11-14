@@ -46,9 +46,10 @@ private const val KEY = "key:"
 
 /**
  * The Settings destination: Settings itself, and the screens it opens (a key's public half, importing a key,
- * exporting one once [auth] has confirmed the device's owner), stacked, with back returning to Settings. A key just made or brought opens its public half, which offers to point
- * every machine at it. Whether the system lets the app post notifications is read again each time the app resumes,
- * so coming back from the system's settings shows the change.
+ * exporting one once [auth] has confirmed the device's owner), stacked, with back returning to Settings. A key just
+ * made or brought opens its public half, which offers to point every machine at it. Whether the system lets the app
+ * post notifications is read again each time the app resumes, so coming back from the system's settings shows the
+ * change.
  */
 @Composable
 fun SettingsRoute(
@@ -72,15 +73,16 @@ fun SettingsRoute(
     }
     val back = ScreenExit(R.drawable.ic_back, stringResource(R.string.action_back)) { page = HOME }
     val shown = page.takeIf { it.startsWith(KEY) }?.removePrefix(KEY)
-    val item = shown?.let { id -> (state as? SettingsUiState.Ready)?.keys?.firstOrNull { it.key.id == id } }
-    val exported = export.keyId?.let { id -> (state as? SettingsUiState.Ready)?.keys?.firstOrNull { it.key.id == id } }
+    val ready = state as? SettingsUiState.Ready
+    val item = shown?.let { id -> ready?.keys?.firstOrNull { it.key.id == id } }
+    val exported = export.keyId?.let { id -> ready?.keys?.firstOrNull { it.key.id == id } }
     BackHandler(enabled = page == IMPORT || item != null || exported != null) {
         exports.close()
         page = HOME
     }
     when {
         exported != null -> {
-            ExportKeyPage(exported.key, export, exports, onBack = exports::close, modifier = modifier)
+            ExportKeyPage(exported.key, export, exports::save, exports::copy, exports::close, modifier)
         }
 
         page == IMPORT -> {

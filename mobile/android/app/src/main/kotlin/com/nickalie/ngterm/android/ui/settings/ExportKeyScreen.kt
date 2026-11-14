@@ -33,13 +33,6 @@ import com.nickalie.ngterm.android.ui.theme.NgtermTheme
 import com.nickalie.ngterm.android.ui.theme.StatusTone
 import com.nickalie.ngterm.core.ffi.ExportProtection
 
-/** What the export screen starts with: its tests and previews fill it, the app starts empty. */
-data class ExportDraft(
-    val passphrase: String = "",
-    val again: String = "",
-    val unprotected: Boolean = false,
-)
-
 /** Where an export goes, as the screen's two actions name it. */
 private enum class Target { File, Clipboard }
 
@@ -107,10 +100,7 @@ fun ExportKeyScreen(
         ExportActions(work, onSave = { start(Target.File) }, onCopy = { start(Target.Clipboard) })
     }
     asking?.let { target ->
-        ConfirmDialog(
-            title = stringResource(R.string.export_unprotected_title),
-            body = stringResource(R.string.export_unprotected_body),
-            confirmLabel = stringResource(R.string.export_unprotected),
+        ConfirmUnprotected(
             onConfirm = {
                 asking = null
                 send(target, ExportProtection.Unprotected)
@@ -118,6 +108,21 @@ fun ExportKeyScreen(
             onDismiss = { asking = null },
         )
     }
+}
+
+// the second question before a key leaves unencrypted; its button repeats the switch's words
+@Composable
+private fun ConfirmUnprotected(
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ConfirmDialog(
+        title = stringResource(R.string.export_unprotected_title),
+        body = stringResource(R.string.export_unprotected_body),
+        confirmLabel = stringResource(R.string.export_unprotected),
+        onConfirm = onConfirm,
+        onDismiss = onDismiss,
+    )
 }
 
 // the passphrase and its repeat; once an export was tried ([checked]) what is wrong shows under the field it is about
@@ -143,7 +148,7 @@ private fun Passphrases(
             shown = shown,
             enabled = enabled,
             imeAction = ImeAction.Next,
-            onShown = { shown = it },
+            onShow = { shown = it },
         )
         SecretField(
             value = again,
@@ -169,7 +174,7 @@ private fun SecretField(
     enabled: Boolean,
     imeAction: ImeAction,
     modifier: Modifier = Modifier,
-    onShown: ((Boolean) -> Unit)? = null,
+    onShow: ((Boolean) -> Unit)? = null,
 ) {
     OutlinedTextField(
         value = value,
@@ -182,7 +187,7 @@ private fun SecretField(
         keyboardOptions =
             KeyboardOptions(autoCorrectEnabled = false, keyboardType = KeyboardType.Password, imeAction = imeAction),
         trailingIcon =
-            onShown?.let {
+            onShow?.let {
                 {
                     TextButton(onClick = { it(!shown) }) {
                         Text(

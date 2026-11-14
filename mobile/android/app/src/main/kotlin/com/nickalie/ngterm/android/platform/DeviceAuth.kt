@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.CancellationSignal
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.ChecksSdkIntAtLeast
 import androidx.annotation.RequiresApi
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -46,8 +47,8 @@ interface DeviceAuth {
 }
 
 /**
- * The system's own prompt: a biometric with the screen lock's credential as the other way in (Android 9 and later),
- * the keyguard's credential screen before that.
+ * The system's own prompt: a biometric with the screen lock's credential as the other way in (Android 10 and later),
+ * the keyguard's credential screen before that, where the prompt takes no credential.
  */
 @Composable
 fun rememberDeviceAuth(): DeviceAuth {
@@ -67,7 +68,9 @@ fun rememberDeviceAuth(): DeviceAuth {
     }
 }
 
-/** [DeviceAuth] over the system: [launchCredential] starts the keyguard's credential screen where there is no prompt. */
+/**
+ * [DeviceAuth] over the system: [launchCredential] starts the keyguard's credential screen where there is no prompt.
+ */
 class SystemDeviceAuth(
     private val context: Context,
     private val sdk: Int = Build.VERSION.SDK_INT,
@@ -82,26 +85,29 @@ class SystemDeviceAuth(
         subtitle: String,
         onResult: (AuthResult) -> Unit,
     ) {
-        if (sdk >= Build.VERSION_CODES.P) {
+        if (atLeast(Build.VERSION_CODES.Q)) {
             prompt(title, subtitle, onResult)
         } else {
-            @Suppress("DEPRECATION") // the only credential screen before Android 9's prompt
+            @Suppress("DEPRECATION") // the only credential screen before Android 10's prompt takes one
             val intent = keyguard?.createConfirmDeviceCredentialIntent(title, subtitle)
             if (intent == null) onResult(AuthResult.Failed("")) else launchCredential(intent, onResult)
         }
     }
 
-    @RequiresApi(Build.VERSION_CODES.P)
+    @ChecksSdkIntAtLeast(parameter = 0)
+    private fun atLeast(api: Int) = sdk >= api
+
+    @RequiresApi(Build.VERSION_CODES.Q)
     private fun prompt(
         title: String,
         subtitle: String,
         onResult: (AuthResult) -> Unit,
     ) {
         val builder = BiometricPrompt.Builder(context).setTitle(title).setSubtitle(subtitle)
-        if (sdk >= Build.VERSION_CODES.R) {
+        if (atLeast(Build.VERSION_CODES.R)) {
             builder.setAllowedAuthenticators(Authenticators.BIOMETRIC_WEAK or Authenticators.DEVICE_CREDENTIAL)
         } else {
-            @Suppress("DEPRECATION") // Android 9 and 10 have no setAllowedAuthenticators
+            @Suppress("DEPRECATION") // Android 10 has no setAllowedAuthenticators
             builder.setDeviceCredentialAllowed(true)
         }
         builder.build().authenticate(CancellationSignal(), context.mainExecutor, PromptCallback(onResult))

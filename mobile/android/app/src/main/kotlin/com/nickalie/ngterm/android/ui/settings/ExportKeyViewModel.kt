@@ -18,6 +18,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.IOException
 
+/** What the export screen starts with: its tests fill it, the app starts empty. */
+data class ExportDraft(
+    val passphrase: String = "",
+    val again: String = "",
+    val unprotected: Boolean = false,
+)
+
 /** Where an export went. */
 enum class ExportDone { Saved, Copied }
 
@@ -97,12 +104,10 @@ class ExportKeyViewModel(
     // whether an export may start: a key is unlocked, recently enough, and none is under way
     private fun ready(): Boolean {
         val current = state.value
-        if (current.keyId == null || current.busy) return false
-        if (now() - unlockedAt > UNLOCKED_FOR_MS) {
-            state.value = current.copy(done = null, problem = ExportProblem.Expired)
-            return false
-        }
-        return true
+        val idle = current.keyId != null && !current.busy
+        val fresh = now() - unlockedAt <= UNLOCKED_FOR_MS
+        if (idle && !fresh) state.value = current.copy(done = null, problem = ExportProblem.Expired)
+        return idle && fresh
     }
 
     private fun export(

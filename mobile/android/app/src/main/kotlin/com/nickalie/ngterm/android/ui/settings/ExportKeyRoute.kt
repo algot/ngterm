@@ -3,6 +3,7 @@ package com.nickalie.ngterm.android.ui.settings
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -39,16 +40,16 @@ private sealed interface ExportNotice {
 
 /**
  * What Export private key does for a key's id: [auth] asks the device's owner to prove it is them, and only then
- * [onUnlocked] hears the id. A device with no screen lock is told to set one, with the system's security settings
+ * [onUnlock] hears the id. A device with no screen lock is told to set one, with the system's security settings
  * one tap away; a device that couldn't ask says why, with Try again. Backing out of the prompt does nothing.
  */
 @Composable
 internal fun rememberExportStart(
     auth: DeviceAuth,
-    onUnlocked: (String) -> Unit,
+    onUnlock: (String) -> Unit,
 ): (String) -> Unit {
     val context = LocalContext.current
-    val unlocked by rememberUpdatedState(onUnlocked)
+    val unlocked by rememberUpdatedState(onUnlock)
     val title = stringResource(R.string.export_auth_title)
     val subtitle = stringResource(R.string.export_auth_subtitle)
     var notice by remember { mutableStateOf<ExportNotice?>(null) }
@@ -108,15 +109,16 @@ internal fun rememberExportStart(
 }
 
 /**
- * The export screen of [key] over [model]: Save to a file opens the system's screen for making a document and writes
- * the key into the one the user makes; Copy puts it on the clipboard. The protection chosen waits here, in memory
- * only, while the system's screen is up.
+ * The export screen of [key]: Save to a file opens the system's screen for making a document and hands [onSave] the
+ * one the user makes, with the protection chosen (none when it was lost: it waits here, in memory only, while the
+ * system's screen is up); Copy hands [onCopy] the protection.
  */
 @Composable
 internal fun ExportKeyPage(
     key: AppKey,
     work: ExportWork,
-    model: ExportKeyViewModel,
+    onSave: (Uri, ExportProtection?) -> Unit,
+    onCopy: (ExportProtection) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -125,7 +127,7 @@ internal fun ExportKeyPage(
         rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(KEY_FILE_TYPE)) { target ->
             val protection = chosen
             chosen = null
-            if (target != null) model.save(target, protection)
+            if (target != null) onSave(target, protection)
         }
     val name = stringResource(R.string.export_file_name)
     ExportKeyScreen(
@@ -135,7 +137,7 @@ internal fun ExportKeyPage(
             chosen = it
             create.launch(name)
         },
-        onCopy = model::copy,
+        onCopy = onCopy,
         onBack = onBack,
         modifier = modifier,
     )

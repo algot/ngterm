@@ -10,6 +10,8 @@
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
   <!-- the agents' questions, notifications and status, and the attached sessions' summary (Android 13+ asks) -->
   <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+  <!-- the system's prompt for the screen lock (a biometric or the credential) before a private key is exported -->
+  <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 
   <!-- enableOnBackInvokedCallback opts Android 13-15 into predictive back (16 has it by default at target SDK 36);
        older versions ignore it and keep the classic back, hence targetApi 33 for lint's UnusedAttribute -->

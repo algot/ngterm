@@ -39,20 +39,20 @@ class DeviceAuthTest {
     }
 
     @Test
-    fun beforeAndroid9TheKeyguardsCredentialScreenAsks() {
+    fun beforeAndroid10TheKeyguardsCredentialScreenAsks() {
         keyguard.setIsDeviceSecure(true)
 
-        auth(Build.VERSION_CODES.O).confirm("Export private key", "Confirm it's you") { results += it }
+        auth(Build.VERSION_CODES.P).confirm("Export private key", "Confirm it's you") { results += it }
 
         assertEquals(1, launched.size)
         assertEquals(listOf<AuthResult>(AuthResult.Confirmed), results)
     }
 
     @Test
-    fun beforeAndroid9ADeviceWithNoCredentialScreenFails() {
+    fun beforeAndroid10ADeviceWithNoCredentialScreenFails() {
         keyguard.setIsDeviceSecure(false)
 
-        auth(Build.VERSION_CODES.O).confirm("Export private key", "Confirm it's you") { results += it }
+        auth(Build.VERSION_CODES.P).confirm("Export private key", "Confirm it's you") { results += it }
 
         assertTrue(launched.isEmpty())
         assertEquals(listOf<AuthResult>(AuthResult.Failed("")), results)
