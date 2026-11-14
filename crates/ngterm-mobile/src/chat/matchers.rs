@@ -4,13 +4,15 @@
 //! 0.167.2) draw (the PTY captures in `tests/fixtures/agent_screens`, described in
 //! `crates/ngterm-core/tests/fixtures/agent_chat/README.md`):
 //!
-//! - **Claude's prompt**: a rule the screen's whole width, the input rows (the first one opening with `❯`), another
-//!   rule, then the footer; working while the footer says `esc to interrupt` or a spinner line (`✶ Pontificating…`)
+//! - **Claude's prompt**: a rule the screen's whole width (in a session with a name, from `-n` or `/rename`, the
+//!   name sits in it before its last `─`: `──────── team-lead ─`, Claude Code 2.1.325), the input rows (the first
+//!   one opening with `❯`), another rule, then the footer; working while the footer says `esc to interrupt` or a spinner line (`✶ Pontificating…`)
 //!   sits right above the box.
 //! - **Claude's permission dialog**: under a full-width rule, what it asks about (the tool, the call's description,
 //!   and its command between dashed rules), a question ending with `?`, the numbered options (the picked one marked
 //!   `❯`, a long label wrapped onto indented rows) and, as the screen's last line, `Esc to cancel · Tab to amend`. A
-//!   digit picks an option.
+//!   digit picks an option. A session with a name closes each of its dialogs (this one, the picker, its review)
+//!   with the titled rule as one more row, which is left out before a dialog is read.
 //! - **Claude's `AskUserQuestion` picker**: a full-width rule over the tab row (`☐ Color`, or `←  ☐ Style  ☐ Languages
 //!   ✔ Submit  →`), the question (one that wraps drawn as a quote by 2.1.318, each row opening with `│`), its
 //!   numbered options (each with its description on the rows under it; a multi-select one boxed `[ ]` or `[✔]`),
@@ -69,7 +71,7 @@ impl Agent {
     pub(crate) fn read(self, frame: &Frame) -> Screen {
         let rows = Rows::of(frame);
         match self {
-            Self::Claude => claude(&rows),
+            Self::Claude => claude(&rows.without_closing_title()),
             Self::Codex => codex(&rows),
         }
     }
@@ -375,6 +377,27 @@ impl Rows {
         line.chars().count() == self.cols && line.chars().all(|c| c == '─')
     }
 
+    /// The rule Claude draws in a session with a name (`-n`, `/rename`), over its prompt box and under its dialogs:
+    /// the screen's whole width, the name before its last ` ─` (`──────── team-lead ─`), with no `─` before a name
+    /// too long for the row, which ends with `…`.
+    fn titled_rule(&self, index: usize) -> bool {
+        let line = self.get(index);
+        line.chars().count() == self.cols
+            && line.strip_suffix(" ─").is_some_and(|rest| {
+                let name = rest.trim_start_matches('─');
+                name.starts_with(' ') && !name.trim().is_empty()
+            })
+    }
+
+    /// The rows without the titled rule a named session draws as the screen's last row while a dialog is up: the
+    /// dialog's own footer is the last row again, as in a session with no name.
+    fn without_closing_title(mut self) -> Self {
+        if let Some(last) = self.last().filter(|last| self.titled_rule(*last)) {
+            self.lines[last].clear();
+        }
+        self
+    }
+
     /// The last row with anything on it.
     fn last(&self) -> Option<usize> {
         (0..self.lines.len()).rev().find(|index| !self.blank(*index))
@@ -678,7 +701,9 @@ fn claude_prompt(rows: &Rows) -> Option<(bool, String)> {
     if last - lower > CLAUDE_FOOTER_ROWS || !rows.indented(lower + 1..last + 1) {
         return None;
     }
-    let upper = (0..lower).rev().find(|index| rows.rule(*index))?;
+    let upper = (0..lower)
+        .rev()
+        .find(|index| rows.rule(*index) || rows.titled_rule(*index))?;
     if upper + 1 == lower || !rows.get(upper + 1).starts_with(CLAUDE_CURSOR) {
         return None;
     }
@@ -687,7 +712,9 @@ fn claude_prompt(rows: &Rows) -> Option<(bool, String)> {
     // the rules are left out of the words' search: they hold what was typed, and no dialog reaches them while the
     // box's upper rule (no other above it) and its `❯` row are still there
     let input = upper + 1..lower;
-    if (0..upper).any(|index| rows.rule(index)) || rows.marked_around(upper.saturating_sub(ABOVE), input.clone()) {
+    if (0..upper).any(|index| rows.rule(index) || rows.titled_rule(index))
+        || rows.marked_around(upper.saturating_sub(ABOVE), input.clone())
+    {
         return None;
     }
     let footer = (lower + 1..=last).any(|index| rows.get(index).contains("esc to interrupt"));

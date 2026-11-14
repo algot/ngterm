@@ -217,6 +217,12 @@ The scratch dir shows truncated (`/tmp/claude-1000/…0000000/…/rec/project`),
 rewritten with same-length `sanitize.py bin --map` pairs (including the pieces a wrap or a partial redraw splits it
 into) so the marks still hold. The 44- and 100-column Claude dialogs wrap it.
 
+`claude-named-44x36` is a later recording, Claude Code 2.1.325 in a session with a name (`claude -n team-lead`, later
+`/rename`d), made with the same recorder in a scratch home: the name sits in the rule over the prompt
+(`──────── team-lead ─`), and the same titled rule closes each dialog as the screen's last row. Its marks are listed
+in the captures' own README. That version also writes a paste its prompt showed as `[Pasted text #1 +6 lines]` into
+the transcript between `<pasted_content id="…">` and `</pasted_content id="…">` lines (`claude::unpasted`).
+
 ## Recording again
 
 `record/` has the tools:

@@ -1,0 +1,14 @@
+{
+  "cols": 44,
+  "marks": {
+    "idle": 1223,
+    "idle_hr": 30820,
+    "idle_long_name": 35636,
+    "idle_short_name": 39133,
+    "idle_suggestion": 21998,
+    "permission": 7065,
+    "question": 15878,
+    "working": 2100
+  },
+  "rows": 36
+}

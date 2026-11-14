@@ -95,6 +95,47 @@ fn a_prompt_is_pasted_whole_then_entered_once_the_prompt_shows_it() {
 }
 
 #[test]
+fn a_named_sessions_prompt_dialog_and_picker_take_the_chats_actions() {
+    // Claude Code draws a named session's name into the rule over its prompt and closes its dialogs with that rule
+    let named = "claude-named-44x36";
+    let mut plan = Plan::new(Action::Prompt("a long first message".to_owned()), Agent::Claude);
+    assert_eq!(
+        step(&mut plan, &screen(named, Agent::Claude, "idle")),
+        send(Key::Paste("a long first message".to_owned()), true)
+    );
+    let mut plan = Plan::new(Action::Interrupt, Agent::Claude);
+    assert_eq!(
+        step(&mut plan, &screen(named, Agent::Claude, "working")),
+        send(Key::Escape, false)
+    );
+    let mut plan = Plan::new(
+        Action::Approval(approval_of("touch picked.txt"), "Yes".to_owned()),
+        Agent::Claude,
+    );
+    assert_eq!(
+        step(&mut plan, &screen(named, Agent::Claude, "permission")),
+        send(Key::Digit(1), true)
+    );
+    let colors = item(
+        "Which color do you like?",
+        false,
+        &[
+            ("Red", "Warm and bold, the color of fire and roses."),
+            ("Green", "Calm and natural, the color of leaves and grass."),
+            ("Blue", "Cool and steady, the color of sky and sea."),
+        ],
+    );
+    let mut plan = Plan::new(
+        Action::Question(vec![colors], vec![answer(&["Green"], None)]),
+        Agent::Claude,
+    );
+    assert_eq!(
+        step(&mut plan, &screen(named, Agent::Claude, "question")),
+        send(Key::Digit(2), true)
+    );
+}
+
+#[test]
 fn a_paste_with_blank_lines_option_shaped_lines_or_long_lines_is_entered_once_shown() {
     for (agent, name) in [
         (Agent::Claude, "claude-44x36"),

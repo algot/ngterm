@@ -1305,3 +1305,73 @@ fn codexs_picker_is_never_its_users_message_holding_a_draft() {
         assert_eq!(capture.read(Agent::Claude, state), Screen::Unknown, "{state}");
     }
 }
+
+/// Claude Code 2.1.325 in a session with a name (`-n team-lead`, then `/rename`) at the phone's grid.
+const NAMED: &str = "claude-named-44x36";
+
+#[test]
+fn a_named_sessions_prompt_is_read_under_the_rule_that_holds_its_name() {
+    let capture = Capture::load(NAMED);
+    // the name in the rule, one too long for the row (no `─` before it), a two-letter one, and under a reply that
+    // drew a table
+    for state in [
+        "idle",
+        "idle_suggestion",
+        "idle_hr",
+        "idle_long_name",
+        "idle_short_name",
+    ] {
+        assert_eq!(capture.read(Agent::Claude, state), empty(false), "{state}");
+    }
+    assert_eq!(capture.read(Agent::Claude, "working"), empty(true));
+    // a draft typed at the terminal still shows
+    let term = capture.term();
+    term.feed(capture.at("idle"));
+    term.feed(&into_prompt(&term, Agent::Claude, "0", "draft left here"));
+    assert_eq!(
+        Capture::read_term(&term, Agent::Claude),
+        Screen::Prompt {
+            working: false,
+            composer: "draft left here".to_owned(),
+        }
+    );
+}
+
+#[test]
+fn a_named_sessions_dialogs_are_read_over_the_titled_rule_that_closes_them() {
+    let capture = Capture::load(NAMED);
+    let screen = capture.read(Agent::Claude, "permission");
+    let dialog = dialog(&screen);
+    assert!(dialog.asks("touch picked.txt"), "{dialog:?}");
+    let keys: Vec<OptionKey> = dialog.options.iter().map(|option| option.key).collect();
+    assert_eq!(keys, (1..=4).map(OptionKey::Digit).collect::<Vec<_>>());
+    assert_eq!(dialog.options[0].label, "Yes");
+    assert_eq!(dialog.options[3].label, "No");
+
+    let screen = capture.read(Agent::Claude, "question");
+    let picker = picker(&screen);
+    assert_eq!(picker.question, "Which color do you like?");
+    assert!(!picker.cut);
+    let labels: Vec<&str> = picker
+        .options
+        .iter()
+        .map(|option| option.text.split_whitespace().next().unwrap())
+        .collect();
+    assert_eq!(labels, ["Red", "Green", "Blue", "Type"]);
+}
+
+#[test]
+fn a_row_that_only_ends_like_a_titled_rule_is_no_prompts_rule() {
+    // in the rule's place, a row of text that ends as it does but is not the row's width
+    let capture = Capture::load(NAMED);
+    let term = capture.term();
+    term.feed(capture.at("idle"));
+    let row = term
+        .frame()
+        .lines()
+        .iter()
+        .rposition(|line| line.ends_with("team-lead ─"))
+        .unwrap();
+    term.feed(format!("\x1b[{};1H\x1b[0m\x1b[Kteam-lead ─", row + 1).as_bytes());
+    assert_eq!(Capture::read_term(&term, Agent::Claude), Screen::Unknown);
+}
