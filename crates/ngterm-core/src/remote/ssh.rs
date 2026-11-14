@@ -85,9 +85,9 @@ pub fn tree_tail(shell: OriginShell) -> String {
 /// The remote command of [`super::tree::tree_argv`]: the far side's bare `ngtermctl live tree --json`, or, for a host
 /// pinned to agterm, its `agtermctl zmx tree --json` after the [`AGTERM_ANSWER`] line. A host that pins neither asks
 /// each app installed there, in one ssh call: ngterm's answer first, then agterm's under that line, so a host that
-/// runs both lists both ([`super::peer`]). An app that fails beside one that answers is left out; with no answer the
-/// failure is ngterm's when it is installed, else agterm's. A Windows origin's form is ngterm's, as agterm runs only
-/// on Macs.
+/// runs both lists both ([`super::peer`]). An app that fails or stalls beside one that answers is left out
+/// ([`both_apps_tail`]); with no answer the failure is ngterm's when it is installed, else agterm's. A Windows origin's
+/// form is ngterm's, as agterm runs only on Macs.
 #[must_use]
 pub fn tree_tail_for(shell: OriginShell, pin: Option<RemotePeer>) -> String {
     let ngterm = format!("{REMOTE_CLI} live tree --json");
@@ -99,23 +99,41 @@ pub fn tree_tail_for(shell: OriginShell, pin: Option<RemotePeer>) -> String {
         (OriginShell::Posix, Some(RemotePeer::Agterm)) => {
             peer_cli_chain(RemotePeer::Agterm, &format!("printf '%s\\n' {marker} && exec {agterm}"))
         }
-        (OriginShell::Posix, None) => {
-            let (n, a) = (REMOTE_CLI, agterm::CLI);
-            let script = format!(
-                "PATH=\"$PATH:$HOME/.local/bin:{dirs}\"; \
-                 if command -v {n} >/dev/null 2>&1; then o=$({ngterm}); s=$?; fi; \
-                 if command -v {a} >/dev/null 2>&1; then p=$({agterm}); t=$?; fi; \
-                 if [ \"${{s:-1}}\" -eq 0 ]; then printf '%s\\n' \"$o\"; \
-                 if [ \"${{t:-1}}\" -eq 0 ]; then printf '%s\\n%s\\n' {marker} \"$p\"; fi; exit 0; fi; \
-                 if [ -n \"${{t:-}}\" ] && {{ [ \"$t\" -eq 0 ] || [ -z \"${{s:-}}\" ]; }}; then \
-                 printf '%s\\n%s\\n' {marker} \"$p\"; exit \"$t\"; fi; \
-                 if [ -n \"${{s:-}}\" ]; then printf '%s\\n' \"$o\"; exit \"$s\"; fi; \
-                 exec {ngterm}",
-                dirs = agterm::PATH_DIRECTORIES,
-            );
-            shell_quoted_line(&["/bin/sh", "-c", script.as_str()])
-        }
+        (OriginShell::Posix, None) => both_apps_tail(APP_LISTING_BOUND_SECONDS),
     }
+}
+
+/// How long the listing of a host that pins no peer gives each app before asking on without it: both waits fit in
+/// [`super::tree::TREE_DEADLINE`], so one app's stall leaves the other's answer time to arrive.
+const APP_LISTING_BOUND_SECONDS: u64 = 4;
+const _: () = assert!(2 * APP_LISTING_BOUND_SECONDS < super::tree::TREE_DEADLINE.as_secs());
+
+/// [`tree_tail_for`]'s remote command for a host that pins no peer, each app's listing ended after `bound` seconds.
+/// An app that stalls beside one that answers is left out, as one that fails is; with no answer the stalled app is
+/// asked again without a bound, ngterm first, so the caller's own deadline names the stall.
+pub(super) fn both_apps_tail(bound: u64) -> String {
+    let ngterm = format!("{REMOTE_CLI} live tree --json");
+    let agterm = format!("{} {} tree --json", agterm::CLI, agterm::LIVE_GROUP);
+    let marker = shell_quoted_line(&[AGTERM_ANSWER]);
+    let (n, a) = (REMOTE_CLI, agterm::CLI);
+    let script = format!(
+        "PATH=\"$PATH:$HOME/.local/bin:{dirs}\"; \
+         b() {{ {{ \"$@\" 2>&3 & c=$!; \
+         (trap 'kill $s; exit' TERM; sleep {bound} & s=$!; wait $s; kill -9 $c) >/dev/null 2>&1 & w=$!; \
+         wait $c; r=$?; kill $w; }} 3>&2 2>/dev/null; return $r; }}; \
+         if command -v {n} >/dev/null 2>&1; then o=$(b {ngterm}); s=$?; fi; \
+         if command -v {a} >/dev/null 2>&1; then p=$(b {agterm}); t=$?; fi; \
+         if [ \"${{s:-1}}\" -eq 0 ]; then printf '%s\\n' \"$o\"; \
+         if [ \"${{t:-1}}\" -eq 0 ]; then printf '%s\\n%s\\n' {marker} \"$p\"; fi; exit 0; fi; \
+         if [ \"${{t:-1}}\" -eq 0 ]; then printf '%s\\n%s\\n' {marker} \"$p\"; exit 0; fi; \
+         if [ -n \"${{s:-}}\" ] && [ \"$s\" -ne 137 ]; then printf '%s\\n' \"$o\"; exit \"$s\"; fi; \
+         if [ -z \"${{s:-}}\" ] && [ -n \"${{t:-}}\" ]; then \
+         if [ \"$t\" -ne 137 ]; then printf '%s\\n%s\\n' {marker} \"$p\"; exit \"$t\"; fi; \
+         printf '%s\\n' {marker}; exec {agterm}; fi; \
+         exec {ngterm}",
+        dirs = agterm::PATH_DIRECTORIES,
+    );
+    shell_quoted_line(&["/bin/sh", "-c", script.as_str()])
 }
 
 /// One ssh invocation running the helper of `job`, an overlay the origin handed to this machine, for as long as the

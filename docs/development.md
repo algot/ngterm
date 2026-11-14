@@ -921,7 +921,7 @@ mobile core over its own ssh channels, and each only sends that Mac the command 
   (`endpoint.peer`, in `live tree HOST --json` too). A Mac that runs both answers with both: ngterm's sessions, and
   agterm's beside them with their own endpoint (`beside` in `live tree HOST --json`), so the picker, Attach All,
   `live attach HOST ID` and the mobile core's listing offer the sessions of both, each attached, streamed and ended
-  through the app that listed it. An app that fails beside one that answers is left out. A row keeps the app its endpoint names: its later lines, the
+  through the app that listed it. An app that fails or stalls beside one that answers is left out. A row keeps the app its endpoint names: its later lines, the
   listings its own flows wait on (split, companion, New/Duplicate Session) and its relaunch go to that app only, so an
   app that starts or stops on that Mac later moves none of them, and a saved row records its app (`peer` in
   `remoteSessions`) for a relaunch listing pinned to it. A line for no row (New Session from the picker) follows what

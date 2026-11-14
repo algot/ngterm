@@ -1072,21 +1072,44 @@ mod tests {
     /// arguments. Unix only: the far side's shell is `/bin/sh`.
     #[cfg(unix)]
     fn run_remote_line(host: &str, clis: &[(&str, i32)]) -> std::process::Output {
+        let home = remote_home(clis);
+        let line = tree_argv(host, super::super::origin::OriginShell::Posix).pop().unwrap();
+        remote_shell(&home, &line).output().unwrap()
+    }
+
+    /// A status that makes a stand-in CLI hang instead of exiting.
+    #[cfg(unix)]
+    const STALLS: i32 = -1;
+
+    /// A home whose `~/.local/bin` holds a stand-in for each of `clis`: it prints its name and arguments, then exits
+    /// with its status or, with [`STALLS`], hangs.
+    #[cfg(unix)]
+    fn remote_home(clis: &[(&str, i32)]) -> tempfile::TempDir {
         let home = tempfile::tempdir().unwrap();
         let bin = home.path().join(".local/bin");
         std::fs::create_dir_all(&bin).unwrap();
         for (cli, status) in clis {
-            let script = format!("#!/bin/sh\necho {cli} \"$@\"\nexit {status}\n");
+            let end = if *status == STALLS {
+                "exec sleep 60".to_owned()
+            } else {
+                format!("exit {status}")
+            };
+            let script = format!("#!/bin/sh\necho {cli} \"$@\"\n{end}\n");
             ngterm_host::fakes::write_executable(&bin.join(cli), &script).unwrap();
         }
-        let line = tree_argv(host, super::super::origin::OriginShell::Posix).pop().unwrap();
-        std::process::Command::new("/bin/sh")
-            .args(["-c", &line])
+        home
+    }
+
+    /// The account's shell running `line` in `home`, as sshd starts it.
+    #[cfg(unix)]
+    fn remote_shell(home: &tempfile::TempDir, line: &str) -> std::process::Command {
+        let mut shell = std::process::Command::new("/bin/sh");
+        shell
+            .args(["-c", line])
             .env_clear()
             .env("HOME", home.path())
-            .env("PATH", "/usr/bin:/bin")
-            .output()
-            .unwrap()
+            .env("PATH", "/usr/bin:/bin");
+        shell
     }
 
     /// Stand-in CLIs: each name and the status it exits with.
@@ -1135,6 +1158,64 @@ mod tests {
         let none = run_remote_line("buildbox", &[]);
         assert_eq!(none.status.code(), Some(127), "the shell's command-not-found: {none:?}");
         assert!(none.stdout.is_empty());
+    }
+
+    /// An app that stalls is ended at its bound and left out beside one that answers, whichever of the two it is, and
+    /// its output and the shell's word on its end reach nobody. With no answer the stalled app is asked again
+    /// unbounded, so the caller's deadline reports the stall.
+    #[cfg(unix)]
+    #[test]
+    fn an_app_that_stalls_does_not_hold_back_the_other_apps_answer() {
+        let line = super::super::ssh::both_apps_tail(1);
+        let ngterm = "ngtermctl live tree --json\n";
+        let agterm = "ngterm-peer: agterm\nagtermctl zmx tree --json\n";
+        let cases: [(Clis<'_>, &str); 2] = [
+            (&[("ngtermctl", 0), ("agtermctl", STALLS)], ngterm),
+            (&[("ngtermctl", STALLS), ("agtermctl", 0)], agterm),
+        ];
+        for (clis, stdout) in cases {
+            let home = remote_home(clis);
+            let started = Instant::now();
+            let ran = remote_shell(&home, &line).output().unwrap();
+            assert_eq!(answer(&ran), (Some(0), stdout.to_owned()), "{clis:?}");
+            assert_eq!(String::from_utf8_lossy(&ran.stderr), "", "{clis:?}");
+            assert!(
+                started.elapsed() < Duration::from_secs(5),
+                "{clis:?}: {:?}",
+                started.elapsed()
+            );
+        }
+        let stalled: [Clis<'_>; 4] = [
+            &[("ngtermctl", STALLS)],
+            &[("agtermctl", STALLS)],
+            &[("ngtermctl", STALLS), ("agtermctl", 3)],
+            &[("ngtermctl", STALLS), ("agtermctl", STALLS)],
+        ];
+        for clis in stalled {
+            let home = remote_home(clis);
+            let argv = ["/usr/bin/env", "-i", "PATH=/usr/bin:/bin"]
+                .into_iter()
+                .map(str::to_owned)
+                .chain([
+                    format!("HOME={}", home.path().display()),
+                    "/bin/sh".to_owned(),
+                    "-c".to_owned(),
+                    line.clone(),
+                ])
+                .collect::<Vec<_>>();
+            let within = Duration::from_secs(u64::try_from(clis.len()).unwrap() + 2);
+            assert_eq!(
+                ProcessRemoteRunner.run(&argv, within),
+                RemoteCommandResult::failed(NO_ANSWER_IN_TIME),
+                "{clis:?}"
+            );
+        }
+        // ngterm's own failure beside a stalled agterm stays the listing's failure
+        let home = remote_home(&[("ngtermctl", 2), ("agtermctl", STALLS)]);
+        assert_eq!(
+            answer(&remote_shell(&home, &line).output().unwrap()),
+            (Some(2), ngterm.to_owned())
+        );
     }
 
     #[cfg(unix)]
