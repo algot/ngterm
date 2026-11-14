@@ -150,6 +150,7 @@ class MachinesRouteTest {
                 base.settings,
                 base.opens,
                 base.online,
+                base.logs,
             )
         runBlocking { keys.generate() }
         val restoration = StateRestorationTester(compose)

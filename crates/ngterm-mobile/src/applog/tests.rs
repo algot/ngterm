@@ -10,14 +10,14 @@ use tracing::Dispatch;
 use tracing::subscriber::NoSubscriber;
 
 use super::{
-    AppLog, FILE_NAME, LogLevel, LoggedSink, MESSAGE_CAP, REDACTED, ROTATED_NAME, VALUE_CAP, is_class, stamp, tag,
-    variant,
+    AppLog, FILE_NAME, LogLevel, LogSubscriber, LoggedSink, MESSAGE_CAP, REDACTED, ROTATED_NAME, VALUE_CAP, is_class,
+    stamp, tag, variant,
 };
 use crate::api::{EventSink, MachineState, MobileEvent};
 use crate::chat::{ChatBody, ChatEvent, ChatState};
 use crate::note;
-use crate::pane::{ClipboardPart, PaneEnd, PaneRef, PaneRole};
-use crate::presentation::{RemoteNotice, StreamState};
+use crate::pane::{ClipboardPart, PaneClipboard, PaneEnd, PaneRef, PaneRole};
+use crate::presentation::{PresentationRole, RemoteAsk, RemoteLayout, RemoteNotice, StreamState};
 use crate::sessions::RemoteSession;
 
 /// What a test puts wherever private text could be: typed text, output, a body, a key, a failure's wording. No line
@@ -377,10 +377,30 @@ fn session_id() -> String {
     "S1".to_owned()
 }
 
+fn ask() -> RemoteAsk {
+    RemoteAsk {
+        id: private(),
+        title: private(),
+        message: Some(private()),
+        buttons: Vec::new(),
+        default_id: None,
+        destructive_id: None,
+        cancel_id: None,
+        style: "informational".to_owned(),
+        align: "center".to_owned(),
+        width: None,
+        pane: None,
+        input: None,
+        choices: None,
+    }
+}
+
 /// Events with [`MARKER`] in every payload the log must not keep.
 fn private_events() -> Vec<MobileEvent> {
     let mut events = machine_events();
+    events.extend(session_events());
     events.extend(pane_events());
+    events.extend(pane_state_events());
     events
 }
 
@@ -407,6 +427,44 @@ fn machine_events() -> Vec<MobileEvent> {
         MobileEvent::Tree {
             machine_id: machine_id(),
             sessions: vec![session(&private())],
+        },
+        MobileEvent::MachineState {
+            machine_id: machine_id(),
+            state: MachineState::Connected,
+        },
+        MobileEvent::MachineState {
+            machine_id: machine_id(),
+            state: MachineState::Reconnecting { next_in_ms: 2000 },
+        },
+    ]
+}
+
+fn session_events() -> Vec<MobileEvent> {
+    vec![
+        MobileEvent::SessionLayout {
+            machine_id: machine_id(),
+            session_id: session_id(),
+            layout: RemoteLayout {
+                panes: vec!["P1".to_owned(), "P2".to_owned()],
+                primary: "P1".to_owned(),
+                axis: None,
+                shown: true,
+            },
+        },
+        MobileEvent::SessionMode {
+            machine_id: machine_id(),
+            session_id: session_id(),
+            role: PresentationRole::Presenter,
+        },
+        MobileEvent::Ask {
+            machine_id: machine_id(),
+            session_id: session_id(),
+            ask: ask(),
+        },
+        MobileEvent::AskDismiss {
+            machine_id: machine_id(),
+            session_id: session_id(),
+            ask_id: private(),
         },
         MobileEvent::SessionConnection {
             machine_id: machine_id(),
@@ -465,6 +523,39 @@ fn pane_events() -> Vec<MobileEvent> {
                 mime: "text/plain".to_owned(),
                 data: MARKER.as_bytes().to_vec(),
             }],
+        },
+    ]
+}
+
+fn pane_state_events() -> Vec<MobileEvent> {
+    vec![
+        MobileEvent::PaneAttached { pane: pane() },
+        MobileEvent::PaneLead {
+            pane: pane(),
+            role: None,
+            covered: false,
+        },
+        MobileEvent::PaneEnded {
+            pane: pane(),
+            end: PaneEnd::Gone,
+        },
+        MobileEvent::ClipboardReadRequest {
+            pane: pane(),
+            read_id: 1,
+            clipboard: PaneClipboard::Standard,
+            list_only: false,
+            mimes: vec![private()],
+            list: false,
+            granted: true,
+            can_remember: false,
+        },
+        MobileEvent::ClipboardReadDismiss {
+            pane: pane(),
+            read_id: 1,
+        },
+        MobileEvent::ChatState {
+            pane: pane(),
+            state: ChatState::Reconnecting,
         },
         MobileEvent::PaneAgent {
             machine_id: machine_id(),
@@ -534,13 +625,117 @@ fn every_event_reaches_the_app_and_the_log_keeps_its_kind_without_its_payload() 
         &format!("I chat: pane agent announced agent={REDACTED} conversation=true session=S1 pane=P1"),
         "I chat: chat events count=2 prompts=1 live=true reset=false session=S1 pane=P1",
         "I chat: chat state state=ended session=S1 pane=P1",
+        "I link: machine connected machine=m1",
+        "W link: machine reconnecting machine=m1 next_in_ms=2000",
+        "I stream: layout session=S1 panes=2 split_shown=true",
+        "I stream: presentation role role=presenter session=S1",
+        "I stream: ask opened session=S1",
+        "I stream: ask dismissed session=S1",
+        "I pane: attached session=S1 pane=P1",
+        "I pane: role role=none covered=false session=S1 pane=P1",
+        "W pane: ended end=gone session=S1 pane=P1",
+        "I pane: clipboard read asked granted=true pane=P1",
+        "I pane: clipboard read dismissed pane=P1",
+        "I chat: chat state state=reconnecting session=S1 pane=P1",
     ] {
         assert!(text.contains(wanted), "no line {wanted:?} in:\n{text}");
     }
     assert_eq!(
         lines(&text).len(),
-        14,
+        26,
         "a title, a name and a context write nothing:\n{text}"
     );
     captured.assert_clean();
+}
+
+#[test]
+fn every_class_the_log_writes_reads_as_one() {
+    use crate::api::{MobileError, PaneInputError, VaultError};
+    use crate::chat::input::{
+        ACTION_IN_FLIGHT, AgentInputOutcome, BAD_ANSWER, NO_AGENT_TO_DRIVE, NOTHING_TO_SEND, UNSAFE_PASTE,
+    };
+    use crate::keys::KeyError;
+    use crate::transport::TransportError;
+
+    let text = String::new;
+    let refused = |reason: &str| PaneInputError::Refused {
+        reason: reason.to_owned(),
+    };
+    let mut classes = vec![
+        MobileError::Unreachable { reason: text() }.class(),
+        MobileError::Cancelled.class(),
+        MobileError::Stopped.class(),
+        MobileError::NotConnected { machine_id: text() }.class(),
+        MobileError::Remote { reason: text() }.class(),
+        MobileError::NotListed { session_id: text() }.class(),
+        VaultError::Missing { key_id: text() }.class(),
+        VaultError::Unavailable { reason: text() }.class(),
+        KeyError::PassphraseRequired.class(),
+        KeyError::WrongPassphrase.class(),
+        KeyError::Invalid { reason: text() }.class(),
+        TransportError::Unreachable(text()).class(),
+        TransportError::Refused(text()).class(),
+        TransportError::Rejected(text()).class(),
+        TransportError::Closed.class(),
+        PaneInputError::Closed.class(),
+        PaneInputError::Backpressure.class(),
+        refused("x").class(),
+        StreamState::Connecting.class(),
+        StreamState::Connected.class(),
+        StreamState::Unsupported.class(),
+        PresentationRole::Mirror.class(),
+        PaneRole::Unowned.class(),
+        PaneRole::Leader.class(),
+    ];
+    for outcome in [
+        AgentInputOutcome::Sent,
+        AgentInputOutcome::NotOnScreen,
+        AgentInputOutcome::DialogOpen,
+        AgentInputOutcome::LeadRefused,
+        AgentInputOutcome::Unconfirmed,
+    ] {
+        classes.push(outcome.class());
+    }
+    for reason in [
+        NOTHING_TO_SEND,
+        NO_AGENT_TO_DRIVE,
+        ACTION_IN_FLIGHT,
+        BAD_ANSWER,
+        UNSAFE_PASTE,
+    ] {
+        classes.push(refused(reason).why().expect("one of the chat's own refusals"));
+    }
+    for class in &classes {
+        assert!(is_class(class), "{class}");
+    }
+    assert_eq!(
+        refused(MARKER).why(),
+        None,
+        "the terminal's own wording is never a class"
+    );
+    assert_eq!(PaneInputError::Closed.why(), None);
+}
+
+#[test]
+fn the_subscriber_takes_events_alone_and_spans_change_nothing() {
+    use tracing::Subscriber;
+    use tracing::span::Id;
+
+    let captured = Captured::new();
+    let subscriber = LogSubscriber {
+        log: Arc::clone(&captured.log),
+    };
+    let id = Id::from_u64(1);
+    subscriber.enter(&id);
+    subscriber.record_follows_from(&id, &id);
+    subscriber.exit(&id);
+    captured.run(|| {
+        let span = tracing::info_span!(target: tag::LINK, "connect", machine = "m1");
+        span.record("machine", "m2");
+        span.in_scope(|| note!(INFO, tag::LINK, "inside a span"));
+    });
+    let text = captured.text();
+    assert_eq!(lines(&text).len(), 1, "{text}");
+    assert!(text.ends_with("I link: inside a span\n"));
+    assert!(format!("{:?}", captured.log).starts_with("AppLog"));
 }

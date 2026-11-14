@@ -249,6 +249,18 @@ internal fun UpdatesSection(updates: UpdatesUi) {
     }
 }
 
+/** The way to the diagnostic log: a row that opens it, saying what it is for. */
+@Composable
+internal fun DiagnosticsSection(onShowLogs: () -> Unit) {
+    SettingsSection(stringResource(R.string.settings_diagnostics)) {
+        LinkRow(
+            label = stringResource(R.string.settings_logs),
+            note = stringResource(R.string.settings_logs_note),
+            onClick = onShowLogs,
+        )
+    }
+}
+
 /** The app's name and the loaded core's [coreVersion]. */
 @Composable
 internal fun AboutSection(coreVersion: String) {

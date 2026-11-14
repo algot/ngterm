@@ -31,10 +31,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nickalie.ngterm.android.AppGraph
 import com.nickalie.ngterm.android.R
+import com.nickalie.ngterm.android.data.Diagnostics
+import com.nickalie.ngterm.android.data.LogTag
 import com.nickalie.ngterm.android.platform.AndroidKeyExports
 import com.nickalie.ngterm.android.platform.DeviceAuth
 import com.nickalie.ngterm.android.platform.rememberDeviceAuth
 import com.nickalie.ngterm.android.ui.components.ScreenExit
+import com.nickalie.ngterm.android.ui.logs.LogsRoute
 import com.nickalie.ngterm.android.ui.onboarding.ImportKeyScreen
 import com.nickalie.ngterm.android.ui.onboarding.PublicKeyScreen
 import com.nickalie.ngterm.android.ui.theme.NgtermTheme
@@ -44,14 +47,15 @@ import kotlinx.coroutines.flow.catch
 
 private const val HOME = "home"
 private const val IMPORT = "import"
+private const val LOGS = "logs"
 private const val KEY = "key:"
 
 /**
  * The Settings destination: Settings itself, and the screens it opens (a key's public half, importing a key,
- * exporting one once [auth] has confirmed the device's owner), stacked, with back returning to Settings. A key just
- * made or brought opens its public half, which offers to point every machine at it. Whether the system lets the app
- * post notifications is read again each time the app resumes, so coming back from the system's settings shows the
- * change.
+ * exporting one once [auth] has confirmed the device's owner, the diagnostic log), stacked, with back returning to
+ * Settings. A key just made or brought opens its public half, which offers to point every machine at it. Whether the
+ * system lets the app post notifications is read again each time the app resumes, so coming back from the system's
+ * settings shows the change.
  */
 @Composable
 fun SettingsRoute(
@@ -65,20 +69,17 @@ fun SettingsRoute(
     var page by rememberSaveable { mutableStateOf(HOME) }
     val state by model.state.collectAsStateWithLifecycle()
     val work by model.keyWork.collectAsStateWithLifecycle()
-    val fresh by model.newKey.collectAsStateWithLifecycle()
     val export by exports.work.collectAsStateWithLifecycle()
-    LaunchedEffect(fresh) {
-        fresh?.let {
-            page = KEY + it
-            model.newKeyShown()
-        }
+    val fresh by model.newKey.collectAsStateWithLifecycle()
+    OpenFreshKey(fresh) {
+        page = KEY + it
+        model.newKeyShown()
     }
     val back = ScreenExit(R.drawable.ic_back, stringResource(R.string.action_back)) { page = HOME }
     val shown = page.takeIf { it.startsWith(KEY) }?.removePrefix(KEY)
-    val ready = state as? SettingsUiState.Ready
-    val item = shown?.let { id -> ready?.keys?.firstOrNull { it.key.id == id } }
-    val exported = export.keyId?.let { id -> ready?.keys?.firstOrNull { it.key.id == id } }
-    BackHandler(enabled = page == IMPORT || item != null || exported != null) {
+    val item = state.keyItem(shown)
+    val exported = state.keyItem(export.keyId)
+    PageEffects(page, keyShown = item != null, exporting = exported != null) {
         exports.close()
         page = HOME
     }
@@ -86,6 +87,10 @@ fun SettingsRoute(
         exported != null -> {
             EndUnlockOnLeave(exports::close)
             ExportKeyPage(exported.key, export, exports.rule, exports.handlers(), modifier)
+        }
+
+        page == LOGS -> {
+            LogsRoute(log = graph.logs, exit = back, modifier = modifier)
         }
 
         page == IMPORT -> {
@@ -124,6 +129,29 @@ fun SettingsRoute(
             )
         }
     }
+}
+
+// a key just made or brought opens its public half
+@Composable
+private fun OpenFreshKey(
+    fresh: String?,
+    onOpen: (String) -> Unit,
+) {
+    val open by rememberUpdatedState(onOpen)
+    LaunchedEffect(fresh) { fresh?.let(open) }
+}
+
+// back from a page Settings opened returns to Settings, and the page shown is logged by its kind alone
+@Composable
+private fun PageEffects(
+    page: String,
+    keyShown: Boolean,
+    exporting: Boolean,
+    onBack: () -> Unit,
+) {
+    BackHandler(enabled = page == IMPORT || page == LOGS || keyShown || exporting, onBack = onBack)
+    val shown = if (exporting) "export" else page.substringBefore(':')
+    LaunchedEffect(shown) { Diagnostics.info(LogTag.NAV, "settings page=$shown") }
 }
 
 /**
@@ -212,6 +240,7 @@ private fun rememberSettingsActions(
             onTurnOnNotifications = { context.openNotificationSettings() },
             onRetry = model::retry,
             onExport = { export(it) },
+            onShowLogs = { page(LOGS) },
         )
     }
 }

@@ -104,19 +104,17 @@ pub(super) fn command<T: Transport>(state: &Rc<State<T>>, command: Command) {
                     }
                 };
                 let answer = upload::upload(&*connection, &name, &bytes, &told, cancelled).await;
-                note!(
-                    INFO,
-                    tag::CHAT,
-                    "upload",
-                    result = result_class(&answer),
-                    bytes = bytes.len()
-                );
+                upload_noted(&answer, bytes.len());
                 let _ = reply.send(answer);
             });
         }
         // The loop handles every other command itself.
         _ => {}
     }
+}
+
+fn upload_noted(answer: &Result<String, MobileError>, bytes: usize) {
+    note!(INFO, tag::CHAT, "upload", result = result_class(answer), bytes = bytes);
 }
 
 /// Opens the chat of a shown pane on its machine's connection.

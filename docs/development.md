@@ -1004,6 +1004,12 @@ copy when the export screen is closed. Import a key reads it back with the passp
 key (OpenSSH, PKCS#8, PuTTY) whose passphrase protection asks for more work or memory than the core's `keys` module
 caps, before doing any of it.
 
+Settings > Logs shows the app's diagnostic log, which the mobile core keeps (`crates/ngterm-mobile`'s `applog`
+module, whose docs hold the format, the rotation and the privacy rules) and the app adds its own lines to
+(`data/Diagnostics.kt`): the newest lines first, Copy, Share (the whole log as a file through the system's share
+sheet) and Clear logs. The log lives in the app's no-backup files and holds no typed text, terminal output, chat
+messages, keys, passphrases or host key fingerprints.
+
 Not in v1: HTML pages and program overlays (refused, as a viewer that can't show them refuses them), Kitty images
 (the pane reports no support), passwords and jump hosts (public-key auth to the machine itself only), Nerd Font
 symbols, a GPU renderer (the terminal is drawn on a Compose canvas), editing the layout from the phone, and Play Store

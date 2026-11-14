@@ -57,6 +57,18 @@
         android:exported="false"
         android:grantUriPermissions="true" />
 
+    <!-- the diagnostic log exported for Settings > Logs > Share: the share sheet grants the app picked a read of that
+         one file; nothing else of the app's storage is listed (res/xml/log_paths.xml) -->
+    <provider
+        android:name="androidx.core.content.FileProvider"
+        android:authorities="${applicationId}.logs"
+        android:exported="false"
+        android:grantUriPermissions="true">
+      <meta-data
+          android:name="android.support.FILE_PROVIDER_PATHS"
+          android:resource="@xml/log_paths" />
+    </provider>
+
     <!-- an ask's notification actions and inline replies -->
     <receiver
         android:name=".platform.AskActionReceiver"

@@ -944,3 +944,24 @@ fn other_messages_keep_desktops_words() {
         assert_eq!(phone_wording(message.clone()), message);
     }
 }
+
+#[test]
+fn the_log_names_the_cli_a_listing_asks_and_why_an_answer_gave_nothing() {
+    use ngterm_core::remote::tree::NO_ANSWER_IN_TIME;
+
+    assert_eq!(asked_cli(OriginShell::Posix, None), "ngtermctl-and-agtermctl");
+    assert_eq!(asked_cli(OriginShell::Posix, Some(RemotePeer::Ngterm)), "ngtermctl");
+    assert_eq!(asked_cli(OriginShell::Posix, Some(RemotePeer::Agterm)), "agtermctl");
+    assert_eq!(asked_cli(OriginShell::Windows, None), "ngtermctl");
+    assert_eq!(shell_class(OriginShell::Windows), "windows");
+    assert_eq!(peer_class(RemotePeer::Agterm), "agterm");
+    let result = |status: i32, stderr: &str| RemoteCommandResult {
+        status,
+        stdout: String::new(),
+        stderr: stderr.to_owned(),
+    };
+    assert_eq!(failure_class(&result(0, "")), "unreadable-answer");
+    assert_eq!(failure_class(&result(-1, NO_ANSWER_IN_TIME)), "no-answer-in-time");
+    assert_eq!(failure_class(&result(-1, "the connection was lost")), "lost");
+    assert_eq!(failure_class(&result(127, "command not found")), "exit-status");
+}

@@ -59,6 +59,7 @@ class NgtermAppStateTest : SessionViewFixture() {
             (compose.activity.window.decorView as ViewGroup).descendants.none { it.keepScreenOn }
         }
         assertEquals(setOf("s1"), test.connections.attached.value["m1"])
+        assertEquals("I nav: destination=settings", test.logs.lines.last { it.startsWith("I nav: destination=") })
     }
 
     @Test

@@ -9,6 +9,7 @@ import com.nickalie.ngterm.android.data.Asks
 import com.nickalie.ngterm.android.data.ClipboardReads
 import com.nickalie.ngterm.android.data.ClipboardTrust
 import com.nickalie.ngterm.android.data.Connections
+import com.nickalie.ngterm.android.data.Diagnostics
 import com.nickalie.ngterm.android.data.KeyMaker
 import com.nickalie.ngterm.android.data.LiveSessions
 import com.nickalie.ngterm.android.data.MachineStore
@@ -25,6 +26,7 @@ import com.nickalie.ngterm.android.platform.PinnedHostKeys
 import com.nickalie.ngterm.android.ui.chat.PaneChats
 import com.nickalie.ngterm.android.ui.session.SessionPanes
 import com.nickalie.ngterm.android.update.AppUpdates
+import com.nickalie.ngterm.core.fake.FakeAppLog
 import com.nickalie.ngterm.core.fake.FakeMobileCore
 import com.nickalie.ngterm.core.fake.fakePeerCapabilities
 import com.nickalie.ngterm.core.ffi.ClipboardPart
@@ -267,6 +269,9 @@ class TestGraph(
             if (permissionAsked) runBlocking { it.markPermissionAsked() }
         }
     val opens = OpenRequests()
+
+    /** The diagnostic log, in memory: the app's own lines go to it too while this graph is the newest. */
+    val logs = FakeAppLog().also { Diagnostics.log = it }
     val graph =
         AppGraph(
             machines = MachineStore(testStore(dir, "machines")),
@@ -281,6 +286,7 @@ class TestGraph(
             settings = settings,
             opens = opens,
             online = online,
+            logs = logs,
             updates = updates,
         )
 

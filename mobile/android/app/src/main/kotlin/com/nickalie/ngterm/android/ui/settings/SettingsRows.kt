@@ -1,5 +1,6 @@
 package com.nickalie.ngterm.android.ui.settings
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -85,6 +86,27 @@ internal fun SwitchRow(
     ) {
         Words(label, note, Modifier.weight(1f))
         Switch(checked = checked, onCheckedChange = null)
+    }
+}
+
+/** A row that opens a screen of its own: the whole row is the button, its [label] over its [note]. */
+@Composable
+internal fun LinkRow(
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    note: String? = null,
+) {
+    Row(
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .heightIn(min = RowHeight)
+                .clickable(role = Role.Button, onClick = onClick)
+                .padding(vertical = NgtermTheme.spacing.sm),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Words(label, note, Modifier.weight(1f))
     }
 }
 

@@ -1065,7 +1065,7 @@ The plan, reviewed against the brief:
 | Keep the screen on              [on] |
 | Appearance  Extra keys  Agents       |
 | Notifications                        |
-| Clipboard  Keys  About               |
+| Clipboard  Keys  Diagnostics  About  |
 +--------------------------------------+
 ```
 
@@ -1113,8 +1113,61 @@ The plan, reviewed against the brief:
   destination, and the copied key leaves the clipboard then, if it is still the app's own clip there (leaving the
   app to paste the key is not leaving the screen). The key is written nowhere but the document the user makes or
   the clipboard.
+- **Diagnostics:** one row, Logs, with a note saying what the log is for; the whole row opens the log (below). A row
+  that opens a screen (`LinkRow`) is a label over a note with nothing at its end: no chevron, as nothing else in
+  Settings points anywhere.
 - **About:** the app's name and the core's version in mono.
 - **States:** a spinner while the stores are read; the reason and Retry when they can't be.
+
+### Logs (`ui/logs/`, `data/Diagnostics.kt`)
+
+Settings > Diagnostics > Logs: the diagnostic log the mobile core keeps (`crates/ngterm-mobile` `applog`) and the app
+adds its own lines to. A `ScreenFrame` titled Logs with Back. The reader is someone with a problem to report, so the
+screen answers three things in order: what is in here, can I send it, and what happened last.
+
+The plan, reviewed against the brief:
+
+| First pass | Why it was generic | Revised to |
+|---|---|---|
+| A terminal-black console of raw lines | a second terminal beside the real one, and raw timestamps bury the event | the app's own plate (`KeyPlate`: mono, selectable, wrapping), each line cut to its time, its component and what happened |
+| Oldest first, as the file is | the newest line, the one wanted, is a long scroll away | newest first, with the day as a quiet line where it changes |
+| Levels as colored dots or tinted rows | color alone carries meaning | a warning or an error says so in a word ("warning", "error") in the attention or error color; an ordinary line has neither |
+| A privacy note behind an info icon | the one thing a person checks before sharing a log is hidden | two plain sentences first on the screen: what it holds, what it never holds |
+| Copy, Share and Clear in an overflow menu | the screen's whole job is behind a tap | three text buttons over the plate; Clear logs in the error color, confirmed |
+
+```
++--------------------------------------+
+| <  Logs                              |
+| The log holds what the app and its   |
+| connections did: ...                 |
+| It never holds what you type,        |
+| terminal output, chat messages, ...  |
+| Copy   Share   Clear logs            |
+| 9 lines, 1.1 kB. Newest first, UTC.  |
+| +----------------------------------+ |
+| | 2026-11-15                       | |
+| | 10:12:44 chat action action=...  | |
+| | 10:12:21 link warning machine    | |
+| |   reconnecting machine=m1 ...    | |
+| | 2026-11-14                       | |
+| | 23:58:02 app error uncaught ...  | |
+| +----------------------------------+ |
++--------------------------------------+
+```
+
+- **What it holds:** bodyMedium, on-surface, two sentences, never collapsed. They are the log's contract: the core
+  keeps typed text, terminal output, chat messages, keys, passphrases and fingerprints out by construction, and the
+  app's own lines hold to the same.
+- **Actions:** Copy (a `CopyButton`: the lines shown, "Copied" for 2 s), Share (the whole log as `ngterm-log.txt`
+  through the system's share sheet, from a file provider that lists that one file; no storage permission) and Clear
+  logs (a `ConfirmDialog` that repeats the action's words; the log then starts with a line saying it was cleared).
+- **Extent:** a bodySmall line: how many lines and how big, newest first, times in UTC. A log longer than the screen
+  reads (the newest 300 lines) says so, and that Copy takes these while Share sends all of it.
+- **The plate:** `surfaceContainerLow`, mono small. A day's date (semibold, on-surface-variant) above its lines; a
+  line is its time (on-surface-variant), its component (semibold), the level's word when it is a warning or an error,
+  then what happened with its `key=value` fields as written. Lines wrap anywhere; a long press selects.
+- **States:** "Reading the log" while it is read; "Nothing is logged yet." with nothing in it; a Share that could not
+  write its file shows a `Banner` in the error tone saying so and what to do (free storage and share again, or copy).
 
 ## Copy
 

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- What the log's file provider shares: the exported diagnostic log alone (ui/logs/LogsViewModel.kt EXPORT_DIR). -->
+<paths>
+  <cache-path
+      name="logs"
+      path="logs-export/" />
+</paths>

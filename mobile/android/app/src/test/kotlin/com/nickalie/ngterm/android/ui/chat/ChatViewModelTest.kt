@@ -506,6 +506,34 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun theLogSaysWhyAMessageWasNotSentAndNeverTheMessage() {
+        send("   ")
+        pane.outcome = AgentInputOutcome.NOT_ON_SCREEN
+        send("s3cret message")
+        pane.outcome = AgentInputOutcome.SENT
+        send("s3cret message")
+        bed.test.panes.hide(bed.ref("p1"))
+        send("s3cret message")
+        val lines =
+            bed.test.logs.lines
+                .filter { " chat-ui: " in it }
+        assertEquals(
+            listOf(
+                "I chat-ui: message not sent: the field is empty",
+                "I chat-ui: action result=PromptNotFound",
+                "I chat-ui: action result=sent",
+                "W chat-ui: action not sent: the pane is not shown",
+            ),
+            lines,
+        )
+        assertFalse(
+            bed.test.logs
+                .text()
+                .contains("s3cret"),
+        )
+    }
+
+    @Test
     fun theChatEndingEndsItsPhase() {
         emit(live)
         bed.test.core.emit(MobileEvent.ChatState(bed.ref("p1"), ChatState.ENDED))

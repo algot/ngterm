@@ -1,6 +1,8 @@
 package com.nickalie.ngterm.android.ui.chat
 
 import androidx.compose.ui.text.input.TextFieldValue
+import com.nickalie.ngterm.android.data.Diagnostics
+import com.nickalie.ngterm.android.data.LogTag
 import com.nickalie.ngterm.android.data.reason
 import com.nickalie.ngterm.core.ffi.AgentCommand
 import com.nickalie.ngterm.core.ffi.AgentInputOutcome
@@ -352,7 +354,11 @@ class ChatViewModel internal constructor(
      */
     fun send() {
         val text = composer.draft.text.trim()
-        if (text.isEmpty() || chat.value.awaitsCard) return
+        if (text.isEmpty() || chat.value.awaitsCard) {
+            val why = if (text.isEmpty()) "the field is empty" else "a card waits for an answer"
+            Diagnostics.info(LogTag.CHAT_UI, "message not sent: $why")
+            return
+        }
         act(null, prompt = true, onSent = { composer.sent(text) }) { pane ->
             val went = sends.async { runCatching { pane.sendPrompt(text) } }
             lastSend = text to went
@@ -457,9 +463,13 @@ class ChatViewModel internal constructor(
         onSent: () -> Unit = {},
         call: suspend (PaneInterface) -> AgentInputOutcome,
     ) {
-        if (chat.value.busy) return
+        if (chat.value.busy) {
+            Diagnostics.info(LogTag.CHAT_UI, "action not sent: another one is on its way")
+            return
+        }
         val target = handle()
         if (target == null) {
+            Diagnostics.warn(LogTag.CHAT_UI, "action not sent: the pane is not shown")
             chat.update { it.copy(problem = ChatProblem.Closed) }
             return
         }
@@ -472,6 +482,7 @@ class ChatViewModel internal constructor(
                     problem(error)
                 }
             if (problem == null) onSent()
+            Diagnostics.info(LogTag.CHAT_UI, "action result=${problem?.javaClass?.simpleName ?: "sent"}")
             chat.update { now ->
                 val gone = problem == null || (goneIfNotOnScreen && problem == ChatProblem.NotOnScreen)
                 val answered = card != null && gone

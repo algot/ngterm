@@ -27,6 +27,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nickalie.ngterm.android.AppGraph
 import com.nickalie.ngterm.android.R
 import com.nickalie.ngterm.android.data.AppSettings
+import com.nickalie.ngterm.android.data.Diagnostics
+import com.nickalie.ngterm.android.data.LogTag
 import com.nickalie.ngterm.android.data.OpenTarget
 import com.nickalie.ngterm.android.data.SessionKey
 import com.nickalie.ngterm.android.ui.asks.AskPrompt
@@ -116,6 +118,7 @@ fun NgtermApp(
             val select =
                 remember(sessions) {
                     { to: String ->
+                        if (to != selected) Diagnostics.info(LogTag.NAV, "destination=$to")
                         selected = to
                         if (to != SESSIONS) sessions.left()
                     }

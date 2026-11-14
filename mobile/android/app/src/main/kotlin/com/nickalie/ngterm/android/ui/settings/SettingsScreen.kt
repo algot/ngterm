@@ -43,7 +43,8 @@ import kotlin.math.roundToInt
  * Settings: one column, 640dp at most, of the terminal (a live sample over its text size, font and colors, and
  * keeping the screen on), the appearance, the extra keys, the agents (the chat view), the notifications
  * ([notificationsOn]: whether the system lets the app post them), the machines trusted with the clipboard, the keys
- * ([keyWork]: a rotation under way or failed), and the loaded core's [coreVersion]. While the stores are read it
+ * ([keyWork]: a rotation under way or failed), the diagnostics (the way to the log), and the loaded core's
+ * [coreVersion]. While the stores are read it
  * shows a spinner; when they can't be, why with Retry. [wallpaperColors] offers the wallpaper's colors (Android 12
  * and later). The [updates] section is the GitHub build's alone.
  */
@@ -89,6 +90,7 @@ fun SettingsScreen(
                     ClipboardSection(state.clipboard, actions.onRevokeClipboard)
                     KeysSection(state.keys, keyWork, actions)
                     updates?.let { UpdatesSection(it) }
+                    DiagnosticsSection(actions.onShowLogs)
                     AboutSection(coreVersion)
                 }
             }

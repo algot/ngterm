@@ -120,6 +120,26 @@ class NgtermApplicationTest {
     }
 
     @Test
+    fun theGraphOpensTheLogInNoBackupStorageAndLogsTheStartTheScreenAndTheNetwork() {
+        val graph = app.graph
+        assertSame(StartupAppLog, graph.logs)
+        assertEquals(java.io.File(app.noBackupFilesDir, "logs").path, StartupAppLog.dir)
+        val lines = StartupAppLog.fake.lines
+        assertTrue(lines.toString(), lines.any { it.startsWith("I app: started version=") && " android=" in it })
+        assertTrue(lines.toString(), "I app: in the background" in lines)
+        assertTrue(lines.toString(), lines.any { it.startsWith("I app: network o") })
+        val activity = Robolectric.buildActivity(Activity::class.java).setup()
+        try {
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals("I app: in the foreground", StartupAppLog.fake.lines.last { " app: in the " in it })
+        } finally {
+            activity.pause().stop().destroy()
+        }
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals("I app: in the background", StartupAppLog.fake.lines.last { " app: in the " in it })
+    }
+
+    @Test
     fun theFirstKeyHasASafeDeviceCommentAndItsPrivateHalfCanBeOpened() =
         stored {
             ReflectionHelpers.setStaticField(Build::class.java, "MODEL", " Pixel / 9 ! ")

@@ -87,6 +87,7 @@ class NotificationPermissionPromptTest {
                 settings = original.settings,
                 opens = original.opens,
                 online = original.online,
+                logs = original.logs,
             )
         compose.setContent {
             NgtermTheme {

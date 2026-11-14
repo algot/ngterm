@@ -13,6 +13,7 @@ import com.nickalie.ngterm.android.platform.PinnedHostKeys
 import com.nickalie.ngterm.android.ui.chat.PaneChats
 import com.nickalie.ngterm.android.ui.session.SessionPanes
 import com.nickalie.ngterm.android.update.AppUpdates
+import com.nickalie.ngterm.core.ffi.AppLogInterface
 import kotlinx.coroutines.flow.StateFlow
 
 /**
@@ -20,7 +21,7 @@ import kotlinx.coroutines.flow.StateFlow
  * connections over the mobile core, the attached sessions' live state and their shown panes, the panes' chat view
  * and their chats, the programs' clipboard reads, the origins' open asks, the notification choices, the app's
  * settings, where a notification's tap asked the app to go, whether the device is online, the app's own updates
- * (the GitHub build's; none in Google Play's) and the session create under way.
+ * (the GitHub build's; none in Google Play's), the session create under way and the diagnostic log Settings shows.
  * [NgtermApplication] makes the real one; the tests make one over fakes.
  */
 @Suppress("LongParameterList") // the process's one graph: a parameter per part the screens share
@@ -37,6 +38,7 @@ class AppGraph(
     val settings: SettingsStore,
     val opens: OpenRequests,
     val online: StateFlow<Boolean>,
+    val logs: AppLogInterface,
     val updates: AppUpdates? = null,
     val creates: Creates = Creates(),
 )

@@ -419,6 +419,31 @@
   <string name="settings_key_switch_title">Then switch your machines</string>
   <string name="settings_key_switch_body">Once this key is in authorized_keys on every machine, use it for all of them. They sign in with it from their next connection. Remove the old key from the machines only after that.</string>
   <string name="settings_key_everywhere">Every machine signs in with this key.</string>
+  <string name="settings_diagnostics">Diagnostics</string>
+  <string name="settings_logs">Logs</string>
+  <string name="settings_logs_note">What the app and its connections did, to find why something went wrong. Copy or share them when you report a problem.</string>
+  <string name="logs_title">Logs</string>
+  <string name="logs_holds">The log holds what the app and its connections did: connecting and signing in, the session lists a machine gave, panes, the chat view\'s state, and why a message or a key was not sent. It names your machines as you named them.</string>
+  <string name="logs_never">It never holds what you type, terminal output, chat messages, keys, passphrases or host key fingerprints.</string>
+  <string name="logs_loading">Reading the log</string>
+  <string name="logs_empty">Nothing is logged yet.</string>
+  <string name="logs_copy">Copy</string>
+  <string name="logs_share">Share</string>
+  <string name="logs_clear">Clear logs</string>
+  <string name="logs_clear_title">Clear logs?</string>
+  <string name="logs_clear_body">Every line is deleted from this device. A problem that happened before now can no longer be read from the log.</string>
+  <string name="logs_share_title">ngterm log</string>
+  <string name="logs_export_failed">The log could not be written to a file to share. Free some storage and share again, or copy the lines shown.</string>
+  <string name="logs_level_warning">warning</string>
+  <string name="logs_level_error">error</string>
+  <plurals name="logs_extent_whole">
+    <item quantity="one">%1$d line, %2$s. Newest first, times in UTC.</item>
+    <item quantity="other">%1$d lines, %2$s. Newest first, times in UTC.</item>
+  </plurals>
+  <plurals name="logs_extent_cut">
+    <item quantity="one">The newest line of %2$s, times in UTC. Copy takes it; Share sends the whole log.</item>
+    <item quantity="other">The newest %1$d lines of %2$s, newest first, times in UTC. Copy takes these; Share sends the whole log.</item>
+  </plurals>
   <string name="settings_about">About</string>
   <string name="settings_about_name">ngterm for Android</string>
 

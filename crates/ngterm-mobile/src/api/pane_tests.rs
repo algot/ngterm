@@ -523,3 +523,28 @@ fn a_handles_description_names_its_slot() {
     assert!(described.contains("PaneSlot"), "{described}");
     assert!(described.contains("B1"), "{described}");
 }
+
+#[test]
+fn a_delivery_names_what_became_of_input_for_the_log() {
+    let refused = PaneInputError::Refused {
+        reason: "a point outside the grid".to_owned(),
+    };
+    let deliveries = [
+        (Delivery::of(&Ok(true)), "sent"),
+        (
+            Delivery::of::<bool>(&Err(PaneInputError::Closed)),
+            "dropped-pane-closed",
+        ),
+        (
+            Delivery::of::<bool>(&Err(PaneInputError::Backpressure)),
+            "dropped-input-queue-full",
+        ),
+        (Delivery::of::<bool>(&Err(refused)), "dropped-terminal-refused"),
+        (Delivery::HeldLeftArrow, "held-left-arrow-at-empty-prompt"),
+        (Delivery::UnsafePaste, "held-unsafe-paste"),
+    ];
+    for (delivery, class) in deliveries {
+        assert_eq!(delivery.class(), class);
+        assert!(crate::applog::is_class(class));
+    }
+}

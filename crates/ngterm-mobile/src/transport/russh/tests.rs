@@ -1459,3 +1459,32 @@ fn a_connect_logs_the_keys_class_and_how_it_ended_never_the_key_or_a_fingerprint
         assert!(!text.contains(line), "key material:\n{text}");
     }
 }
+
+#[test]
+fn a_failed_connects_class_names_its_cause_without_its_wording() {
+    use super::failure_class;
+
+    let unreachable = |reason: &str| TransportError::Unreachable(reason.to_owned());
+    let refused = |reason: &str| TransportError::Refused(reason.to_owned());
+    assert_eq!(failure_class(&refused(HOST_KEY_REFUSED)), "host-key-not-trusted");
+    assert_eq!(
+        failure_class(&unreachable(HOST_KEY_UNCONFIRMED)),
+        "host-key-not-confirmed"
+    );
+    assert_eq!(
+        failure_class(&unreachable(HOST_KEY_WITHDRAWN)),
+        "host-key-question-withdrawn"
+    );
+    assert_eq!(failure_class(&refused(HOST_KEY_CHANGED)), "host-key-changed");
+    assert_eq!(failure_class(&unreachable(SIGN_IN_UNFINISHED)), "sign-in-unfinished");
+    assert_eq!(failure_class(&super::timed_out(&machine(22))), "no-answer-in-time");
+    assert_eq!(
+        failure_class(&refused("nick@box did not accept the key")),
+        "key-not-accepted"
+    );
+    assert_eq!(
+        failure_class(&TransportError::Rejected("no more channels".to_owned())),
+        "other"
+    );
+    assert_eq!(failure_class(&TransportError::Closed), "closed");
+}

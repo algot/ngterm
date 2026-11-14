@@ -62,6 +62,10 @@ sealed interface SettingsUiState {
     ) : SettingsUiState
 }
 
+/** The key [id] names, once the stores are read and while it is there. */
+internal fun SettingsUiState.keyItem(id: String?): KeyItem? =
+    id?.let { (this as? SettingsUiState.Ready)?.keys?.firstOrNull { item -> item.key.id == it } }
+
 /** What Settings' controls do, as [SettingsViewModel] and the route do it. */
 data class SettingsActions(
     val onChange: ((AppSettings) -> AppSettings) -> Unit,
@@ -73,6 +77,7 @@ data class SettingsActions(
     val onTurnOnNotifications: () -> Unit,
     val onRetry: () -> Unit,
     val onExport: (String) -> Unit,
+    val onShowLogs: () -> Unit = {},
 )
 
 /** Settings' Updates section: the [installed] version, where updating stands, and the automatic checks' switch. */

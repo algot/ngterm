@@ -84,12 +84,13 @@ fun KeyPlate(
     }
 }
 
-/** Copies [text] to the clipboard, and says "Copied" for a moment after. */
+/** Copies [text] to the clipboard, and says "Copied" for a moment after; [onCopy] hears of each copy. */
 @Composable
 fun CopyButton(
     text: String,
     modifier: Modifier = Modifier,
     label: String = stringResource(R.string.action_copy),
+    onCopy: () -> Unit = {},
 ) {
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
@@ -104,6 +105,7 @@ fun CopyButton(
         onClick = {
             scope.launch { clipboard.setClipEntry(ClipEntry(ClipData.newPlainText(label, text))) }
             copied = true
+            onCopy()
         },
         modifier = modifier,
     ) {
