@@ -67,7 +67,8 @@ fun ChatPane(
                 onUploadShown = chat::uploadShown,
             )
         }
-    KeepDraft(chat.pane, chat.composer, state.conversation?.conversationId, chat::restoreDraft)
+    // a conversation with nothing said yet has no events to name it: the one its pane announced stands in
+    KeepDraft(chat.pane, chat.composer, state.conversation?.conversationId ?: chat.conversation, chat::restoreDraft)
     ChatScreen(state, machine, actions, modifier, chat.composer, focusRequester, selected)
 }
 
@@ -253,7 +254,8 @@ private fun Pinned(
                 )
             }
             state.problem?.let { problem ->
-                ProblemBanner(problem, actions, Modifier.padding(NgtermTheme.spacing.sm))
+                val name = stringResource(agentName(agent))
+                ProblemBanner(problem, name, actions, Modifier.padding(NgtermTheme.spacing.sm))
             }
             val card = Modifier.heightIn(max = cardHeight)
             val approval = state.approval
@@ -276,22 +278,35 @@ private fun Pinned(
     }
 }
 
-// why the last action did nothing, or not all it meant to, and Answer in terminal when the terminal is the way on
+// why the last action did nothing, or not all it meant to, and the terminal when it is the way on: Answer in terminal
+// for a card, Show terminal for a message of [agent]'s that stays in the composer
 @Composable
 private fun ProblemBanner(
     problem: ChatProblem,
+    agent: String,
     actions: ChatActions,
     modifier: Modifier = Modifier,
 ) {
     val terminal =
-        if (problem.offersTerminal) {
-            SectionAction(stringResource(R.string.chat_answer_in_terminal), actions.onShowTerminal)
-        } else {
-            null
+        when {
+            !problem.offersTerminal -> {
+                null
+            }
+
+            problem.keepsMessage -> {
+                SectionAction(
+                    stringResource(R.string.session_show_terminal),
+                    actions.onShowTerminal,
+                )
+            }
+
+            else -> {
+                SectionAction(stringResource(R.string.chat_answer_in_terminal), actions.onShowTerminal)
+            }
         }
     Banner(
         tone = problem.tone,
-        message = problem.message(),
+        message = problem.message(agent),
         modifier = modifier,
         action = terminal,
         onDismiss = actions.onProblemShown,
@@ -302,13 +317,22 @@ private fun ProblemBanner(
 private val ChatProblem.tone: StatusTone
     get() =
         when (this) {
-            ChatProblem.NotOnScreen, ChatProblem.DialogOpen, ChatProblem.Unconfirmed -> StatusTone.Attention
+            ChatProblem.NotOnScreen, ChatProblem.DialogOpen, ChatProblem.Unconfirmed, ChatProblem.PromptNotFound,
+            ChatProblem.PromptUnconfirmed,
+            -> StatusTone.Attention
+
             else -> StatusTone.Error
         }
 
+// the problem is about a message that is still in the composer
+private val ChatProblem.keepsMessage: Boolean
+    get() = this == ChatProblem.PromptNotFound || this == ChatProblem.PromptUnconfirmed
+
 @Composable
-private fun ChatProblem.message(): String =
+private fun ChatProblem.message(agent: String): String =
     when (this) {
+        ChatProblem.PromptNotFound -> stringResource(R.string.chat_problem_prompt_not_found, agent)
+        ChatProblem.PromptUnconfirmed -> stringResource(R.string.chat_problem_prompt_unconfirmed, agent)
         ChatProblem.NotOnScreen -> stringResource(R.string.chat_problem_not_on_screen)
         ChatProblem.DialogOpen -> stringResource(R.string.chat_problem_dialog_open)
         ChatProblem.LeadRefused -> stringResource(R.string.chat_problem_lead_refused)

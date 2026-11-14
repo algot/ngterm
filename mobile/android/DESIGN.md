@@ -630,7 +630,9 @@ compact                            medium (rail open)               expanded
   48dp icon button, between the pane switcher and More. It names what a tap does: "Show terminal" with the Sessions
   glyph over a chat, "Show chat" with `ic_chat` over the terminal; TalkBack reads those words. Picking the terminal
   holds for that pane until its agent starts its next conversation (or another agent starts there); picking the chat
-  lifts it. When the agent ends, or its chat ends or can't open (an origin without the chat view), the pane shows its
+  lifts it, and so does turning the session's Chat view on (below). A message being written in the chat's composer
+  waits for the pane's next chat of the same conversation, so the trip to the terminal and back loses nothing. When
+  the agent ends, or its chat ends or can't open (an origin without the chat view), the pane shows its
   terminal and the switch offers the chat back while the agent is still announced. A pane without an agent, or every
   pane of a session with its chat view off, has no switch. Switching never resizes the pane or moves its lead: the terminal stays
   attached at its grid behind the chat, and only a chat action takes control. The chat itself is The chat, below.
@@ -671,7 +673,9 @@ compact                            medium (rail open)               expanded
   place, as on a machine's list), Chat view and End session (in the error color, confirmed as on a machine's list).
 - **Chat view** (`ChatViewItem`, in every session's More menu: the bar's, the attached list's, a machine's list): the
   session's own Agent chat view, a menu item with a checkbox at its end, checked while the session's panes running an
-  agent show as a chat; TalkBack reads it as a checkbox. It starts at Settings' Agent chat view, and a tap sets the
+  agent show as a chat; TalkBack reads it as a checkbox. In an attached session's menus it says what the panes show:
+  unchecked too while one of them shows the terminal picked for it (the view switch, Answer in terminal), and a tap
+  then brings that pane's chat back. It starts at Settings' Agent chat view, and a tap sets the
   other for that session alone, kept on this device (`SessionChatViews`, the newest 256 sessions); one set back to
   Settings' value follows Settings again. The menu closes on the tap. On a session whose app has no chat view
   (agterm's, beside ngterm's on one machine too) it is disabled and unchecked, with "agterm has no chat view" under its
@@ -890,7 +894,10 @@ The plan, reviewed against the brief:
 - **Problems:** what the last action couldn't do, as a `Banner` over the card: in the Attention tone when the user can
   act on it (the pane doesn't show the prompt any more, a dialog is open, the keys went but the screen didn't confirm
   them), in the Error tone when it only reports (another device kept control, the program isn't reading, the pane is
-  gone, the core refused). When the terminal is the way on it offers **Answer in terminal**; it can be dismissed.
+  gone, the core refused). When the terminal is the way on it offers **Answer in terminal**; it can be dismissed. A
+  message that could not be sent says so in its own words (the agent's prompt isn't ready in the pane; or the message
+  went into the prompt and the pane didn't show it), says that it stays in the composer, and offers **Show terminal**:
+  there is nothing to answer there, only something to look at.
 - **States:** the backlog on its way with nothing yet: a spinner and "Reading the conversation from build-01"; nothing
   said yet: the Chat glyph, "Nothing said yet", what will show, and Show terminal; the link reconnecting: a strip over
   the top of the rows (`surfaceContainerHigh`, 6dp corners, a 16dp spinner, "Reconnecting to build-01", "What's here

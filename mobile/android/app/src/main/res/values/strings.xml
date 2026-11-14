@@ -511,6 +511,8 @@
   <string name="chat_sending">Sending</string>
   <string name="chat_answer_in_terminal">Answer in terminal</string>
   <string name="chat_problem_not_on_screen">Couldn\'t confirm the pane shows this, so nothing was sent. Use the terminal, or wait if it was answered elsewhere.</string>
+  <string name="chat_problem_prompt_not_found">%1$s\'s prompt isn\'t ready in the pane, so your message wasn\'t sent. It stays in the box below: send it again, or look at the terminal.</string>
+  <string name="chat_problem_prompt_unconfirmed">Your message went into %1$s\'s prompt, but the pane didn\'t show it there, so it wasn\'t entered. It stays in the box below: look at the terminal before you send it again.</string>
   <string name="chat_problem_dialog_open">A dialog is open in the pane. Answer it first: nothing was sent.</string>
   <string name="chat_problem_lead_refused">Another device kept control of this pane, so nothing was sent.</string>
   <string name="chat_problem_unconfirmed">The keys went, but the pane didn\'t show what they should have done. Check the terminal.</string>

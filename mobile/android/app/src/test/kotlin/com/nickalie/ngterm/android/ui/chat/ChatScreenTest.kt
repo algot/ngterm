@@ -222,6 +222,25 @@ class ChatScreenTest {
     }
 
     @Test
+    fun aMessageThatWasNotSentSaysItStaysAndOffersTheTerminalToLookAt() {
+        state.value = state.value.copy(problem = ChatProblem.PromptNotFound)
+        show()
+        compose
+            .onNodeWithText(
+                "your message wasn't sent. It stays in the box below",
+                substring = true,
+            ).assertIsDisplayed()
+        compose.onNodeWithText("Answer in terminal").assertDoesNotExist()
+        compose.onAllNodesWithText("Show terminal")[0].performClick()
+        assertEquals(1, terminalShown)
+
+        state.value = state.value.copy(problem = ChatProblem.PromptUnconfirmed)
+        compose.waitForIdle()
+        compose.onNodeWithText("look at the terminal before you send it again", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("Answer in terminal").assertDoesNotExist()
+    }
+
+    @Test
     fun theTopAsksForTheEarlierPageOnceAndThePageKeepsTheRowThatWasOnTop() {
         val later = (10 until 40).map { event("p$it", user("prompt $it")) }
         state.value = ChatSamples.state(later, older = OlderPages.More)

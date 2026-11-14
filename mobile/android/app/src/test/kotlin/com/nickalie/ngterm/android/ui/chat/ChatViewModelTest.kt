@@ -458,16 +458,28 @@ class ChatViewModelTest {
     fun anActionThatDidNothingSaysWhy() {
         val outcomes =
             mapOf(
-                AgentInputOutcome.NOT_ON_SCREEN to ChatProblem.NotOnScreen,
+                AgentInputOutcome.NOT_ON_SCREEN to ChatProblem.PromptNotFound,
                 AgentInputOutcome.DIALOG_OPEN to ChatProblem.DialogOpen,
                 AgentInputOutcome.LEAD_REFUSED to ChatProblem.LeadRefused,
-                AgentInputOutcome.UNCONFIRMED to ChatProblem.Unconfirmed,
+                AgentInputOutcome.UNCONFIRMED to ChatProblem.PromptUnconfirmed,
             )
         for ((outcome, problem) in outcomes) {
             pane.outcome = outcome
             send("hi")
             assertEquals(problem, state().problem)
+            // a message that did not go stays in the field
+            assertEquals("hi", chat.composer.draft.text)
         }
+        assertTrue(ChatProblem.PromptNotFound.offersTerminal)
+        assertTrue(ChatProblem.PromptUnconfirmed.offersTerminal)
+        // Stop is no message: what it could not do is the pane's, not the composer's
+        emit(event("w", reply("working")))
+        pane.outcome = AgentInputOutcome.NOT_ON_SCREEN
+        chat.stop()
+        assertEquals(ChatProblem.NotOnScreen, state().problem)
+        pane.outcome = AgentInputOutcome.UNCONFIRMED
+        chat.stop()
+        assertEquals(ChatProblem.Unconfirmed, state().problem)
         assertFalse(ChatProblem.DialogOpen.offersTerminal)
         assertFalse(ChatProblem.LeadRefused.offersTerminal)
         assertTrue(ChatProblem.Unconfirmed.offersTerminal)

@@ -14,6 +14,7 @@ import com.nickalie.ngterm.android.data.badge
 import com.nickalie.ngterm.android.data.families
 import com.nickalie.ngterm.android.data.offersChat
 import com.nickalie.ngterm.android.data.reason
+import com.nickalie.ngterm.android.data.session
 import com.nickalie.ngterm.android.ui.chat.PaneView
 import com.nickalie.ngterm.core.ffi.MobileException
 import com.nickalie.ngterm.core.ffi.PaneEnd
@@ -40,7 +41,8 @@ data class AgentStatus(
 /**
  * An attached session as the app shows it: its [machine]'s name, its [name], [context] and agent [status] (the stream's
  * when it has them, the machine's last listing's otherwise), its machine's [link], its stream's [live] state,
- * whether its panes running an agent show as a chat ([chatView]: its own choice, else Settings'), whether this
+ * whether its panes running an agent show as a chat ([chatView]: its own choice, else Settings'; off too while one
+ * of them shows the terminal picked for it), whether this
  * device is [taking] its lead, its parent's name when it is a companion ([companionOf]), whether it is [nested]
  * under that parent, attached too and listed above it, whether its Duplicate is under way ([duplicating]),
  * whether Duplicate takes a tap ([canDuplicate]: not while any create is under way, from any screen), and the app it
@@ -313,6 +315,11 @@ private data class Marks(
     val create: Create?,
 )
 
+// whether [key]'s Chat view reads as on: its chat view is, and none of its panes had its terminal picked (turning it
+// on then brings their chats back)
+private fun Marks.showsChats(key: SessionKey): Boolean =
+    chatViews.on(key) && views.none { (pane, view) -> pane.session == key && view == PaneView.Terminal }
+
 /**
  * What the lists are made of: the saved machines, what is attached, each machine's listing and link, each session's
  * app.
@@ -347,7 +354,7 @@ private fun groups(
                 val key = SessionKey(machine.id, id)
                 attached(key, machine, listed, live, seen)
                     .copy(
-                        chatView = marks.chatViews.on(key),
+                        chatView = marks.showsChats(key),
                         taking = key in marks.taking,
                         duplicating = marks.create == Create(machine.id, id),
                         canDuplicate = marks.create == null,

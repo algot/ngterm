@@ -408,18 +408,20 @@ class ChatComposerTest {
         val scope = SaverScope { true }
         type("Fix the install guide")
         val saved = with(saver(chat)) { scope.save(KeptDraft(null, "")) }!!
-        // the app comes back without its process: the pane's chat is a new one, empty
+        // the pane's next chat: the trip through the terminal alone brings the draft back
         bed.test.chats.pick(bed.ref("p1"), PaneView.Terminal)
         eventually { bed.chat("p1") == null }
         bed.test.chats.pick(bed.ref("p1"), PaneView.Chat)
         eventually { bed.chat("p1") != null }
         val again = bed.chat("p1")!!
-        assertEquals("", again.composer.draft.text)
+        assertEquals("Fix the install guide", again.composer.draft.text)
+        // the app comes back without its process: its chat is a new one, empty, and takes what was saved at once,
+        // as its pane announced the conversation the draft was written for
+        again.composer.edit(TextFieldValue(""))
         val kept = saver(again).restore(saved)!!
         again.restoreDraft(kept.conversation!!, kept.text)
-        assertEquals("", again.composer.draft.text)
-        bed.emit("p1", event("conv", ChatBody.Conversation("claude", "c1", null, null)))
         assertEquals("Fix the install guide", again.composer.draft.text)
+        bed.emit("p1", event("conv", ChatBody.Conversation("claude", "c1", null, null)))
 
         // saved for another pane: let go
         assertNull(saver(again).restore(arrayListOf("m1", "s1", "p2", "c1", "Fix")))

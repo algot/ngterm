@@ -92,6 +92,16 @@ sealed interface ChatProblem {
         override val offersTerminal: Boolean get() = true
     }
 
+    /** The pane doesn't show the agent's prompt, empty, as the chat knows it: the message was not sent, and stays. */
+    data object PromptNotFound : ChatProblem {
+        override val offersTerminal: Boolean get() = true
+    }
+
+    /** The message went into the agent's prompt, but the pane never showed it there to enter: it stays here too. */
+    data object PromptUnconfirmed : ChatProblem {
+        override val offersTerminal: Boolean get() = true
+    }
+
     /** The program isn't reading its input: nothing was sent; try again shortly. */
     data object NotReading : ChatProblem
 
@@ -174,6 +184,8 @@ data class ChatUiState(
 @Suppress("TooManyFunctions", "LongParameterList") // the chat's events and each of its actions; what it reads
 class ChatViewModel internal constructor(
     val pane: PaneRef,
+    // the conversation the pane announced as the chat opened: the one it follows until its events name it
+    private val opened: String?,
     private val core: MobileCoreInterface,
     private val handle: () -> PaneInterface?,
     // how many times each machine's link has come up (MachineState.Connected), by id
@@ -187,6 +199,9 @@ class ChatViewModel internal constructor(
 
     /** The chat as the screen shows it. */
     val state: StateFlow<ChatUiState> = chat.asStateFlow()
+
+    /** The conversation the chat follows: the one its events named, else the one its pane announced as it opened. */
+    internal val conversation: String? get() = chat.value.conversation?.conversationId ?: opened
 
     /** The prompt being written and its `/` menu. Main thread only. */
     val composer =
@@ -307,7 +322,7 @@ class ChatViewModel internal constructor(
     fun send() {
         val text = composer.draft.text.trim()
         if (text.isEmpty() || chat.value.awaitsCard) return
-        act(null, onSent = { composer.sent(text) }) { it.sendPrompt(text) }
+        act(null, prompt = true, onSent = { composer.sent(text) }) { it.sendPrompt(text) }
     }
 
     /**
@@ -320,13 +335,19 @@ class ChatViewModel internal constructor(
     }
 
     /**
-     * Puts back a draft ([text]) kept from before the app was put away, once the chat names its conversation: only
-     * into the [conversation] it was written for, and only into an empty field.
+     * Puts back a draft ([text]) kept from before (the app was put away, or the pane showed its terminal meanwhile):
+     * only into the [conversation] it was written for, and only into an empty field. A chat whose pane announced that
+     * conversation as it opened takes it at once (a conversation with nothing said yet has no events to name it);
+     * another waits for its events to name theirs.
      */
     internal fun restoreDraft(
-        conversation: String,
+        conversation: String?,
         text: String,
     ) {
+        if (conversation == opened) {
+            composer.restore(text)
+            return
+        }
         scope.launch {
             val now = chat.mapNotNull { it.conversation?.conversationId }.first()
             if (now == conversation) composer.restore(text)
@@ -384,10 +405,11 @@ class ChatViewModel internal constructor(
     }
 
     // one action at a time; [card] is the card it answers, which goes once answered, or, [goneIfNotOnScreen], once
-    // the core finds its prompt gone
+    // the core finds its prompt gone; [prompt]: the action sends the composer's text
     private fun act(
         card: String?,
         goneIfNotOnScreen: Boolean = false,
+        prompt: Boolean = false,
         onSent: () -> Unit = {},
         call: suspend (PaneInterface) -> AgentInputOutcome,
     ) {
@@ -401,7 +423,7 @@ class ChatViewModel internal constructor(
         scope.launch {
             val problem =
                 try {
-                    problem(call(target))
+                    problem(call(target), prompt)
                 } catch (error: PaneInputException) {
                     problem(error)
                 }
@@ -584,13 +606,17 @@ private fun ChatUiState.without(id: String): ChatUiState {
     return copy(approval = approval, dismissed = dismissed).asking()
 }
 
-private fun problem(outcome: AgentInputOutcome): ChatProblem? =
+// what [outcome] says went wrong, if anything; a [prompt]'s outcome says what became of the message
+private fun problem(
+    outcome: AgentInputOutcome,
+    prompt: Boolean,
+): ChatProblem? =
     when (outcome) {
         AgentInputOutcome.SENT -> null
-        AgentInputOutcome.NOT_ON_SCREEN -> ChatProblem.NotOnScreen
+        AgentInputOutcome.NOT_ON_SCREEN -> if (prompt) ChatProblem.PromptNotFound else ChatProblem.NotOnScreen
         AgentInputOutcome.DIALOG_OPEN -> ChatProblem.DialogOpen
         AgentInputOutcome.LEAD_REFUSED -> ChatProblem.LeadRefused
-        AgentInputOutcome.UNCONFIRMED -> ChatProblem.Unconfirmed
+        AgentInputOutcome.UNCONFIRMED -> if (prompt) ChatProblem.PromptUnconfirmed else ChatProblem.Unconfirmed
     }
 
 private fun problem(error: PaneInputException): ChatProblem =

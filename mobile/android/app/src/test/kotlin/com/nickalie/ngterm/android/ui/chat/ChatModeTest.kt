@@ -1,5 +1,6 @@
 package com.nickalie.ngterm.android.ui.chat
 
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -13,6 +14,7 @@ import com.nickalie.ngterm.android.testStore
 import com.nickalie.ngterm.android.ui.session.OpenSession
 import com.nickalie.ngterm.android.ui.session.SessionViewModel
 import com.nickalie.ngterm.core.fake.FakeCall
+import com.nickalie.ngterm.core.ffi.ChatBody
 import com.nickalie.ngterm.core.ffi.ChatState
 import com.nickalie.ngterm.core.ffi.MachineState
 import com.nickalie.ngterm.core.ffi.MobileEvent
@@ -323,6 +325,87 @@ class ChatModeTest {
         // the next conversation starts in its chat
         bed.agent("p1", conversation = "c2")
         eventually { bed.view("p1") == PaneView.Chat && openChats() == setOf(bed.ref("p1")) }
+    }
+
+    @Test
+    fun aMessageBeingWrittenComesBackWhenThePaneShowsItsChatAgain() {
+        bed.attach("p1")
+        val model = model()
+        model.open(bed.key)
+        bed.show("p1")
+        bed.agent("p1", conversation = "c1")
+        eventually { bed.chat("p1") != null }
+        // nothing said yet: no event names the conversation, as before a new agent's first message
+        val written = "a long first message\n\nwith a second paragraph"
+        bed.chat("p1")!!.composer.edit(TextFieldValue(written))
+
+        model.pickView(bed.ref("p1"), PaneView.Terminal)
+        eventually { bed.view("p1") == PaneView.Terminal && bed.chat("p1") == null }
+        model.pickView(bed.ref("p1"), PaneView.Chat)
+        eventually { bed.chat("p1") != null }
+        assertEquals(
+            written,
+            bed
+                .chat("p1")!!
+                .composer.draft.text,
+        )
+
+        // once its events named the conversation too, and through the pane leaving the screen
+        bed.emit("p1", event("conversation", ChatBody.Conversation("claude", "c1", "/work", null)), live)
+        bed.chat("p1")!!.composer.edit(TextFieldValue("$written, and more"))
+        bed.test.core.emit(MobileEvent.SessionLayout("m1", "s1", RemoteLayout(emptyList(), "p1", "vertical", true)))
+        eventually { bed.chat("p1") == null }
+        bed.test.core.emit(MobileEvent.SessionLayout("m1", "s1", RemoteLayout(listOf("p1"), "p1", "vertical", true)))
+        bed.show("p1")
+        eventually { bed.chat("p1") != null }
+        assertEquals(
+            "$written, and more",
+            bed
+                .chat("p1")!!
+                .composer.draft.text,
+        )
+
+        // another conversation starts empty
+        model.pickView(bed.ref("p1"), PaneView.Terminal)
+        eventually { bed.chat("p1") == null }
+        bed.agent("p1", conversation = "c2")
+        eventually { bed.chat("p1") != null }
+        assertEquals(
+            "",
+            bed
+                .chat("p1")!!
+                .composer.draft.text,
+        )
+    }
+
+    @Test
+    fun turningTheSessionsChatViewOnBringsBackTheChatOfAPaneWhoseTerminalWasPicked() {
+        bed.attach("p1")
+        val model = model()
+        model.open(bed.key)
+        bed.show("p1")
+        bed.agent("p1", conversation = "c1")
+        eventually { bed.view("p1") == PaneView.Chat }
+        val listed = {
+            model.state.value.sessions
+                .single()
+        }
+        eventually { listed().chatView }
+
+        // Answer in terminal, or the bar's switch: the menu's Chat view says what the pane shows
+        model.pickView(bed.ref("p1"), PaneView.Terminal)
+        eventually { bed.view("p1") == PaneView.Terminal && !listed().chatView }
+        // one tap on it brings the chat back
+        model.setChatView(bed.key, true)
+        eventually { bed.view("p1") == PaneView.Chat && openChats() == setOf(bed.ref("p1")) && listed().chatView }
+
+        // off and on again does too
+        model.pickView(bed.ref("p1"), PaneView.Terminal)
+        eventually { bed.view("p1") == PaneView.Terminal }
+        model.setChatView(bed.key, false)
+        eventually { bed.view("p1") == null && !listed().chatView }
+        model.setChatView(bed.key, true)
+        eventually { bed.view("p1") == PaneView.Chat && listed().chatView }
     }
 
     @Test
