@@ -1,7 +1,8 @@
 //! Claude Code's transcript (`<config>/projects/<project>/<session-id>.jsonl`, read as Claude Code 2.1.317 writes it):
 //! one JSON object per line, `type` naming it.
 //!
-//! - `user` lines carry the prompt (a string, or text and image blocks) or `tool_result` blocks. `isMeta` lines,
+//! - `user` lines carry the prompt (a string, or text and image blocks; a long paste between `<pasted_content>`
+//!   lines, which are left out: [`unpasted`]) or `tool_result` blocks. `isMeta` lines,
 //!   local command output and command caveats are Claude's own context and make no event; a `<command-name>` line
 //!   shows as the `/command` it ran unless the prompt just before already said so (`/compact` writes both, with only
 //!   its compaction between); a `<task-notification>` completes its background task's tool (an `Agent`, or a `Bash`
@@ -306,7 +307,7 @@ impl ClaudeParser {
             command
         } else {
             self.last_prompt = Some(trimmed.to_owned());
-            text.to_owned()
+            unpasted(text)
         };
         out.push(
             id,
@@ -607,6 +608,45 @@ fn content_text(content: &Value) -> String {
             .join("\n"),
         _ => String::new(),
     }
+}
+
+/// How a pasted block's opening line starts; its id, then `">`, end it.
+const PASTED_OPEN: &str = "<pasted_content id=\"";
+
+/// A prompt as its user wrote it. Claude Code (2.1.325) writes a paste its prompt showed as a stand-in
+/// (`[Pasted text #1 +6 lines]`) between a `<pasted_content id="3df4">` line and a `</pasted_content id="3df4">`
+/// line, blank lines around them: each such pair goes and what it holds stays, without the line breaks at the
+/// text's ends. A text with no such pair is returned as it is.
+#[must_use]
+pub fn unpasted(text: &str) -> String {
+    let mut shown = String::new();
+    let mut rest = text;
+    let mut pasted = false;
+    while let Some((before, body, after)) = pasted_block(rest) {
+        pasted = true;
+        shown.push_str(before);
+        shown.push_str(body);
+        rest = after;
+    }
+    if !pasted {
+        return text.to_owned();
+    }
+    shown.push_str(rest);
+    shown.trim_matches('\n').to_owned()
+}
+
+/// The first pasted block of `text`: what is before it, what it holds (without the line break after its opening line
+/// and before its closing one) and what follows it. A block with no closing line of its own id is none.
+fn pasted_block(text: &str) -> Option<(&str, &str, &str)> {
+    let at = text.find(PASTED_OPEN)?;
+    let opened = &text[at + PASTED_OPEN.len()..];
+    let (id, held) = opened.split_once("\">")?;
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return None;
+    }
+    let (body, after) = held.split_once(&format!("</pasted_content id=\"{id}\">"))?;
+    let body = body.strip_prefix('\n').unwrap_or(body);
+    Some((&text[..at], body.strip_suffix('\n').unwrap_or(body), after))
 }
 
 /// `/name args` from a `<command-name>` line, or `None` for any other text (a prompt quoting the markup among its

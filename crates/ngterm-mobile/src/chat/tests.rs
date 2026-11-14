@@ -339,6 +339,28 @@ fn each_body_the_origin_writes_reaches_the_app_with_its_fields() {
 }
 
 #[test]
+fn a_long_paste_an_older_origin_sends_with_claudes_markup_reaches_the_app_without_it() {
+    let bodies = records(&[
+        serde_json::json!({"id": "u", "cursor": 1, "type": "user",
+                           "text": "\n\n<pasted_content id=\"3df4\">\nfirst line\n\nlast line\n</pasted_content id=\"3df4\">\n"}),
+        serde_json::json!({"id": "v", "cursor": 2, "type": "user", "text": "typed as it is"}),
+    ]);
+    assert_eq!(
+        bodies,
+        [
+            ChatBody::User {
+                text: "first line\n\nlast line".to_owned(),
+                images: 0
+            },
+            ChatBody::User {
+                text: "typed as it is".to_owned(),
+                images: 0
+            },
+        ]
+    );
+}
+
+#[test]
 fn a_question_and_its_options_reach_the_app_in_order() {
     let bodies = records(&[serde_json::json!({
         "id": "toolu_q", "cursor": 3, "type": "question", "status": "error", "output": "refused",

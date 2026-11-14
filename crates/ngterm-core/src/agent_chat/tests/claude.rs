@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 
 use super::support::{self, last, parse_bytes, tool};
-use crate::agent_chat::claude::subagent_parent;
+use crate::agent_chat::claude::{subagent_parent, unpasted};
 use crate::agent_chat::event::{LINE_CAP, MALFORMED, OUTPUT_CAP, OVERSIZED};
 use crate::agent_chat::{
     AgentKind, ChatEvent, ClaudeParser, EventBody, NoticeKind, Question, Tool, ToolKind, ToolStatus, TranscriptParser,
@@ -835,6 +835,43 @@ fn an_api_error_is_a_notice() {
         })
         .collect();
     assert_eq!(notices, ["API Error: 529 overloaded", "Connection error."]);
+}
+
+#[test]
+fn a_long_paste_shows_as_the_text_pasted_without_claudes_markup() {
+    // as Claude Code 2.1.325 writes a prompt whose paste its box showed as `[Pasted text #1 +6 lines]`
+    let events = parse_lines(&[
+        r#"{"type":"user","uuid":"a","message":{"content":"\n\n<pasted_content id=\"3df4\">\nfirst line\n\n- a list\nlast line\n</pasted_content id=\"3df4\">\n"}}"#,
+        r#"{"type":"user","uuid":"b","message":{"content":"look at this:\n\n<pasted_content id=\"a1\">\none\n</pasted_content id=\"a1\">\n\nand this\n\n<pasted_content id=\"b2\">\ntwo\n</pasted_content id=\"b2\">\n"}}"#,
+    ]);
+    let texts: Vec<&str> = events
+        .iter()
+        .map(|event| match &event.body {
+            EventBody::User { text, .. } => text.as_str(),
+            other => panic!("not a prompt: {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        texts,
+        [
+            "first line\n\n- a list\nlast line",
+            "look at this:\n\none\n\nand this\n\ntwo"
+        ]
+    );
+}
+
+#[test]
+fn markup_that_is_no_whole_pasted_block_stays_in_the_prompt() {
+    for text in [
+        "plain",
+        "  indented, with a line break after\n",
+        "<pasted_content id=\"3df4\">\nnever closed",
+        "<pasted_content id=\"3df4\">\nclosed by another\n</pasted_content id=\"9\">",
+        "<pasted_content id=\"\">\nno id\n</pasted_content id=\"\">",
+        "<pasted_content id=\"a b\">\nan id that is none\n</pasted_content id=\"a b\">",
+    ] {
+        assert_eq!(unpasted(text), text);
+    }
 }
 
 #[test]

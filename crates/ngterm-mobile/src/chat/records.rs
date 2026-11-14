@@ -242,8 +242,9 @@ impl From<EventBody> for ChatBody {
                 cwd,
                 model,
             },
+            // an origin older than the parser's own unpasting sends a long paste with Claude's markup around it
             EventBody::User { text, images } => Self::User {
-                text,
+                text: ngterm_core::agent_chat::claude::unpasted(&text),
                 images: images.unwrap_or(0),
             },
             EventBody::Assistant { text } => Self::Assistant { text },
