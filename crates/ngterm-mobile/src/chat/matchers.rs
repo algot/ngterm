@@ -355,8 +355,23 @@ impl Rows {
         let line = self.get(index);
         SubjectRow {
             text: line.trim().to_owned(),
-            full: line.trim_end().chars().count() + 1 >= self.cols,
+            full: self.reaches_edge(index),
         }
+    }
+
+    /// Whether row `index` reaches the screen's edge: its text ends in one of the last two columns (a wide character
+    /// too wide for the last one leaves it blank). Read in cells, as a wide character takes two and a combining
+    /// mark none.
+    fn reaches_edge(&self, index: usize) -> bool {
+        self.cells.get(index).is_some_and(|row| {
+            let taken = row
+                .cells()
+                .iter()
+                .enumerate()
+                .rposition(|(column, cell)| cell.width == CellWidth::SpacerTail || !row.text(column).trim().is_empty())
+                .map_or(0, |last| last + 1);
+            taken + 1 >= self.cols
+        })
     }
 
     /// Whether every row in `range` is blank or indented: the rows Claude draws under its prompt box (its footer, a
@@ -514,7 +529,7 @@ fn options(rows: &Rows, start: usize, end: usize, cursor: char) -> Option<Vec<Bl
             }
             block.text.push_str(line.trim());
         }
-        previous_full = width + 1 >= rows.cols;
+        previous_full = rows.reaches_edge(index);
     }
     let cursors = blocks.iter().filter(|block| block.cursor).count();
     (!blocks.is_empty() && cursors == 1).then_some(blocks)

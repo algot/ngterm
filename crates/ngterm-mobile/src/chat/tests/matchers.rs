@@ -1073,6 +1073,58 @@ pub(crate) fn claude_file_dialog(title: &str, shown: &str) -> Screen {
     Agent::Claude.read(&term.frame())
 }
 
+/// Claude's file-edit dialog at 40 columns, its path on the rows `path` and its second option on the rows `option`.
+/// **Synthesized**, as [`claude_file_dialog`] is.
+fn claude_narrow_file_dialog(path: &[String], option: &[String]) -> Dialog {
+    let cols = 40;
+    let dashed = "╌".repeat(cols);
+    let mut lines = vec![
+        "● Update(guide.md)".to_owned(),
+        "─".repeat(cols),
+        " Edit file".to_owned(),
+    ];
+    lines.extend_from_slice(path);
+    lines.extend([dashed.clone(), "  1 -Old".to_owned(), "  1 +New".to_owned(), dashed]);
+    lines.extend([" Do you want to make this edit?".to_owned(), " ❯ 1. Yes".to_owned()]);
+    lines.extend_from_slice(option);
+    lines.extend(["   3. No".to_owned(), " Esc to cancel · Tab to amend".to_owned()]);
+    let term = Term::new(40, 30);
+    term.feed(format!("\x1b[2J\x1b[H{}", lines.join("\r\n")).as_bytes());
+    dialog(&Agent::Claude.read(&term.frame())).clone()
+}
+
+#[test]
+fn a_dialogs_wrapped_rows_are_joined_by_the_cells_they_take_whatever_their_characters() {
+    // wide characters, two cells each: the path's row ends a column short of the edge (the next one did not fit) and
+    // the option's row fills it, so both were cut inside a word
+    let path = [format!(" a/{}", "語".repeat(18)), " 語/guide.md".to_owned()];
+    let option = [format!("   2. {}", "語".repeat(17)), "      語語 too".to_owned()];
+    let dialog = claude_narrow_file_dialog(&path, &option);
+    assert!(
+        dialog.asks(&format!("a/{}/guide.md", "語".repeat(19))),
+        "{:?}",
+        dialog.subject
+    );
+    assert_eq!(dialog.options[1].label, format!("{} too", "語".repeat(19)));
+
+    // combining marks take no cell: rows of as many characters as the screen has columns still end short of its edge
+    let accented = "e\u{301}".repeat(17);
+    let path = [format!(" a/{accented}{accented}x"), " guide.md".to_owned()];
+    let option = [format!("   2. {accented}"), "      more".to_owned()];
+    let dialog = claude_narrow_file_dialog(&path, &option);
+    assert!(
+        dialog.asks(&format!("a/{accented}{accented}x guide.md")),
+        "{:?}",
+        dialog.subject
+    );
+    assert!(
+        !dialog.asks(&format!("a/{accented}{accented}xguide.md")),
+        "{:?}",
+        dialog.subject
+    );
+    assert_eq!(dialog.options[1].label, format!("{accented} more"));
+}
+
 #[test]
 fn a_file_dialog_reads_as_a_dialog_whose_subject_names_the_path() {
     let screen = claude_file_dialog("Edit file", "src/hello.py");
