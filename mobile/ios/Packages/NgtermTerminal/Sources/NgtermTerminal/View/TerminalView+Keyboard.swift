@@ -47,10 +47,15 @@ extension TerminalView {
         takeHandover()
     }
 
-    /// The terminal drawn focused (the selected pane) in a window, or the one about to be (`comingOn`: its pane turns
-    /// from its chat to it), takes the focus the last selected one handed over, opening the soft keyboard if that one
-    /// had it open; the one that has the keyboard leaves it for the next pane.
-    internal func takeHandover(comingOn: Bool = false) {
+    /// The terminal drawn focused (the selected pane) in a window takes the focus the last selected one handed over,
+    /// opening the soft keyboard if that one had it open; the one that has the keyboard leaves it for the next pane.
+    internal func takeHandover() {
+        takeHandover(comingOn: false)
+    }
+
+    /// As ``takeHandover()``, for a terminal about to be drawn focused too (`comingOn`: its pane turns from its chat
+    /// to it).
+    internal func takeHandover(comingOn: Bool) {
         guard
             drawsFocused || comingOn,
             let window,

@@ -31,8 +31,9 @@ public final class TerminalKeyboard {
     public private(set) var control = Sticky.off
     /// The sticky Alt.
     public private(set) var alt = Sticky.off
-    /// The terminal every key goes to: the one that became the first responder last, if it still is. No chat's field
-    /// has the keyboard a terminal took (``chatField``), though its chat went before it could say so.
+    /// The terminal every key goes to: the one that became the first responder last, if it still is.
+    ///
+    /// No chat's field has the keyboard a terminal took (``chatField``), though its chat went before it could say so.
     public weak var target: TerminalView? {
         didSet {
             if target != nil {
@@ -198,9 +199,11 @@ public final class TerminalKeyboard {
         }
     }
 
-    /// The session view shows the terminal of `pane` in its chat's place: as ``handOver()``, and that terminal, laid
-    /// out under the chat, takes the keyboard at once, before the view changes, so the soft keyboard goes from the
-    /// chat's prompt field straight to it. A pane with no terminal in a window leaves the handover for it.
+    /// The session view shows the terminal of `pane` in its chat's place.
+    ///
+    /// As ``handOver()``, and that terminal, laid out under the chat, takes the keyboard at once, before the view
+    /// changes, so the soft keyboard goes from the chat's prompt field straight to it. A pane with no terminal in a
+    /// window leaves the handover for it.
     public func handOver(to pane: any PaneClient) {
         handOver()
         terminals.allObjects.first { $0.pane === pane }?.takeHandover(comingOn: true)
