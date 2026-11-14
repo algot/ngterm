@@ -160,4 +160,48 @@ internal struct TerminalHandoverTests {
         chatHardware.update(attached: true)
         #expect(!chatKeyboard.takeChatHandover(), "the chat's field keeps the keyboard")
     }
+
+    @Test("the terminal with the focus leaves the handover to the pane selected next, though drawn focused again")
+    internal func handoverOutlastsAnUpdate() throws {
+        let window = try Self.window()
+        defer { window.isHidden = true }
+        let keyboard = TerminalKeyboard(hardware: HardwareKeyboard(fixed: true))
+        let first = Self.terminal(keyboard, focused: true)
+        let second = Self.terminal(keyboard, focused: false)
+        window.addSubview(first)
+        window.addSubview(second)
+        #expect(first.isFirstResponder)
+
+        keyboard.handOver()
+        // the session view updates the pane it still draws selected before the selection reaches it
+        first.drawsFocused = true
+        first.drawsFocused = false
+        second.drawsFocused = true
+        #expect(second.isFirstResponder)
+        #expect(keyboard.target === second)
+    }
+
+    @Test("a terminal with the focus that leaves its window hands it to what takes its pane's place")
+    internal func leavingHandsOver() throws {
+        let window = try Self.window()
+        defer { window.isHidden = true }
+        let keyboard = TerminalKeyboard(hardware: HardwareKeyboard(fixed: false))
+        let first = Self.terminal(keyboard, focused: true)
+        window.addSubview(first)
+        first.focus(showingKeyboard: true)
+        first.removeFromSuperview()
+        let next = Self.terminal(keyboard, focused: true)
+        window.addSubview(next)
+        #expect(next.isFirstResponder)
+        #expect(next.softKeyboardWanted, "the soft keyboard stays up")
+
+        // a chat in its place takes it as well; a terminal without the focus that leaves hands nothing
+        next.removeFromSuperview()
+        #expect(keyboard.takeChatHandover())
+        let unfocused = Self.terminal(keyboard, focused: true)
+        window.addSubview(unfocused)
+        #expect(!unfocused.isFirstResponder)
+        unfocused.removeFromSuperview()
+        #expect(!keyboard.takeChatHandover())
+    }
 }
