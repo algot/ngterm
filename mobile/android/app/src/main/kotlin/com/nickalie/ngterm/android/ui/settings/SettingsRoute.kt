@@ -29,6 +29,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nickalie.ngterm.android.AppGraph
 import com.nickalie.ngterm.android.R
+import com.nickalie.ngterm.android.platform.AndroidKeyExports
+import com.nickalie.ngterm.android.platform.DeviceAuth
+import com.nickalie.ngterm.android.platform.rememberDeviceAuth
 import com.nickalie.ngterm.android.ui.components.ScreenExit
 import com.nickalie.ngterm.android.ui.onboarding.ImportKeyScreen
 import com.nickalie.ngterm.android.ui.onboarding.PublicKeyScreen
@@ -42,8 +45,8 @@ private const val IMPORT = "import"
 private const val KEY = "key:"
 
 /**
- * The Settings destination: Settings itself, and the screens it opens (a key's public half, importing a key),
- * stacked, with back returning to Settings. A key just made or brought opens its public half, which offers to point
+ * The Settings destination: Settings itself, and the screens it opens (a key's public half, importing a key,
+ * exporting one once [auth] has confirmed the device's owner), stacked, with back returning to Settings. A key just made or brought opens its public half, which offers to point
  * every machine at it. Whether the system lets the app post notifications is read again each time the app resumes,
  * so coming back from the system's settings shows the change.
  */
@@ -53,11 +56,14 @@ fun SettingsRoute(
     coreVersion: String,
     modifier: Modifier = Modifier,
     model: SettingsViewModel = viewModel { SettingsViewModel(graph) },
+    auth: DeviceAuth = rememberDeviceAuth(),
+    exports: ExportKeyViewModel = rememberExportKeyViewModel(graph),
 ) {
     var page by rememberSaveable { mutableStateOf(HOME) }
     val state by model.state.collectAsStateWithLifecycle()
     val work by model.keyWork.collectAsStateWithLifecycle()
     val fresh by model.newKey.collectAsStateWithLifecycle()
+    val export by exports.work.collectAsStateWithLifecycle()
     LaunchedEffect(fresh) {
         fresh?.let {
             page = KEY + it
@@ -67,8 +73,16 @@ fun SettingsRoute(
     val back = ScreenExit(R.drawable.ic_back, stringResource(R.string.action_back)) { page = HOME }
     val shown = page.takeIf { it.startsWith(KEY) }?.removePrefix(KEY)
     val item = shown?.let { id -> (state as? SettingsUiState.Ready)?.keys?.firstOrNull { it.key.id == id } }
-    BackHandler(enabled = page == IMPORT || item != null) { page = HOME }
+    val exported = export.keyId?.let { id -> (state as? SettingsUiState.Ready)?.keys?.firstOrNull { it.key.id == id } }
+    BackHandler(enabled = page == IMPORT || item != null || exported != null) {
+        exports.close()
+        page = HOME
+    }
     when {
+        exported != null -> {
+            ExportKeyPage(exported.key, export, exports, onBack = exports::close, modifier = modifier)
+        }
+
         page == IMPORT -> {
             ImportKeyScreen(
                 busy = work.importing,
@@ -93,7 +107,7 @@ fun SettingsRoute(
             // a key page whose key isn't there: Settings (its progress while the stores are read, why with Retry when
             // they can't be), back on Settings itself once they are read without the key
             if (shown != null) LaunchedEffect(state) { if (state is SettingsUiState.Ready) page = HOME }
-            val actions = rememberSettingsActions(model) { page = it }
+            val actions = rememberSettingsActions(model, rememberExportStart(auth, exports::unlock)) { page = it }
             SettingsScreen(
                 state = state,
                 coreVersion = coreVersion,
@@ -151,14 +165,23 @@ internal fun SwitchMachines(
     }
 }
 
-// the controls' actions over [model]; [onPage] opens a key's public half or the import
+// the export's model over the app's keys, the system's documents and its clipboard
+@Composable
+private fun rememberExportKeyViewModel(graph: AppGraph): ExportKeyViewModel {
+    val context = LocalContext.current.applicationContext
+    return viewModel { ExportKeyViewModel(graph.keys, AndroidKeyExports(context)) }
+}
+
+// the controls' actions over [model]; [onPage] opens a key's public half or the import, [onExport] a key's export
 @Composable
 private fun rememberSettingsActions(
     model: SettingsViewModel,
+    onExport: (String) -> Unit,
     onPage: (String) -> Unit,
 ): SettingsActions {
     val context = LocalContext.current
     val page by rememberUpdatedState(onPage)
+    val export by rememberUpdatedState(onExport)
     return remember(model, context) {
         SettingsActions(
             onChange = model::change,
@@ -172,6 +195,7 @@ private fun rememberSettingsActions(
             },
             onTurnOnNotifications = { context.openNotificationSettings() },
             onRetry = model::retry,
+            onExport = { export(it) },
         )
     }
 }

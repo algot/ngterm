@@ -28,6 +28,7 @@ import com.nickalie.ngterm.core.fake.FakeMobileCore
 import com.nickalie.ngterm.core.fake.fakePeerCapabilities
 import com.nickalie.ngterm.core.ffi.ClipboardPart
 import com.nickalie.ngterm.core.ffi.ClipboardWriteStatus
+import com.nickalie.ngterm.core.ffi.ExportProtection
 import com.nickalie.ngterm.core.ffi.HostKeyStore
 import com.nickalie.ngterm.core.ffi.KeyException
 import com.nickalie.ngterm.core.ffi.KeyPair
@@ -60,9 +61,21 @@ const val ENCRYPTED_FAKE_KEY = "-----BEGIN OPENSSH PRIVATE KEY-----\nENCRYPTED f
 /** A "private key" the fake key maker reads as plain. */
 const val PLAIN_FAKE_KEY = "-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n-----END OPENSSH PRIVATE KEY-----"
 
+/** What the fake key maker's export of [stored] under [passphrase] reads: [stored] itself with none. */
+fun fakeExport(
+    stored: String,
+    passphrase: String?,
+): String =
+    if (passphrase == null) {
+        stored
+    } else {
+        "-----BEGIN OPENSSH PRIVATE KEY-----\nENCRYPTED $stored under $passphrase\n-----END OPENSSH PRIVATE KEY-----"
+    }
+
 /**
  * The core's key functions, faked: [generate] hands out [FAKE_PUBLIC_KEY]; [import] takes text starting with
- * `-----BEGIN`, wants [FAKE_PASSPHRASE] when it says ENCRYPTED, and refuses anything else as the core would.
+ * `-----BEGIN`, wants [FAKE_PASSPHRASE] when it says ENCRYPTED, and refuses anything else as the core would;
+ * [export] hands out [fakeExport] of what it is given.
  */
 class FakeKeyMaker : KeyMaker {
     var generated = 0
@@ -74,6 +87,26 @@ class FakeKeyMaker : KeyMaker {
 
     /** When set, [import] waits for it to open first, as a slow passphrase derivation would. */
     @Volatile var importGate: java.util.concurrent.CountDownLatch? = null
+
+    /** The stored keys [export] was handed, as it was handed them: wiped by the app once it returns. */
+    val exportedFrom = mutableListOf<ByteArray>()
+
+    /** When set, [export] throws it. */
+    var exportFailure: KeyException? = null
+
+    /** When set, [export] waits for it to open first, as the passphrase derivation takes its time. */
+    @Volatile var exportGate: java.util.concurrent.CountDownLatch? = null
+
+    override fun export(
+        privateKey: ByteArray,
+        protection: ExportProtection,
+    ): ByteArray {
+        exportGate?.await()
+        exportedFrom += privateKey
+        exportFailure?.let { throw it }
+        val passphrase = (protection as? ExportProtection.Passphrase)?.passphrase
+        return fakeExport(String(privateKey), passphrase).toByteArray()
+    }
 
     override fun generate(comment: String): KeyPair {
         generated += 1

@@ -5,7 +5,9 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.nickalie.ngterm.android.platform.KeystoreKeyVault
+import com.nickalie.ngterm.core.ffi.ExportProtection
 import com.nickalie.ngterm.core.ffi.KeyPair
+import com.nickalie.ngterm.core.ffi.exportKey
 import com.nickalie.ngterm.core.ffi.generateKey
 import com.nickalie.ngterm.core.ffi.importKey
 import kotlinx.coroutines.Dispatchers
@@ -28,7 +30,10 @@ data class AppKey(
     val imported: Boolean,
 )
 
-/** Makes and reads ssh keys: the mobile core's [generateKey] and [importKey] in the app, a fake in its tests. */
+/**
+ * Makes, reads and writes out ssh keys: the mobile core's [generateKey], [importKey] and [exportKey] in the app, a
+ * fake in its tests.
+ */
 interface KeyMaker {
     /** A new ed25519 key, its public half commented [comment]. */
     fun generate(comment: String): KeyPair
@@ -38,6 +43,12 @@ interface KeyMaker {
         privateKey: ByteArray,
         passphrase: String?,
     ): KeyPair
+
+    /** The stored key [privateKey] as an OpenSSH private key file under [protection]. */
+    fun export(
+        privateKey: ByteArray,
+        protection: ExportProtection,
+    ): ByteArray
 }
 
 /** The mobile core's key functions. */
@@ -48,12 +59,18 @@ object NativeKeyMaker : KeyMaker {
         privateKey: ByteArray,
         passphrase: String?,
     ): KeyPair = importKey(privateKey, passphrase)
+
+    override fun export(
+        privateKey: ByteArray,
+        protection: ExportProtection,
+    ): ByteArray = exportKey(privateKey, protection)
 }
 
 /**
  * The app's ssh keys: what it shows of them in [store] (Preferences DataStore), their private halves sealed in
- * [vault]. [generate] and [import] put a new key in both, wiping the private bytes once sealed; they run [maker] off
- * the caller's thread and throw what it throws ([com.nickalie.ngterm.core.ffi.KeyException]).
+ * [vault]. [generate] and [import] put a new key in both, wiping the private bytes once sealed; [export] writes one
+ * out for another install. They run [maker] off the caller's thread and throw what it throws
+ * ([com.nickalie.ngterm.core.ffi.KeyException]).
  */
 class AppKeys(
     private val store: DataStore<Preferences>,
@@ -82,6 +99,23 @@ class AppKeys(
                 privateKey.fill(0)
             }
         return add(pair, imported = true)
+    }
+
+    /**
+     * The key [id] as an OpenSSH private key file under [protection], for the caller to hand over and wipe. The
+     * unsealed key is in memory only while the core encrypts it, and wiped then. Throws the vault's
+     * [com.nickalie.ngterm.core.ffi.VaultException] when the key isn't there or can't be unsealed.
+     */
+    suspend fun export(
+        id: String,
+        protection: ExportProtection,
+    ): ByteArray {
+        val plain = withContext(Dispatchers.IO) { vault.load(id) }
+        return try {
+            withContext(Dispatchers.Default) { maker.export(plain, protection) }
+        } finally {
+            plain.fill(0)
+        }
     }
 
     private suspend fun add(

@@ -142,7 +142,7 @@ private fun keyFieldNote(
 
 // keeps the window out of screenshots, screen recordings and the Recents thumbnail while it is composed
 @Composable
-private fun SecureWindow() {
+internal fun SecureWindow() {
     val activity = LocalContext.current.findActivity()
     DisposableEffect(activity) {
         val window = activity?.window

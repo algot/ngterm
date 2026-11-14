@@ -1029,6 +1029,7 @@ The plan, reviewed against the brief:
 | Palette chips as colored circles | color alone, and a circle says nothing about a terminal | radio rows named for the palette, each with a strip of its ground and its eight normal colors |
 | Copper section headings | a second loud element beside the bus bar | `onSurfaceVariant` headings; copper stays for the selected destination and the actions |
 | A slider with a tick per sp in the theme's secondary | 23 dots of noise, and verdigris means healthy | a plain track (`surfaceContainerHighest`), the value in mono beside the label |
+| Export as a dialog with one password field and OK | the stock prompt: no room to say what the file is, a typo locks the key away for good, and the unsafe choices look like the safe one | a screen of its own behind the screen lock: the warning first, the passphrase twice, a file as the filled action, the clipboard and "no passphrase" visibly the lesser choices, the last confirmed again |
 | Key rotation as one destructive button | it would cut every machine off until the new key is on them | Rotate key makes a new key and shows its public half; the machines switch to it only on "Use for every machine", under a note that the old key comes off the machines last |
 
 ```
@@ -1080,6 +1081,19 @@ The plan, reviewed against the brief:
   says every machine signs in with this key. A connected machine keeps its connection and attached sessions, and
   signs in with the new key from its next connect or reconnect (`MobileCore.useKey`). A private key is never shown
   or logged.
+- **Export private key** (`ExportKeyScreen`, a text button on each key's plate): for carrying the key to another
+  install, which the first run's import reads back. The system's own prompt asks for the screen lock first (a
+  biometric, or the PIN, pattern or password); a device with no screen lock exports nothing and is sent to the
+  system's security settings, and backing out of the prompt does nothing. Then a `ScreenFrame` with Back, secure
+  window as the import's: a `Banner` in the attention tone saying what the key is and who can use it, the key's
+  fingerprint on a `KeyPlate`, the passphrase and "Passphrase again" (hidden, one Show toggle for both; what is
+  wrong shows under the field it is about, once an export was tried), and the switch "Export without a passphrase"
+  (Not recommended), which hides the fields, shows an error-tone `Banner` and is confirmed again by a
+  `ConfirmDialog` whose button repeats those words. **Save to a file** is the filled button (the system's screen for
+  making a document; a spinner and "Exporting the key" while it works), **Copy to the clipboard** a text button
+  with the line that a file is safer; the clip is marked sensitive. How it went shows under them: a healthy
+  `Banner` (Saved, Copied, each with what to do next) or the problem in words. The unlock lasts five minutes and
+  ends when the screen is left. The key is written nowhere but the document the user makes or the clipboard.
 - **About:** the app's name and the core's version in mono.
 - **States:** a spinner while the stores are read; the reason and Retry when they can't be.
 

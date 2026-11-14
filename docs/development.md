@@ -994,6 +994,13 @@ shows the key's `authorized_keys` line (Copy, Share) and the command that append
 A machine is a host, port, user and key; its host key is pinned on first use, and a changed one stops the connection
 with both fingerprints shown.
 
+Settings ▸ Keys ▸ Export private key writes a key out for another install of the app (a reinstall deletes the app's
+data, and the Keystore's key with it; the app is in no backup): after the screen lock (a device without one exports
+nothing), as an OpenSSH private key file encrypted with a passphrase (aes256-ctr under bcrypt-pbkdf, what
+`ssh-keygen` writes and reads; the mobile core's `export_key`), or unencrypted only on an explicit, confirmed choice,
+into a file the user makes with the system's document screen or onto the clipboard. Import a key reads it back with
+the passphrase.
+
 Not in v1: HTML pages and program overlays (refused, as a viewer that can't show them refuses them), Kitty images
 (the pane reports no support), passwords and jump hosts (public-key auth to the machine itself only), Nerd Font
 symbols, a GPU renderer (the terminal is drawn on a Compose canvas), editing the layout from the phone, and Play Store

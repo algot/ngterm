@@ -10,6 +10,7 @@ import com.nickalie.ngterm.android.data.KeyMaker
 import com.nickalie.ngterm.android.platform.KeyWrapper
 import com.nickalie.ngterm.android.platform.KeystoreKeyVault
 import com.nickalie.ngterm.android.testStore
+import com.nickalie.ngterm.core.ffi.ExportProtection
 import com.nickalie.ngterm.core.ffi.KeyException
 import com.nickalie.ngterm.core.ffi.KeyPair
 import kotlinx.coroutines.Dispatchers
@@ -188,6 +189,11 @@ class OnboardingFailureTest {
             privateKey: ByteArray,
             passphrase: String?,
         ): KeyPair = delegate.import(privateKey, passphrase)
+
+        override fun export(
+            privateKey: ByteArray,
+            protection: ExportProtection,
+        ): ByteArray = delegate.export(privateKey, protection)
     }
 
     private class FailingWrapper : KeyWrapper {

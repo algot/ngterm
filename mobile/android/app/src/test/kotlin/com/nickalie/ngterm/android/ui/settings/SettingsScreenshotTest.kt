@@ -52,8 +52,9 @@ private val NoUpdateActions = UpdateActions({}, {}, {}, {}, {})
 /**
  * Task 20's Settings rendered by Robolectric and compared with their goldens (src/test/screenshots/settings): its top
  * (the terminal's sample and controls), its foot (notifications turned off in the system, the clipboard, the keys and
- * the core's version), the GitHub build's Updates with a release on offer, the update sheet mid-download, and a
- * rotated key's public half with the switch to it, in the windows of
+ * the core's version), the GitHub build's Updates with a release on offer, the update sheet mid-download, a
+ * rotated key's public half with the switch to it, and a key's export (under a passphrase, saved; and with the
+ * choice of none), in the windows of
  * [ScreensScreenshotTest]. The keys shown are made up.
  */
 @RunWith(ParameterizedRobolectricTestRunner::class)
@@ -108,6 +109,36 @@ class SettingsScreenshotTest(
         }
         compose.onNodeWithText("Use for every machine").performScrollTo()
         compose.onRoot().captureRoboImage(golden("new_key"))
+    }
+
+    @Test
+    fun exportKey() {
+        show {
+            ExportKeyScreen(
+                fingerprint = SampleKey.fingerprint,
+                work = ExportWork(keyId = SampleKey.id, done = ExportDone.Saved),
+                onSave = {},
+                onCopy = {},
+                onBack = {},
+                draft = ExportDraft("correct horse", "correct horse"),
+            )
+        }
+        compose.onRoot().captureRoboImage(golden("export_key"))
+    }
+
+    @Test
+    fun exportKeyUnprotected() {
+        show {
+            ExportKeyScreen(
+                fingerprint = SampleKey.fingerprint,
+                work = ExportWork(keyId = SampleKey.id),
+                onSave = {},
+                onCopy = {},
+                onBack = {},
+                draft = ExportDraft(unprotected = true),
+            )
+        }
+        compose.onRoot().captureRoboImage(golden("export_key_unprotected"))
     }
 
     @Test

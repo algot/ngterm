@@ -143,7 +143,8 @@ internal fun ClipboardSection(
 }
 
 /**
- * The app's keys, each with its fingerprint, the machines that use it, Show public key and Copy; then Rotate key
+ * The app's keys, each with its fingerprint, the machines that use it, Show public key, Copy and Export private
+ * key; then Rotate key
  * (spinning while [work] makes one, and why it failed) and Import a key.
  */
 @Composable
@@ -158,7 +159,13 @@ internal fun KeysSection(
             Modifier.padding(vertical = spacing.sm),
             verticalArrangement = Arrangement.spacedBy(spacing.sm),
         ) {
-            for (item in keys) KeyCard(item, onShow = { actions.onShowKey(item.key.id) })
+            for (item in keys) {
+                KeyCard(
+                    item,
+                    onShow = { actions.onShowKey(item.key.id) },
+                    onExport = { actions.onExport(item.key.id) },
+                )
+            }
         }
         SettingsNote(stringResource(R.string.settings_rotate_note))
         FlowRow(
@@ -181,11 +188,12 @@ internal fun KeysSection(
     }
 }
 
-// a key on its plate: where it came from, its fingerprint, who uses it, and its public half's actions
+// a key on its plate: where it came from, its fingerprint, who uses it, its public half's actions and its export
 @Composable
 private fun KeyCard(
     item: KeyItem,
     onShow: () -> Unit,
+    onExport: () -> Unit,
 ) {
     val spacing = NgtermTheme.spacing
     Column(
@@ -214,6 +222,7 @@ private fun KeyCard(
         FlowRow(Modifier.padding(top = spacing.xs)) {
             TextButton(onClick = onShow) { Text(stringResource(R.string.settings_key_show)) }
             CopyButton(item.key.authorizedKey, label = stringResource(R.string.settings_key_copy))
+            TextButton(onClick = onExport) { Text(stringResource(R.string.settings_key_export)) }
         }
     }
 }

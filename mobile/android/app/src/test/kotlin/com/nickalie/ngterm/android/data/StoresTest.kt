@@ -7,10 +7,13 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.nickalie.ngterm.android.FakeKeyMaker
 import com.nickalie.ngterm.android.PLAIN_FAKE_KEY
 import com.nickalie.ngterm.android.SoftwareWrapper
+import com.nickalie.ngterm.android.fakeExport
 import com.nickalie.ngterm.android.platform.KeystoreKeyVault
 import com.nickalie.ngterm.android.platform.PinnedHostKeys
 import com.nickalie.ngterm.android.testMachine
 import com.nickalie.ngterm.android.testStore
+import com.nickalie.ngterm.core.ffi.ExportProtection
+import com.nickalie.ngterm.core.ffi.KeyException
 import com.nickalie.ngterm.core.ffi.VaultException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
@@ -224,5 +227,41 @@ class StoresTest {
             assertEquals("fake private key 1", String(vault.load(made.id)))
             assertEquals(PLAIN_FAKE_KEY, String(vault.load(imported.id)))
             assertEquals(made, keys.get(made.id))
+        }
+
+    @Test
+    fun aKeyIsExportedUnderItsProtectionAndItsUnsealedBytesAreWiped() =
+        runBlocking {
+            val vault = KeystoreKeyVault(File(dir.root, "keys"), SoftwareWrapper())
+            val maker = FakeKeyMaker()
+            val keys = AppKeys(testStore(dir.root, "keys"), vault, maker, "ngterm@test")
+            val made = keys.generate()
+
+            val locked = keys.export(made.id, ExportProtection.Passphrase("correct horse"))
+            val open = keys.export(made.id, ExportProtection.Unprotected)
+
+            assertEquals(fakeExport("fake private key 1", "correct horse"), String(locked))
+            assertEquals("fake private key 1", String(open))
+            assertEquals(2, maker.exportedFrom.size)
+            assertTrue("the unsealed key is wiped", maker.exportedFrom.all { key -> key.all { it == 0.toByte() } })
+            assertEquals("the key stays sealed", "fake private key 1", String(vault.load(made.id)))
+        }
+
+    @Test
+    fun anExportThatFailsStillWipesTheUnsealedKeyAndAMissingKeyIsNotExported() =
+        runBlocking {
+            val vault = KeystoreKeyVault(File(dir.root, "keys"), SoftwareWrapper())
+            val maker = FakeKeyMaker()
+            val keys = AppKeys(testStore(dir.root, "keys"), vault, maker, "ngterm@test")
+            val made = keys.generate()
+            maker.exportFailure = KeyException.Invalid("the passphrase is empty")
+
+            val refused = runCatching { keys.export(made.id, ExportProtection.Passphrase("")) }
+            val missing = runCatching { keys.export("gone", ExportProtection.Unprotected) }
+
+            assertTrue(refused.exceptionOrNull() is KeyException.Invalid)
+            assertTrue(maker.exportedFrom.single().all { it == 0.toByte() })
+            assertTrue(missing.exceptionOrNull() is VaultException.Missing)
+            assertEquals(1, maker.exportedFrom.size)
         }
 }
