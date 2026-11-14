@@ -13,7 +13,13 @@ import com.nickalie.ngterm.android.data.SessionChatViews
 import com.nickalie.ngterm.android.testStore
 import com.nickalie.ngterm.android.ui.session.OpenSession
 import com.nickalie.ngterm.android.ui.session.SessionViewModel
+import com.nickalie.ngterm.android.ui.sessions.SessionsBody
+import com.nickalie.ngterm.android.ui.sessions.SessionsUiState
+import com.nickalie.ngterm.android.ui.sessions.SessionsViewModel
+import com.nickalie.ngterm.android.ui.sessions.body
+import com.nickalie.ngterm.core.fake.FakeAction
 import com.nickalie.ngterm.core.fake.FakeCall
+import com.nickalie.ngterm.core.ffi.AgentInputOutcome
 import com.nickalie.ngterm.core.ffi.ChatBody
 import com.nickalie.ngterm.core.ffi.ChatState
 import com.nickalie.ngterm.core.ffi.MachineState
@@ -21,6 +27,7 @@ import com.nickalie.ngterm.core.ffi.MobileEvent
 import com.nickalie.ngterm.core.ffi.MobileException
 import com.nickalie.ngterm.core.ffi.PeerKind
 import com.nickalie.ngterm.core.ffi.RemoteLayout
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -406,6 +413,176 @@ class ChatModeTest {
         eventually { bed.view("p1") == null && !listed().chatView }
         model.setChatView(bed.key, true)
         eventually { bed.view("p1") == PaneView.Chat && listed().chatView }
+    }
+
+    @Test
+    fun aMachinesListReadsAnAttachedSessionsChatViewAsItsOtherMenusDo() {
+        bed.attach("p1")
+        val model = model()
+        model.open(bed.key)
+        val list =
+            ViewModelProvider(models, viewModelFactory { initializer { SessionsViewModel(bed.test.graph, "m1") } })[
+                SessionsViewModel::class.java,
+            ]
+        val line = {
+            val ready = list.state.value as? SessionsUiState.Ready
+            (ready?.sessions?.body() as? SessionsBody.Sessions)?.attached?.singleOrNull()
+        }
+        bed.show("p1")
+        bed.agent("p1", conversation = "c1")
+        eventually { bed.view("p1") == PaneView.Chat && line()?.chatView == true }
+
+        // the pane shows the terminal picked for it: the list's item reads off, as the bar's does
+        model.pickView(bed.ref("p1"), PaneView.Terminal)
+        eventually { bed.view("p1") == PaneView.Terminal && line()?.chatView == false }
+        assertEquals(
+            false,
+            model.state.value.sessions
+                .single()
+                .chatView,
+        )
+        // so its tap turns the chat view on, which brings the chat back
+        list.setChatView("s1", !line()!!.chatView)
+        eventually { bed.view("p1") == PaneView.Chat && line()?.chatView == true }
+    }
+
+    // pane p1 in its chat, [text] written and its send on its way, held at the gate returned
+    private fun sending(text: String): CompletableDeferred<Unit> {
+        bed.attach("p1")
+        bed.show("p1")
+        bed.agent("p1", conversation = "c1")
+        eventually { bed.chat("p1") != null }
+        val gate = CompletableDeferred<Unit>()
+        bed.panes.getValue("p1").gate = gate
+        bed.chat("p1")!!.composer.edit(TextFieldValue(text))
+        bed.chat("p1")!!.send()
+        eventually { bed.panes.getValue("p1").actions == listOf(FakeAction.Prompt(text)) }
+        return gate
+    }
+
+    private fun draft() =
+        bed
+            .chat("p1")!!
+            .composer.draft.text
+
+    @Test
+    fun aMessageThatWentAfterItsChatClosedIsNoDraftOfThePanesNextChat() {
+        val gate = sending("Fix the guide")
+        // Show terminal while the send is on its way: the core carries it through
+        bed.test.chats.pick(bed.ref("p1"), PaneView.Terminal)
+        eventually { bed.chat("p1") == null }
+        gate.complete(Unit)
+        bed.test.chats.pick(bed.ref("p1"), PaneView.Chat)
+        eventually { bed.chat("p1") != null }
+        assertEquals("", draft())
+
+        // and one whose chat is back before it went: nothing is put in the field to send twice
+        bed.chat("p1")!!.composer.edit(TextFieldValue("And the tests"))
+        val second = CompletableDeferred<Unit>()
+        bed.panes.getValue("p1").gate = second
+        bed.chat("p1")!!.send()
+        eventually {
+            bed.panes
+                .getValue("p1")
+                .actions.size == 2
+        }
+        bed.test.chats.pick(bed.ref("p1"), PaneView.Terminal)
+        eventually { bed.chat("p1") == null }
+        bed.test.chats.pick(bed.ref("p1"), PaneView.Chat)
+        eventually { bed.chat("p1") != null }
+        assertEquals("", draft())
+        second.complete(Unit)
+        bed.test.chats.pick(bed.ref("p1"), PaneView.Terminal)
+        eventually { bed.chat("p1") == null }
+        bed.test.chats.pick(bed.ref("p1"), PaneView.Chat)
+        eventually { bed.chat("p1") != null }
+        assertEquals("", draft())
+    }
+
+    @Test
+    fun aMessageThatDidNotGoAfterItsChatClosedComesBackAsItsDraft() {
+        val gate = sending("Fix the guide")
+        bed.panes.getValue("p1").outcome = AgentInputOutcome.NOT_ON_SCREEN
+        bed.test.chats.pick(bed.ref("p1"), PaneView.Terminal)
+        eventually { bed.chat("p1") == null }
+        // the chat is back first: its field takes the message once the send ends unsent
+        bed.test.chats.pick(bed.ref("p1"), PaneView.Chat)
+        eventually { bed.chat("p1") != null }
+        assertEquals("", draft())
+        gate.complete(Unit)
+        eventually { draft() == "Fix the guide" }
+
+        // the send ends unsent while the terminal shows: the next chat takes it
+        val second = CompletableDeferred<Unit>()
+        bed.panes.getValue("p1").gate = second
+        bed.chat("p1")!!.send()
+        eventually {
+            bed.panes
+                .getValue("p1")
+                .actions.size == 2
+        }
+        bed.test.chats.pick(bed.ref("p1"), PaneView.Terminal)
+        eventually { bed.chat("p1") == null }
+        second.complete(Unit)
+        bed.test.chats.pick(bed.ref("p1"), PaneView.Chat)
+        eventually { bed.chat("p1") != null && draft() == "Fix the guide" }
+    }
+
+    @Test
+    fun aMessageWrittenBeforeTheConversationHasANameFollowsItsPanesAgent() {
+        bed.attach("p1")
+        bed.show("p1")
+        // the origin announces the agent, but not yet its conversation
+        bed.agent("p1", conversation = null)
+        eventually { bed.chat("p1") != null }
+        bed.chat("p1")!!.composer.edit(TextFieldValue("Fix the guide"))
+        bed.test.chats.pick(bed.ref("p1"), PaneView.Terminal)
+        eventually { bed.chat("p1") == null }
+        // the same agent, still unnamed: the message is back
+        bed.test.chats.pick(bed.ref("p1"), PaneView.Chat)
+        eventually { bed.chat("p1") != null }
+        assertEquals("Fix the guide", draft())
+
+        // it takes the first name the agent gets, and comes back in that conversation's chat
+        bed.test.chats.pick(bed.ref("p1"), PaneView.Terminal)
+        eventually { bed.chat("p1") == null }
+        bed.agent("p1", conversation = "c1")
+        bed.test.chats.pick(bed.ref("p1"), PaneView.Chat)
+        eventually { bed.chat("p1") != null }
+        assertEquals("Fix the guide", draft())
+
+        // and never in the next one's
+        bed.test.chats.pick(bed.ref("p1"), PaneView.Terminal)
+        eventually { bed.chat("p1") == null }
+        bed.agent("p1", conversation = "c2")
+        eventually { bed.chat("p1") != null }
+        assertEquals("", draft())
+    }
+
+    @Test
+    fun aMessageWrittenBeforeTheConversationHasANameGoesWithItsAgent() {
+        bed.attach("p1")
+        bed.show("p1")
+        bed.agent("p1", conversation = null)
+        eventually { bed.chat("p1") != null }
+        bed.chat("p1")!!.composer.edit(TextFieldValue("Fix the guide"))
+        bed.test.chats.pick(bed.ref("p1"), PaneView.Terminal)
+        eventually { bed.chat("p1") == null }
+
+        // the agent leaves: the pane's next agent, unnamed too, is another conversation
+        bed.agent("p1", agent = null)
+        eventually { bed.view("p1") == null }
+        bed.agent("p1", conversation = null)
+        eventually { bed.chat("p1") != null }
+        assertEquals("", draft())
+
+        // as is one whose chat closes because its agent left
+        bed.chat("p1")!!.composer.edit(TextFieldValue("Another"))
+        bed.agent("p1", agent = null)
+        eventually { bed.chat("p1") == null }
+        bed.agent("p1", conversation = "c1")
+        eventually { bed.chat("p1") != null }
+        assertEquals("", draft())
     }
 
     @Test

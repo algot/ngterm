@@ -5,6 +5,7 @@ import com.nickalie.ngterm.android.data.Connections
 import com.nickalie.ngterm.android.data.LiveSession
 import com.nickalie.ngterm.android.data.LiveSessions
 import com.nickalie.ngterm.android.data.MachinePeer
+import com.nickalie.ngterm.android.data.PaneAgent
 import com.nickalie.ngterm.android.data.SessionChatViews
 import com.nickalie.ngterm.android.data.SessionKey
 import com.nickalie.ngterm.android.data.offersChat
@@ -12,11 +13,13 @@ import com.nickalie.ngterm.android.data.session
 import com.nickalie.ngterm.android.ui.terminal.TerminalState
 import com.nickalie.ngterm.android.ui.theme.AgentState
 import com.nickalie.ngterm.core.ffi.AgentCommand
+import com.nickalie.ngterm.core.ffi.AgentInputOutcome
 import com.nickalie.ngterm.core.ffi.MachineState
 import com.nickalie.ngterm.core.ffi.MobileEvent
 import com.nickalie.ngterm.core.ffi.PaneRef
 import com.nickalie.ngterm.core.ffi.filterCommands
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -46,7 +49,9 @@ enum class PaneView { Terminal, Chat }
  * [views] has every pane with an agent whose session's chat view is on. A pane in chat view that is shown ([shown])
  * has its chat open in [chats], one [ChatViewModel] each, so the core's chat channels stay as few as the panes on
  * screen; a pane leaving chat view (or the screen) closes its chat, and the pane's own attach stays open behind it all
- * along. A prompt being written in a chat that closes comes back to the pane's next chat of the same conversation.
+ * along. A prompt being written in a chat that closes comes back to the pane's next chat of the same conversation,
+ * unless it was on its way to the agent and went. A session's Chat view item reads [chatViewItems], whichever menu
+ * shows it.
  * Events arrive on the core's thread; the flows take them from any. Used on the main thread. A chat's `/` menu ranks
  * the agent's commands with [filter] (the core's `filter_commands`; the app's tests, which run without the native
  * library, give their own).
@@ -63,7 +68,7 @@ class PaneChats(
     private val holds = MutableStateFlow<Map<PaneRef, Hold>>(emptyMap())
     private val chatViewState = MutableStateFlow(ChatViews())
 
-    private val drafts = Drafts()
+    private val itemState = MutableStateFlow(ChatViews())
 
     // the sessions' choices laid over what the store reads until it reads them too, so an earlier write landing after
     // a later tap never shows through; one the store could not keep holds until the process ends or a later choice
@@ -72,6 +77,7 @@ class PaneChats(
     private val viewState = MutableStateFlow<Map<PaneRef, PaneView>>(emptyMap())
     private val chatState = MutableStateFlow<Map<PaneRef, ChatViewModel>>(emptyMap())
     private val sessions = live.sessions
+    private val drafts = Drafts(scope) { chatState.value[it] }
 
     // how many times each machine's link has come up, by id: a chat asked for while it was down opens on the next
     private val connects = MutableStateFlow<Map<String, Long>>(emptyMap())
@@ -81,6 +87,12 @@ class PaneChats(
 
     /** Whether each session's panes running an agent show as a chat: the default, and the sessions' own choices. */
     val chatViews: StateFlow<ChatViews> = chatViewState.asStateFlow()
+
+    /**
+     * What each session's Chat view item reads: [chatViews], with a session one of whose panes shows the terminal
+     * picked for it as off, so the item says what the pane shows and its tap ([setChatView], on) brings the chat back.
+     */
+    val chatViewItems: StateFlow<ChatViews> = itemState.asStateFlow()
 
     /** The open chats, by pane. */
     val chats: StateFlow<Map<PaneRef, ChatViewModel>> = chatState.asStateFlow()
@@ -94,10 +106,16 @@ class PaneChats(
                 ::Pair,
             ).collect { (views, laid) -> chatViewState.value = withChoices(views, settle(views, laid)) }
         }
-        scope.launch { sessions.collect(::keepHolds) }
+        scope.launch {
+            sessions.collect {
+                keepHolds(it)
+                drafts.follow(it)
+            }
+        }
         scope.launch {
             combine(sessions, holds, chatViewState, connections.sessionPeers, ::views).collect { viewState.value = it }
         }
+        scope.launch { combine(viewState, chatViewState, ::items).collect { itemState.value = it } }
         scope.launch {
             combine(viewState, shown) { views, shown -> views to shown.keys }
                 .collect { (views, shown) -> sync(views, shown) }
@@ -208,7 +226,8 @@ class PaneChats(
     ) {
         val wanted = views.filter { (pane, view) -> view == PaneView.Chat && pane in shown }.keys
         val open = chatState.value
-        for ((pane, chat) in open) if (pane !in wanted) drafts.close(chat, sessions.value.conversation(pane))
+        drafts.follow(sessions.value)
+        for ((pane, chat) in open) if (pane !in wanted) drafts.close(chat, sessions.value.agent(pane))
         val made = (wanted - open.keys).associateWith(::chat)
         chatState.value = open.filterKeys { it in wanted } + made
         for (chat in made.values) {
@@ -219,7 +238,7 @@ class PaneChats(
 
     private fun chat(pane: PaneRef): ChatViewModel {
         // the conversation the pane announced as its chat opened
-        val opened = sessions.value.conversation(pane)
+        val opened = sessions.value.agent(pane)?.conversation
         lateinit var chat: ChatViewModel
         chat =
             ChatViewModel(
@@ -230,6 +249,7 @@ class PaneChats(
                 connects = connects,
                 working = sessions.map { it[pane.session].works(pane.paneId) }.distinctUntilChanged(),
                 filter = filter,
+                sends = scope,
                 scope = CoroutineScope(scope.coroutineContext + SupervisorJob(scope.coroutineContext.job)),
                 // ends on the core's thread, or the chat's own: the views are the main thread's
                 onEnded = { scope.launch { ended(chat, opened) } },
@@ -255,7 +275,7 @@ class PaneChats(
         if (followed == null || agent.conversation == followed) {
             holds.update { it + (pane to Hold(agent.conversation)) }
         } else {
-            drafts.close(chat, agent.conversation)
+            drafts.close(chat, agent)
             chatState.value -= pane
             sync(viewState.value, shown.value.keys)
         }
@@ -274,28 +294,93 @@ private data class Hold(
     val conversation: String?,
 )
 
-// the conversation the origin announced for [pane]'s agent
-private fun Map<SessionKey, LiveSession>.conversation(pane: PaneRef): String? =
-    this[pane.session]?.agents?.get(pane.paneId)?.conversation
+// what the origin announced of [pane]'s agent, or `null` when it runs none
+private fun Map<SessionKey, LiveSession>.agent(pane: PaneRef): PaneAgent? = this[pane.session]?.agents?.get(pane.paneId)
 
-// the prompts being written in the chats that closed, each kept for its pane's next chat of the same conversation
-private class Drafts {
-    private val kept = mutableMapOf<PaneRef, Pair<String?, String>>()
+// a prompt kept from a chat that closed: its [text], the [conversation] it was written in (`null`: the one its
+// pane's agent has still to name), and its send still on its way as the chat closed ([sending])
+private class Kept(
+    var conversation: String?,
+    val text: String,
+    val sending: Deferred<Result<AgentInputOutcome>>?,
+)
 
-    // closes [chat], keeping what its field holds for the conversation it follows, else the one [announced]
+/**
+ * The prompts being written in the chats that closed, each kept for its pane's next chat of the same conversation.
+ * One written before the conversation had a name follows its pane's agent as a picked terminal does ([follow]): it
+ * takes the first name the agent gets, and goes with the agent. One on its way to the agent as its chat closed waits
+ * for the send to end, which the core carries through whoever waits for it: sent, it is let go, so it is never sent
+ * twice; else it goes to the pane's chat [open] then, or its next. Main thread only, its waits in [scope].
+ */
+private class Drafts(
+    private val scope: CoroutineScope,
+    private val open: (PaneRef) -> ChatViewModel?,
+) {
+    private val kept = mutableMapOf<PaneRef, Kept>()
+
+    // closes [chat], keeping what its field holds for the conversation it follows, else the one its pane's [agent]
+    // announced, else the one that agent names next; with no agent left there is no conversation to keep it for
     fun close(
         chat: ChatViewModel,
-        announced: String?,
+        agent: PaneAgent?,
     ) {
         val text = chat.composer.draft.text
-        if (text.isNotBlank()) kept[chat.pane] = (chat.conversation ?: announced) to text
+        val conversation = chat.conversation ?: agent?.conversation
+        if (text.isNotBlank() && (conversation != null || agent != null)) {
+            val draft = Kept(conversation, text, chat.sending)
+            kept[chat.pane] = draft
+            draft.sending?.let { sending -> scope.launch { settle(chat.pane, draft, sending) } }
+        }
         chat.close()
     }
 
-    // hands [chat], just opened, the prompt kept for its pane
-    fun restore(chat: ChatViewModel) {
-        kept.remove(chat.pane)?.let { (conversation, text) -> chat.restoreDraft(conversation, text) }
+    // a draft whose conversation had no name takes the first one its pane's agent gets; its agent gone, it goes too
+    fun follow(sessions: Map<SessionKey, LiveSession>) {
+        val unnamed = kept.filterValues { it.conversation == null }
+        for ((pane, draft) in unnamed) {
+            val agent = sessions.agent(pane)
+            if (agent == null) kept.remove(pane) else draft.conversation = agent.conversation
+        }
     }
+
+    // hands [chat], just opened, the prompt kept for its pane, unless its send is still on its way
+    fun restore(chat: ChatViewModel) {
+        val draft = kept[chat.pane]?.takeUnless { it.sending?.isActive == true } ?: return
+        kept.remove(chat.pane)
+        hand(chat, draft)
+    }
+
+    // a draft's send ended after its chat closed: sent, the draft goes; else the pane's open chat takes it
+    private suspend fun settle(
+        pane: PaneRef,
+        draft: Kept,
+        sending: Deferred<Result<AgentInputOutcome>>,
+    ) {
+        val sent = sending.await().getOrNull() == AgentInputOutcome.SENT
+        if (kept[pane] !== draft) return
+        val chat = open(pane)
+        if (sent || chat != null) kept.remove(pane)
+        if (!sent && chat != null) hand(chat, draft)
+    }
+
+    // a draft still unnamed is its pane's agent's own (it would have gone with the agent): [chat] is that one's
+    private fun hand(
+        chat: ChatViewModel,
+        draft: Kept,
+    ) {
+        val conversation = draft.conversation
+        if (conversation == null) chat.composer.restore(draft.text) else chat.restoreDraft(conversation, draft.text)
+    }
+}
+
+// [chatViews] as the sessions' Chat view items read it: off for a session with a pane in [views] showing the
+// terminal picked for it
+private fun items(
+    views: Map<PaneRef, PaneView>,
+    chatViews: ChatViews,
+): ChatViews {
+    val picked = views.filterValues { it == PaneView.Terminal }.keys.associate { it.session to false }
+    return if (picked.isEmpty()) chatViews else chatViews.copy(sessions = chatViews.sessions + picked)
 }
 
 // every pane with an agent, in its view, while its session's chat view is on and its session's app has one

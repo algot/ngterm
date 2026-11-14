@@ -149,7 +149,7 @@ class SessionViewModel(
             graph.panes.live.sessions,
             openKey,
             focus,
-            combine(graph.chats.views, graph.chats.chatViews, graph.panes.claims.held, creates.underWay, ::Marks),
+            combine(graph.chats.views, graph.chats.chatViewItems, graph.panes.claims.held, creates.underWay, ::Marks),
         ) { listed, live, open, focus, marks ->
             val groups = groups(listed, live, marks, seen)
             AttachedUiState(groups, open?.let { open(it, listed, groups, focus, marks.views) })
@@ -310,15 +310,11 @@ class SessionViewModel(
 
 private data class Marks(
     val views: Map<PaneRef, PaneView>,
-    val chatViews: ChatViews,
+    // what each session's Chat view item reads (PaneChats.chatViewItems)
+    val chatViewItems: ChatViews,
     val taking: Set<SessionKey>,
     val create: Create?,
 )
-
-// whether [key]'s Chat view reads as on: its chat view is, and none of its panes had its terminal picked (turning it
-// on then brings their chats back)
-private fun Marks.showsChats(key: SessionKey): Boolean =
-    chatViews.on(key) && views.none { (pane, view) -> pane.session == key && view == PaneView.Terminal }
 
 /**
  * What the lists are made of: the saved machines, what is attached, each machine's listing and link, each session's
@@ -354,7 +350,7 @@ private fun groups(
                 val key = SessionKey(machine.id, id)
                 attached(key, machine, listed, live, seen)
                     .copy(
-                        chatView = marks.showsChats(key),
+                        chatView = marks.chatViewItems.on(key),
                         taking = key in marks.taking,
                         duplicating = marks.create == Create(machine.id, id),
                         canDuplicate = marks.create == null,

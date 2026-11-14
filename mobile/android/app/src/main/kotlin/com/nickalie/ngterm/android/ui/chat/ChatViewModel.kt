@@ -17,6 +17,8 @@ import com.nickalie.ngterm.core.ffi.PaneInterface
 import com.nickalie.ngterm.core.ffi.PaneRef
 import com.nickalie.ngterm.core.ffi.QuestionAnswer
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -179,7 +181,9 @@ data class ChatUiState(
  *   another device). A tap answers the card it was drawn on: one another card replaced meanwhile sends nothing.
  * - A `reset` drops what was shown and starts the new conversation under a divider.
  *
- * Events arrive on the core's thread; [state] takes them from any. Its work runs in [scope], which [close] ends.
+ * Events arrive on the core's thread; [state] takes them from any. Its work runs in [scope], which [close] ends,
+ * but for a prompt on its way, which the core carries through all the same: that call runs in [sends], so what became
+ * of it can still be read ([sending]).
  */
 @Suppress("TooManyFunctions", "LongParameterList") // the chat's events and each of its actions; what it reads
 class ChatViewModel internal constructor(
@@ -192,6 +196,8 @@ class ChatViewModel internal constructor(
     private val connects: StateFlow<Map<String, Long>>,
     private val working: Flow<Boolean>,
     filter: (String, List<AgentCommand>) -> List<AgentCommand>,
+    // outlives the chat: a prompt's send runs here
+    private val sends: CoroutineScope,
     private val scope: CoroutineScope,
     private val onEnded: () -> Unit,
 ) {
@@ -206,6 +212,16 @@ class ChatViewModel internal constructor(
     /** The prompt being written and its `/` menu. Main thread only. */
     val composer =
         ChatComposer(scope, fetch = { core.agentCommands(pane.machineId, pane.sessionId, pane.paneId) }, filter)
+
+    // the last prompt sent, and what became of it (still to come while it is on its way)
+    private var lastSend: Pair<String, Deferred<Result<AgentInputOutcome>>>? = null
+
+    /**
+     * The send still on its way of what the field holds, or `null`: it ends with what became of the prompt, also after
+     * the chat closed. Main thread only.
+     */
+    internal val sending: Deferred<Result<AgentInputOutcome>>?
+        get() = lastSend?.takeIf { (text, went) -> went.isActive && composer.draft.text.trim() == text }?.second
 
     private val uploads = ChatUploads(core, pane.machineId, chat, scope) { composer.insertPath(promptPath(it)) }
 
@@ -322,7 +338,11 @@ class ChatViewModel internal constructor(
     fun send() {
         val text = composer.draft.text.trim()
         if (text.isEmpty() || chat.value.awaitsCard) return
-        act(null, prompt = true, onSent = { composer.sent(text) }) { it.sendPrompt(text) }
+        act(null, prompt = true, onSent = { composer.sent(text) }) { pane ->
+            val went = sends.async { runCatching { pane.sendPrompt(text) } }
+            lastSend = text to went
+            went.await().getOrThrow()
+        }
     }
 
     /**
@@ -341,7 +361,7 @@ class ChatViewModel internal constructor(
      * another waits for its events to name theirs.
      */
     internal fun restoreDraft(
-        conversation: String?,
+        conversation: String,
         text: String,
     ) {
         if (conversation == opened) {

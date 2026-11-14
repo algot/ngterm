@@ -25,7 +25,8 @@ fun isMissingCli(reason: String): Boolean {
 
 /**
  * A session as the list shows it: the session, its parent's name when it is a companion, what is under way, whether
- * its panes running an agent show as a chat ([chatView]: its own choice, else Settings'), whether Duplicate takes
+ * its panes running an agent show as a chat ([chatView]: its own choice, else Settings'; off too while one of its
+ * panes shows the terminal picked for it, as the session's other menus read it), whether Duplicate takes
  * a tap ([canDuplicate]: not while a create is under way), the app without a chat view it is a session of
  * ([noChatOn], its badge word; `null` when its app has one), and that app's badge word when the machine's own app is
  * another ([peer]: an agterm session beside ngterm's on a machine that runs both).

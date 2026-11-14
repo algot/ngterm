@@ -42,7 +42,7 @@ data class MachineSessions(
     val duplicating: String? = null,
     // a create is under way, from any screen: neither New session nor Duplicate takes another tap
     val creating: Boolean = false,
-    // whether each session's panes running an agent show as a chat
+    // what each session's Chat view item reads (PaneChats.chatViewItems)
     val chatViews: ChatViews = ChatViews(),
     // the app the machine runs, when a listing said (null: ngterm, or not said)
     val peer: MachinePeer? = null,
@@ -100,7 +100,7 @@ class SessionsViewModel(
             connections.trees,
             connections.treeFailures,
             connections.attached,
-            combine(graph.chats.chatViews, connections.peers, connections.sessionPeers, ::Triple),
+            combine(graph.chats.chatViewItems, connections.peers, connections.sessionPeers, ::Triple),
         ) { links, trees, failures, attached, (chatViews, peers, sessionPeers) ->
             Live(
                 links[machineId] ?: Link.Offline,
