@@ -110,7 +110,9 @@ const _: () = assert!(2 * APP_LISTING_BOUND_SECONDS < super::tree::TREE_DEADLINE
 
 /// [`tree_tail_for`]'s remote command for a host that pins no peer, each app's listing ended after `bound` seconds.
 /// An app that stalls beside one that answers is left out, as one that fails is; with no answer the stalled app is
-/// asked again without a bound, ngterm first, so the caller's own deadline names the stall.
+/// asked again without a bound, ngterm first, so the caller's own deadline names the stall. The watcher that ends a
+/// listing holds its timer in a variable of its own, empty until the timer runs: the script's variables reach it, and
+/// an app that answers first ends the watcher before it has set one.
 pub(super) fn both_apps_tail(bound: u64) -> String {
     let ngterm = format!("{REMOTE_CLI} live tree --json");
     let agterm = format!("{} {} tree --json", agterm::CLI, agterm::LIVE_GROUP);
@@ -119,7 +121,7 @@ pub(super) fn both_apps_tail(bound: u64) -> String {
     let script = format!(
         "PATH=\"$PATH:$HOME/.local/bin:{dirs}\"; \
          b() {{ {{ \"$@\" 2>&3 & c=$!; \
-         (trap 'kill $s; exit' TERM; sleep {bound} & s=$!; wait $s; kill -9 $c) >/dev/null 2>&1 & w=$!; \
+         (q=; trap '[ -n \"$q\" ] && kill $q; exit' TERM; sleep {bound} & q=$!; wait $q; kill -9 $c) >/dev/null 2>&1 & w=$!; \
          wait $c; r=$?; kill $w; }} 3>&2 2>/dev/null; return $r; }}; \
          if command -v {n} >/dev/null 2>&1; then o=$(b {ngterm}); s=$?; fi; \
          if command -v {a} >/dev/null 2>&1; then p=$(b {agterm}); t=$?; fi; \
