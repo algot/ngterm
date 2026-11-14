@@ -206,8 +206,12 @@ class ChatViewModel internal constructor(
     /** The chat as the screen shows it. */
     val state: StateFlow<ChatUiState> = chat.asStateFlow()
 
-    /** The conversation the chat follows: the one its events named, else the one its pane announced as it opened. */
-    internal val conversation: String? get() = chat.value.conversation?.conversationId ?: opened
+    /**
+     * The conversation the chat follows: the one its events named, else the one its pane announced as it opened,
+     * until a `reset` says the pane has moved on to one still to be named.
+     */
+    internal val conversation: String?
+        get() = chat.value.let { now -> now.conversation?.conversationId ?: opened.takeIf { now.epoch == 0 } }
 
     /** The prompt being written and its `/` menu. Main thread only. */
     val composer =
@@ -356,15 +360,15 @@ class ChatViewModel internal constructor(
 
     /**
      * Puts back a draft ([text]) kept from before (the app was put away, or the pane showed its terminal meanwhile):
-     * only into the [conversation] it was written for, and only into an empty field. A chat whose pane announced that
-     * conversation as it opened takes it at once (a conversation with nothing said yet has no events to name it);
-     * another waits for its events to name theirs.
+     * only into the [conversation] it was written for, and only into an empty field. A chat that follows that
+     * conversation takes it at once (one its pane announced as it opened, with nothing said yet, has no events to
+     * name it); one whose conversation has no name yet waits for its events to name it.
      */
     internal fun restoreDraft(
         conversation: String,
         text: String,
     ) {
-        if (conversation == opened) {
+        if (conversation == this.conversation) {
             composer.restore(text)
             return
         }

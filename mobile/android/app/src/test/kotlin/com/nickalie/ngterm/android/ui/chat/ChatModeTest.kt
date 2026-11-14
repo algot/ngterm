@@ -529,6 +529,40 @@ class ChatModeTest {
     }
 
     @Test
+    fun anOlderMessageGoingLeavesTheOneWrittenAfterItAsThePanesDraft() {
+        val gate = sending("Fix the guide")
+        bed.test.chats.pick(bed.ref("p1"), PaneView.Terminal)
+        eventually { bed.chat("p1") == null }
+        // the next message is written, and its chat closed, while the first is still on its way
+        bed.test.chats.pick(bed.ref("p1"), PaneView.Chat)
+        eventually { bed.chat("p1") != null }
+        bed.chat("p1")!!.composer.edit(TextFieldValue("And the tests"))
+        bed.test.chats.pick(bed.ref("p1"), PaneView.Terminal)
+        eventually { bed.chat("p1") == null }
+        gate.complete(Unit)
+        bed.test.chats.pick(bed.ref("p1"), PaneView.Chat)
+        eventually { bed.chat("p1") != null }
+        assertEquals("And the tests", draft())
+    }
+
+    @Test
+    fun aMessageWrittenAfterThePaneMovedOnIsKeptForItsNewConversation() {
+        bed.attach("p1")
+        bed.show("p1")
+        bed.agent("p1", conversation = "c1")
+        eventually { bed.chat("p1") != null }
+        // the pane's next conversation, its chat still open and its events still to name it
+        bed.agent("p1", conversation = "c2")
+        bed.emit("p1", reset)
+        bed.chat("p1")!!.composer.edit(TextFieldValue("Fix the guide"))
+        bed.test.chats.pick(bed.ref("p1"), PaneView.Terminal)
+        eventually { bed.chat("p1") == null }
+        bed.test.chats.pick(bed.ref("p1"), PaneView.Chat)
+        eventually { bed.chat("p1") != null }
+        assertEquals("Fix the guide", draft())
+    }
+
+    @Test
     fun aMessageWrittenBeforeTheConversationHasANameFollowsItsPanesAgent() {
         bed.attach("p1")
         bed.show("p1")

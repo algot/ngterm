@@ -404,6 +404,20 @@ class ChatComposerTest {
     }
 
     @Test
+    fun aKeptDraftStaysOutOfTheConversationThatTookItsOwnsPlace() {
+        // the pane moved on from the conversation it announced as the chat opened
+        bed.emit("p1", reset)
+        chat.restoreDraft("c1", "Fix the guide")
+        assertEquals("", composer.draft.text)
+        bed.emit("p1", event("conv2", ChatBody.Conversation("claude", "c2", null, null)))
+        assertEquals("", composer.draft.text)
+        chat.restoreDraft("c1", "Fix the guide")
+        assertEquals("", composer.draft.text)
+        chat.restoreDraft("c2", "the new one's")
+        assertEquals("the new one's", composer.draft.text)
+    }
+
+    @Test
     fun aDraftKeptWhileTheAppIsAwayGoesBackOnlyToItsPaneAndConversation() {
         val scope = SaverScope { true }
         type("Fix the install guide")
