@@ -1,3 +1,4 @@
+import NgtermCore
 import UIKit
 
 /// The keyboard's side of the terminals on screen (mobile/android's `TerminalKeyboard`).
@@ -30,8 +31,15 @@ public final class TerminalKeyboard {
     public private(set) var control = Sticky.off
     /// The sticky Alt.
     public private(set) var alt = Sticky.off
-    /// The terminal every key goes to: the one that became the first responder last, if it still is.
-    public weak var target: TerminalView?
+    /// The terminal every key goes to: the one that became the first responder last, if it still is. No chat's field
+    /// has the keyboard a terminal took (``chatField``), though its chat went before it could say so.
+    public weak var target: TerminalView? {
+        didSet {
+            if target != nil {
+                chatField = nil
+            }
+        }
+    }
     /// Which chat's prompt field has the keyboard, if one does: the session view's chats say so, as a terminal says
     /// it is the ``target``, so a move of the selection hands the keyboard on from a chat too.
     public var chatField: AnyHashable?
@@ -188,6 +196,14 @@ public final class TerminalKeyboard {
         } else if chatField != nil {
             handingOver = .withKeyboard
         }
+    }
+
+    /// The session view shows the terminal of `pane` in its chat's place: as ``handOver()``, and that terminal, laid
+    /// out under the chat, takes the keyboard at once, before the view changes, so the soft keyboard goes from the
+    /// chat's prompt field straight to it. A pane with no terminal in a window leaves the handover for it.
+    public func handOver(to pane: any PaneClient) {
+        handOver()
+        terminals.allObjects.first { $0.pane === pane }?.takeHandover(comingOn: true)
     }
 
     /// Whether ``handOver()`` left the keyboard for the chat selected next, which takes its prompt field's focus;

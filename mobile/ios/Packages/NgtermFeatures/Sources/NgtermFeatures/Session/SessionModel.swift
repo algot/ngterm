@@ -180,6 +180,19 @@ public final class SessionModel {
         graph.chats.pick(PaneRef(machineId: key.machineId, sessionId: key.sessionId, paneId: paneId), view)
     }
 
+    /// Shows the terminal of the pane `paneId` in its chat's place (the toolbar's switch): the terminal, laid out
+    /// under the chat, takes the keyboard the chat's prompt field has before the view changes
+    /// (``TerminalKeyboard/handOver(to:)``); one not shown yet takes it as it comes on.
+    public func showTerminal(of paneId: String) {
+        let pane = PaneRef(machineId: key.machineId, sessionId: key.sessionId, paneId: paneId)
+        if let shown = graph.panes.shown[pane] {
+            keyboard.handOver(to: shown.client)
+        } else {
+            keyboard.handOver()
+        }
+        graph.chats.pick(pane, .terminal)
+    }
+
     /// Detaches the session: it goes on running there, and the view closes.
     public func detach() {
         graph.connections.detach(machineId: key.machineId, sessionId: key.sessionId)

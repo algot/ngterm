@@ -105,11 +105,10 @@ internal struct SessionLiveView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 ViewSwitch(view: view) { other in
                     if other == .terminal {
-                        // the pane's terminal, under its chat, takes the focus the chat's field had, with the soft
-                        // keyboard
-                        model.keyboard.handOver()
+                        model.showTerminal(of: focused)
+                    } else {
+                        model.pick(focused, other)
                     }
-                    model.pick(focused, other)
                 }
             }
         }
