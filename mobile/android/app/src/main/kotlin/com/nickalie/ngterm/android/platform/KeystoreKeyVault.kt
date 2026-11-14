@@ -8,6 +8,7 @@ import java.io.File
 import java.io.IOException
 import java.security.GeneralSecurityException
 import java.security.KeyStore
+import java.security.ProviderException
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -114,13 +115,19 @@ class KeystoreKeyVault(
         return try {
             wrapper.unwrap(target.readBytes())
         } catch (error: GeneralSecurityException) {
-            throw VaultException
-                .Unavailable("the key could not be unlocked: ${error.javaClass.simpleName}")
-                .apply { initCause(error) }
+            throw locked(error)
+        } catch (error: ProviderException) {
+            // the Keystore's own failures (its service died, the key was invalidated) are unchecked
+            throw locked(error)
         } catch (error: IOException) {
             throw VaultException.Unavailable("the key could not be read: ${error.message}").apply { initCause(error) }
         }
     }
+
+    private fun locked(error: Exception): VaultException =
+        VaultException
+            .Unavailable("the key could not be unlocked: ${error.javaClass.simpleName}")
+            .apply { initCause(error) }
 
     private companion object {
         val ID = Regex("[A-Za-z0-9-]+")

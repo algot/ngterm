@@ -103,18 +103,30 @@ class AppKeys(
 
     /**
      * The key [id] as an OpenSSH private key file under [protection], for the caller to hand over and wipe. The
-     * unsealed key is in memory only while the core encrypts it, and wiped then. Throws the vault's
+     * unsealed key is in memory only while the core encrypts it, and wiped then, by the thread that unsealed it. A
+     * caller cancelled meanwhile never gets the file, so it is wiped here. Throws the vault's
      * [com.nickalie.ngterm.core.ffi.VaultException] when the key isn't there or can't be unsealed.
      */
     suspend fun export(
         id: String,
         protection: ExportProtection,
     ): ByteArray {
-        val plain = withContext(Dispatchers.IO) { vault.load(id) }
-        return try {
-            withContext(Dispatchers.Default) { maker.export(plain, protection) }
+        // held here across the way back to the caller's thread, where a cancelled caller's result is dropped
+        var exported: ByteArray? = null
+        var handed = false
+        try {
+            withContext(Dispatchers.IO) {
+                val plain = vault.load(id)
+                try {
+                    exported = maker.export(plain, protection)
+                } finally {
+                    plain.fill(0)
+                }
+            }
+            handed = true
+            return checkNotNull(exported)
         } finally {
-            plain.fill(0)
+            if (!handed) exported?.fill(0)
         }
     }
 

@@ -61,6 +61,20 @@ class KeyExportsTest {
     }
 
     @Test
+    fun whatAProviderThrowsOfItsOwnIsAnIoFailureToo() {
+        val unsupported =
+            object : OutputStream() {
+                override fun write(byte: Int) = throw UnsupportedOperationException("mode wt is not supported")
+            }
+        shadowOf(context.contentResolver).registerOutputStream(target, unsupported)
+
+        val error = assertThrows(IOException::class.java) { exports.save(target, key.toByteArray()) }
+
+        assertEquals("mode wt is not supported", error.message)
+        assertTrue(error.cause is UnsupportedOperationException)
+    }
+
+    @Test
     fun theClipboardHoldsTheKeyMarkedSensitive() {
         exports.copy(key.toByteArray())
 

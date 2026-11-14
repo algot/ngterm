@@ -124,7 +124,8 @@ pub fn load(bytes: &[u8]) -> Result<PrivateKey, KeyError> {
 /// # Errors
 ///
 /// [`KeyError::Invalid`] for an empty passphrase, bytes that aren't a stored key, or a failed encryption (the
-/// system's random source failed).
+/// system's random source failed); [`KeyError::PassphraseRequired`] for bytes that are an encrypted key, which is
+/// never a stored one.
 pub fn export(bytes: &[u8], protection: ExportProtection) -> Result<Zeroizing<String>, KeyError> {
     let passphrase = match protection {
         ExportProtection::Passphrase { passphrase } => Some(Zeroizing::new(passphrase)),

@@ -32,7 +32,7 @@ class FakeKeyExports : KeyExports {
     val handed = mutableListOf<ByteArray>()
 
     /** When set, [save] fails with it. */
-    var saveFailure: IOException? = null
+    var saveFailure: Exception? = null
 
     override fun save(
         target: Uri,

@@ -887,7 +887,8 @@ pub fn import_key(private_key: Vec<u8>, passphrase: Option<String>) -> Result<Ke
 ///
 /// # Errors
 ///
-/// [`KeyError::Invalid`] for an empty passphrase or bytes that aren't a stored key.
+/// [`KeyError::Invalid`] for an empty passphrase or bytes that aren't a stored key; [`KeyError::PassphraseRequired`]
+/// for bytes that are an encrypted key, which a vault never holds.
 #[uniffi::export]
 pub fn export_key(private_key: Vec<u8>, protection: ExportProtection) -> Result<Vec<u8>, KeyError> {
     let private_key = zeroize::Zeroizing::new(private_key);

@@ -25,6 +25,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeFalse
+import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.ExternalResource
@@ -39,7 +40,11 @@ import java.io.File
  * with the passphrase into the same public key; the wrong passphrase is refused.
  *
  * The device gets a screen lock for the test ([PIN]) and loses it after; a device that has its own is skipped, since
- * the test can't unlock it. It needs no machine.
+ * the test can't unlock it. It needs no machine, but it needs the first run, so an app process of its own: the app's
+ * stores keep what they read for the process's life, and another test that made a key there would leave this one
+ * past the first run. `scripts/test-android-e2e.sh` gives each class of this package its own instrumentation run and
+ * says so with its arguments ([OWN_RUN]); without them (the whole instrumented suite in one process, as CI's emulator
+ * job runs it) the test is skipped.
  */
 @RunWith(AndroidJUnit4::class)
 @SdkSuppress(minSdkVersion = Build.VERSION_CODES.R)
@@ -47,6 +52,17 @@ class KeyExportImportE2eTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val device = UiDevice.getInstance(instrumentation)
     private val compose = createAndroidComposeRule<MainActivity>()
+
+    /** The skip, before anything is cleared or set, unless the run is this class's own. */
+    private val ownRun =
+        object : ExternalResource() {
+            override fun before() {
+                assumeTrue(
+                    "no run of its own: run it through scripts/test-android-e2e.sh",
+                    !InstrumentationRegistry.getArguments().getString(OWN_RUN).isNullOrBlank(),
+                )
+            }
+        }
 
     private val freshInstall =
         object : ExternalResource() {
@@ -73,7 +89,12 @@ class KeyExportImportE2eTest {
         }
 
     @get:Rule
-    val rules: RuleChain = RuleChain.outerRule(freshInstall).around(screenLock).around(compose)
+    val rules: RuleChain =
+        RuleChain
+            .outerRule(ownRun)
+            .around(freshInstall)
+            .around(screenLock)
+            .around(compose)
 
     @Test
     fun aKeyExportedUnderAPassphraseImportsBackAsTheSameKey() {
@@ -168,5 +189,8 @@ class KeyExportImportE2eTest {
         const val PIN = "1379"
         const val PASSPHRASE = "correct horse battery"
         const val SYSTEM_UI = "com.android.systemui"
+
+        // an argument only scripts/test-android-e2e.sh passes, with each class's own run
+        const val OWN_RUN = "e2eHost"
     }
 }

@@ -9,6 +9,9 @@ import androidx.activity.result.ActivityResultRegistry
 import androidx.activity.result.ActivityResultRegistryOwner
 import androidx.activity.result.contract.ActivityResultContract
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
@@ -28,6 +31,7 @@ import com.nickalie.ngterm.android.awaitText
 import com.nickalie.ngterm.android.fakeExport
 import com.nickalie.ngterm.android.platform.AuthResult
 import com.nickalie.ngterm.android.ui.theme.NgtermTheme
+import com.nickalie.ngterm.core.ffi.ExportProtection
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -68,14 +72,20 @@ class ExportKeyRouteTest {
 
     @After fun tearDown() = test.close()
 
-    private fun show() {
+    // whether Settings is the destination shown: the navigation bar's other destinations take it off the screen
+    private var onSettings by mutableStateOf(true)
+
+    private fun show(): ExportKeyViewModel {
         val model = ExportKeyViewModel(test.graph.keys, exports)
         compose.setContent {
             CompositionLocalProvider(LocalActivityResultRegistryOwner provides owner) {
-                NgtermTheme { SettingsRoute(test.graph, "settings-test", auth = auth, exports = model) }
+                NgtermTheme {
+                    if (onSettings) SettingsRoute(test.graph, "settings-test", auth = auth, exports = model)
+                }
             }
         }
         compose.awaitText("core settings-test")
+        return model
     }
 
     private fun tap(text: String) = compose.onNodeWithText(text).performScrollTo().performClick()
@@ -134,6 +144,25 @@ class ExportKeyRouteTest {
         compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
         compose.awaitText("core settings-test")
         compose.onNodeWithText("Save to a file").assertDoesNotExist()
+    }
+
+    @Test
+    fun leavingSettingsForAnotherDestinationLocksTheExportAgain() {
+        val model = show()
+        tap("Export private key")
+        compose.awaitText(FAKE_FINGERPRINT)
+        typePassphrase()
+
+        onSettings = false
+        compose.waitForIdle()
+        assertEquals("the unlock ended with the screen", ExportWork(), model.work.value)
+        onSettings = true
+
+        compose.awaitText("core settings-test")
+        compose.onNodeWithText("Save to a file").assertDoesNotExist()
+        model.copy(ExportProtection.Passphrase("correct horse"))
+        compose.waitForIdle()
+        assertTrue("nothing leaves without a new confirmation", exports.copied.isEmpty())
     }
 
     @Test

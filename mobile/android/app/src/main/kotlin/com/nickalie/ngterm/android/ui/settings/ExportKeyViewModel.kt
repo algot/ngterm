@@ -10,6 +10,7 @@ import com.nickalie.ngterm.android.ui.onboarding.describe
 import com.nickalie.ngterm.core.ffi.ExportProtection
 import com.nickalie.ngterm.core.ffi.KeyException
 import com.nickalie.ngterm.core.ffi.VaultException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -93,7 +94,9 @@ class ExportKeyViewModel(
             }
             return
         }
-        export(protection, ExportDone.Saved) { withContext(Dispatchers.IO) { exports.save(target, it) } }
+        export(protection, ExportDone.Saved, unmade = { exports.discard(target) }) {
+            withContext(Dispatchers.IO) { exports.save(target, it) }
+        }
     }
 
     /** Copies the key under [protection] to the clipboard. */
@@ -110,22 +113,21 @@ class ExportKeyViewModel(
         return idle && fresh
     }
 
+    // [unmade] runs when there was no export to [deliver]: what was made ready for it is taken back
     private fun export(
         protection: ExportProtection,
         done: ExportDone,
+        unmade: () -> Unit = {},
         deliver: suspend (ByteArray) -> Unit,
     ) {
         val keyId = state.value.keyId ?: return
         state.value = state.value.copy(busy = true, done = null, problem = null)
         viewModelScope.launch {
+            var exported: ByteArray? = null
             val problem =
                 try {
-                    val exported = keys.export(keyId, protection)
-                    try {
-                        deliver(exported)
-                    } finally {
-                        exported.fill(0)
-                    }
+                    exported = keys.export(keyId, protection)
+                    deliver(exported)
                     null
                 } catch (error: KeyException) {
                     ExportProblem.Failed(error.describe())
@@ -135,6 +137,13 @@ class ExportKeyViewModel(
                     ExportProblem.Failed(error.reason)
                 } catch (error: IOException) {
                     ExportProblem.Failed(error.describe())
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (expected: RuntimeException) {
+                    // what the Keystore or the clipboard throws unchecked: said in words, never a crash
+                    ExportProblem.Failed(expected.describe())
+                } finally {
+                    if (exported != null) exported.fill(0) else unmade()
                 }
             // an export that ends after the screen was left says nothing
             if (state.value.keyId == keyId) {

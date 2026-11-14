@@ -91,6 +91,9 @@ class FakeKeyMaker : KeyMaker {
     /** The stored keys [export] was handed, as it was handed them: wiped by the app once it returns. */
     val exportedFrom = mutableListOf<ByteArray>()
 
+    /** The files [export] returned, as the app left them: wiped once handed over, or when nobody takes them. */
+    val exports = mutableListOf<ByteArray>()
+
     /** When set, [export] throws it. */
     var exportFailure: KeyException? = null
 
@@ -105,7 +108,7 @@ class FakeKeyMaker : KeyMaker {
         exportedFrom += privateKey
         exportFailure?.let { throw it }
         val passphrase = (protection as? ExportProtection.Passphrase)?.passphrase
-        return fakeExport(String(privateKey), passphrase).toByteArray()
+        return fakeExport(String(privateKey), passphrase).toByteArray().also { exports += it }
     }
 
     override fun generate(comment: String): KeyPair {

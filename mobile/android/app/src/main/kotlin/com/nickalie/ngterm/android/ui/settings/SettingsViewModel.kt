@@ -72,7 +72,7 @@ data class SettingsActions(
     val onImport: () -> Unit,
     val onTurnOnNotifications: () -> Unit,
     val onRetry: () -> Unit,
-    val onExport: (String) -> Unit = {},
+    val onExport: (String) -> Unit,
 )
 
 /** Settings' Updates section: the [installed] version, where updating stands, and the automatic checks' switch. */

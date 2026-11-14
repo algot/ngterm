@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -11,6 +12,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -82,6 +84,7 @@ fun SettingsRoute(
     }
     when {
         exported != null -> {
+            EndUnlockOnLeave(exports::close)
             ExportKeyPage(exported.key, export, exports::save, exports::copy, exports::close, modifier)
         }
 
@@ -164,6 +167,17 @@ internal fun SwitchMachines(
                 }
             }
         }
+    }
+}
+
+// however the export's page is left, by the navigation bar's other destinations too, the unlock ends; a rotation
+// keeps it, and so does the system's file screen, which only stops the activity
+@Composable
+private fun EndUnlockOnLeave(onLeave: () -> Unit) {
+    val activity = LocalActivity.current
+    val leave by rememberUpdatedState(onLeave)
+    DisposableEffect(Unit) {
+        onDispose { if (activity?.isChangingConfigurations != true) leave() }
     }
 }
 

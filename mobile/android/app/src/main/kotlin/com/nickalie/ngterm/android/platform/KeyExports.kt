@@ -11,7 +11,10 @@ import java.io.IOException
 
 /** Where an exported private key goes; what it is handed is the caller's to wipe. */
 interface KeyExports {
-    /** Writes [key] as the whole of the document [target] the user made; a document left partly written is removed. */
+    /**
+     * Writes [key] as the whole of the document [target] the user made; a document left partly written is removed.
+     * Whatever the document's provider refuses with is an [IOException].
+     */
     @Throws(IOException::class)
     fun save(
         target: Uri,
@@ -39,9 +42,10 @@ class AndroidKeyExports(
         } catch (error: IOException) {
             discard(target)
             throw error
-        } catch (error: SecurityException) {
+        } catch (expected: RuntimeException) {
+            // a provider's own refusal crosses the binder as it was thrown: no access, an unknown mode or URI
             discard(target)
-            throw IOException(error.message, error)
+            throw IOException(expected.message, expected)
         }
     }
 
@@ -56,12 +60,8 @@ class AndroidKeyExports(
             DocumentsContract.deleteDocument(context.contentResolver, target)
         } catch (_: FileNotFoundException) {
             // already gone
-        } catch (_: SecurityException) {
-            // the provider keeps it: the user sees an empty file and can remove it
-        } catch (_: UnsupportedOperationException) {
-            // as above
-        } catch (_: IllegalArgumentException) {
-            // not a document URI
+        } catch (_: RuntimeException) {
+            // not a document URI, or the provider keeps it: the user sees an empty file and can remove it
         }
     }
 

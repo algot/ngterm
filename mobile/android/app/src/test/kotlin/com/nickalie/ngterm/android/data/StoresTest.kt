@@ -8,6 +8,7 @@ import com.nickalie.ngterm.android.FakeKeyMaker
 import com.nickalie.ngterm.android.PLAIN_FAKE_KEY
 import com.nickalie.ngterm.android.SoftwareWrapper
 import com.nickalie.ngterm.android.fakeExport
+import com.nickalie.ngterm.android.platform.KeyWrapper
 import com.nickalie.ngterm.android.platform.KeystoreKeyVault
 import com.nickalie.ngterm.android.platform.PinnedHostKeys
 import com.nickalie.ngterm.android.testMachine
@@ -15,9 +16,11 @@ import com.nickalie.ngterm.android.testStore
 import com.nickalie.ngterm.core.ffi.ExportProtection
 import com.nickalie.ngterm.core.ffi.KeyException
 import com.nickalie.ngterm.core.ffi.VaultException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -31,6 +34,9 @@ import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import java.io.File
 import java.io.IOException
+import java.security.ProviderException
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /** The app's stores over real DataStores (org.json comes from Robolectric's Android). */
 @RunWith(AndroidJUnit4::class)
@@ -264,4 +270,53 @@ class StoresTest {
             assertTrue(missing.exceptionOrNull() is VaultException.Missing)
             assertEquals(1, maker.exportedFrom.size)
         }
+
+    @Test
+    fun anExportWhoseCallerWasCancelledMeanwhileIsWipedNotLost() =
+        runBlocking {
+            val vault = KeystoreKeyVault(File(dir.root, "keys"), SoftwareWrapper())
+            val maker = FakeKeyMaker()
+            val reached = CountDownLatch(1)
+            val announcing =
+                object : KeyMaker by maker {
+                    override fun export(
+                        privateKey: ByteArray,
+                        protection: ExportProtection,
+                    ): ByteArray {
+                        reached.countDown()
+                        return maker.export(privateKey, protection)
+                    }
+                }
+            val keys = AppKeys(testStore(dir.root, "keys"), vault, announcing, "ngterm@test")
+            val made = keys.generate()
+            val gate = CountDownLatch(1)
+            maker.exportGate = gate
+
+            // cancelled once its worker holds the unsealed key and waits at the gate
+            val caller =
+                launch(start = CoroutineStart.UNDISPATCHED) { keys.export(made.id, ExportProtection.Unprotected) }
+            assertTrue("the export reached the core", reached.await(10, TimeUnit.SECONDS))
+            caller.cancel()
+            gate.countDown()
+            caller.join()
+
+            assertTrue("the unsealed key is wiped", maker.exportedFrom.single().all { it == 0.toByte() })
+            assertTrue("the file nobody took is wiped", maker.exports.single().all { it == 0.toByte() })
+        }
+
+    @Test
+    fun aKeystoreThatFailsUncheckedIsUnavailableToo() {
+        val failing =
+            object : KeyWrapper {
+                override fun wrap(plain: ByteArray) = plain
+
+                override fun unwrap(sealed: ByteArray): ByteArray = throw ProviderException("Keystore operation failed")
+            }
+        val vault = KeystoreKeyVault(File(dir.root, "keys"), failing)
+        vault.store("k1", "fake".toByteArray())
+
+        val error = assertThrows(VaultException.Unavailable::class.java) { vault.load("k1") }
+
+        assertEquals("the key could not be unlocked: ProviderException", error.reason)
+    }
 }

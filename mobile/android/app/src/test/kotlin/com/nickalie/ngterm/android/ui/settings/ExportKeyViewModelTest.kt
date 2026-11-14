@@ -126,6 +126,43 @@ class ExportKeyViewModelTest {
     }
 
     @Test
+    fun aProvidersOwnRefusalIsAProblemInWordsNotACrash() {
+        val key = test.seedKey()
+        val model = model()
+        model.unlock(key.id)
+        exports.saveFailure = UnsupportedOperationException("mode wt is not supported")
+
+        model.save(target, locked)
+
+        assertEquals(
+            ExportWork(keyId = key.id, problem = ExportProblem.Failed("mode wt is not supported")),
+            model.settled(),
+        )
+        assertTrue(exports.handed.single().all { it == 0.toByte() })
+    }
+
+    @Test
+    fun aSaveWithNoExportToWriteRemovesTheDocumentMadeForIt() {
+        val key = test.seedKey()
+        val model = model()
+        model.unlock(key.id)
+        test.maker.exportFailure = KeyException.Invalid("the passphrase is empty")
+        model.save(target, locked)
+        assertEquals(ExportProblem.Failed("the passphrase is empty"), model.settled().problem)
+        assertEquals(listOf(target), exports.discarded)
+
+        test.vault.delete(key.id)
+        model.save(target, locked)
+        assertEquals(ExportProblem.Gone, model.settled().problem)
+        assertEquals(listOf(target, target), exports.discarded)
+        assertTrue(exports.handed.isEmpty() && exports.saved.isEmpty())
+
+        model.copy(locked)
+        assertEquals(ExportProblem.Gone, model.settled().problem)
+        assertEquals("a copy made no document", 2, exports.discarded.size)
+    }
+
+    @Test
     fun theUnlockRunsOutAfterFiveMinutesAndLeavingLocksAtOnce() {
         val key = test.seedKey()
         val model = model()
