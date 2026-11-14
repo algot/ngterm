@@ -181,3 +181,48 @@ def test_an_ask_from_the_agterm_session_is_drawn_here_and_its_answer_goes_back(a
     resolved = studio.wait_received(build["id"], "ask.resolve")["ask"]
     assert (resolved["id"], resolved.get("button")) == ("deploy-1", "yes"), resolved
     ui.absent("ask-dialog")
+
+
+# -- one host that runs both apps
+
+
+def test_attach_remote_on_a_host_running_both_apps_lists_both_marks_agterms_and_attaches_it(
+    adapter, launch, world, ui_for
+):
+    """File ▸ Attach Remote on a host that runs agterm and an ngterm (another instance of the build, Live on, with one
+    live session) offers the sessions of both; agterm's row says which app it is, ngterm's does not, and the agterm
+    session picked there attaches through the Mac's own zmx."""
+    mac = world.agterm_mac("both")
+    origin = launch(settings={"restoreMode": "live"})
+    mac.install_ngtermctl(adapter.ctl_path, origin.instance.state_dir)
+    own = sessions(origin.tree())[0]
+    build = mac.add_session("from-agterm")
+    viewer = launch(path_prefix=[world.client.bin])
+    (viewer.instance.state_dir / "config").mkdir(exist_ok=True)
+    (viewer.instance.state_dir / "config" / "remotes.conf").write_text("both Both\n")
+    ui = ui_for(viewer)
+    ui.menu("File", "Attach Remote…")
+    ui.find("pick-palette")
+
+    def item(session):
+        return ui.ui_ids.expand("palette-item-{item}", item=session["id"])
+
+    # ngterm's session first, then agterm's, each under its own name
+    assert ui.text(ui.find(item(own))) == own["name"]
+    assert ui.text(ui.find(item(build))) == "from-agterm"
+    def two_subtitles():
+        texts = [ui.text(element) for element in ui.all("palette-subtitle")]
+        return texts if len(texts) > 1 else None
+
+    subtitles = wait_until(two_subtitles, timeout=ui.timeout)
+    assert "agterm" not in subtitles[0], subtitles
+    assert subtitles[1].startswith("agterm  ·  Main/work"), subtitles
+
+    ui.press("down", "return")
+    ui.absent("pick-palette")
+    row = wait_until(lambda: next((s for s in _remote_rows(viewer) if s["name"] == "from-agterm"), None))
+    assert row["remoteHost"] == "both"
+    viewer.wait_mounted(row["id"], "left")
+    wait_text(viewer, row["id"], re.escape(f"attached {build['panes'][0]['daemon']}"), timeout=30)
+    # the row's stream opens with agterm's CLI, though the host's own listing is ngterm's
+    mac.wait_call(lambda call: call["argv"] == ["zmx", "present", build["id"]], program="agtermctl")
