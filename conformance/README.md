@@ -23,7 +23,7 @@ beside it (`agtermctl`, the Rust build's `ngtermctl`: the adapter's `ctl_name`).
 
 ```sh
 # upstream macOS release (a bundle or its executable); fetch_reference.py downloads and caches it by tag
-bundle=$(.venv/bin/python conformance/tools/fetch_reference.py --tag v0.41.1 | sed -n 's/^bundle=//p')
+bundle=$(.venv/bin/python conformance/tools/fetch_reference.py --tag v0.42.3 | sed -n 's/^bundle=//p')
 .venv/bin/python -m pytest conformance/tests --impl swift-macos --bin "$bundle"
 
 # the Rust build; without --bin every test skips and parity reads 0%
@@ -73,7 +73,7 @@ find it before the build's, they skip with the reason; under `CI` the run ends w
 
 ## Markers
 
-- `since("0.41.1")`: skipped as `not-yet-at-level` when the build's parity level is lower. A `pytest.param`, test,
+- `since("0.42.3")`: skipped as `not-yet-at-level` when the build's parity level is lower. A `pytest.param`, test,
   class or module may each carry one; the latest of an item's levels gates it.
 - `requires("capability", reason=...)`: skipped as `unsupported` when the build lacks it.
   `requires("a", "b", any=True)` is skipped only when the build lacks both (Live sessions in the login shell, from
@@ -301,7 +301,7 @@ PR and push to main. A partial run finds newly passing ids only among what it se
 from an upstream tag:
 
 ```sh
-.venv/bin/python conformance/tools/gen_catalog.py --tag v0.41.1 --repo ../agterm   # or --source <extracted tree>
+.venv/bin/python conformance/tools/gen_catalog.py --tag v0.42.3 --repo ../agterm   # or --source <extracted tree>
 ```
 
 Generated sections are replaced and statuses survive; `behaviors` and `exemptions` are hand-maintained, and so is
