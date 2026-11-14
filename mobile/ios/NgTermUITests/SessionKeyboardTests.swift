@@ -106,7 +106,10 @@ internal final class SessionKeyboardTests: XCTestCase {
         FakeApp.expect(Self.screen("P1", in: app, typed: "pwdls"), "the typing on the new session opened again")
     }
 
-    // `work`'s first pane runs Claude Code, so the session opens on its chat: the prompt field takes the typing
+    // `work`'s first pane runs Claude Code, so the session opens on its chat: the prompt field takes the typing, its
+    // first letter a capital as the field starts a sentence. Whether the system keyboard comes up is the system's
+    // call for a text field, and a simulator run without Simulator.app has no hardware keyboard by UIKit's account
+    // (the app's terminals go by GameController's), so the chat has no soft-keyboard check
     @MainActor
     internal func testASessionOpenedOnItsChatTakesTheTypingInItsPrompt() {
         let app = openSplit(arguments: ["-ngterm-fake-chat"])
@@ -114,13 +117,15 @@ internal final class SessionKeyboardTests: XCTestCase {
         let field = app.descendants(matching: .any)["chat-prompt"].firstMatch
         FakeApp.expect(field, "the chat's prompt field")
         Self.type("hi", in: app)
-        let typed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == 'hi'"), object: field)
+        let typed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value ==[c] 'hi' AND hasKeyboardFocus == true"),
+            object: field
+        )
         XCTAssertEqual(
             XCTWaiter.wait(for: [typed], timeout: Self.wait),
             .completed,
             "the prompt field reads '\(field.value as? String ?? "")', not the typing"
         )
-        Self.expectNoSoftKeyboard(in: app, "on the chat")
     }
 
     deinit {
