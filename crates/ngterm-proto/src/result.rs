@@ -787,6 +787,37 @@ mod tests {
     }
 
     #[test]
+    fn a_tree_with_another_apps_beside_it_names_the_app_that_lists_a_session() {
+        let app = |executable: &str, session: &str| -> ControlRemoteTree {
+            serde_json::from_value(serde_json::json!({
+                "endpoint": {"executable": executable, "socketDirectory": "/t"},
+                "sessions": [{
+                    "id": session, "name": session, "windowID": "w", "windowName": "main", "workspaceID": "ws",
+                    "workspaceName": "work", "cwd": "/repo", "panes": []
+                }],
+            }))
+            .unwrap()
+        };
+        let alone = app("/own", "N1");
+        assert_eq!(alone.apps().count(), 1);
+        assert!(!serde_json::to_string(&alone).unwrap().contains("beside"));
+        let both = ControlRemoteTree {
+            beside: Some(Box::new(app("/theirs", "A1"))),
+            ..alone
+        }
+        .stamped("studio");
+        let executables: Vec<&str> = both.apps().map(|tree| tree.endpoint.executable.as_str()).collect();
+        assert_eq!(executables, ["/own", "/theirs"]);
+        assert!(both.apps().all(|tree| tree.host.as_deref() == Some("studio")));
+        assert_eq!(both.listing("A1").endpoint.executable, "/theirs");
+        assert_eq!(both.listing("N1").endpoint.executable, "/own");
+        assert_eq!(both.listing("gone").endpoint.executable, "/own");
+        let wire = serde_json::to_value(&both).unwrap();
+        assert_eq!(wire["beside"]["sessions"][0]["id"], "A1");
+        assert_eq!(serde_json::from_value::<ControlRemoteTree>(wire).unwrap(), both);
+    }
+
+    #[test]
     fn pick_and_ask_outcomes_nest_with_their_fields_in_upstreams_order() {
         let result = ControlResult {
             pick: Some(ControlPickResult {
