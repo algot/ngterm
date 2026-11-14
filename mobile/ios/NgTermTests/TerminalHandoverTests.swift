@@ -8,7 +8,7 @@ import UIKit
 /// needs one): the terminal selected next takes the focus the last one had, with its soft keyboard, whether it is on
 /// screen already (a split) or comes on as the other goes (a phone's one pane); with a hardware keyboard, a session
 /// opened anew gives its selected terminal the focus, and so does one the system reports a keyboard to only after it
-/// opened, unless a text field of a sheet over it has the keyboard.
+/// opened, unless a text field of a sheet over it has the keyboard, whether its terminal is on yet or not.
 @MainActor
 @Suite("the focus handed over between panes")
 internal struct TerminalHandoverTests {
@@ -181,6 +181,31 @@ internal struct TerminalHandoverTests {
         #expect(!keyboard.takeChatHandover(), "nothing is left for the chat or the pane selected next")
     }
 
+    @Test("a terminal that comes on under a sheet's text field with the keyboard leaves the field its focus")
+    internal func terminalComesUnderAField() throws {
+        let window = try Self.window()
+        defer { window.isHidden = true }
+        // a session opened with a hardware keyboard, its first pane still loading as a sheet's field takes the keyboard
+        let opened = TerminalKeyboard(hardware: HardwareKeyboard(fixed: true))
+        let field = UITextField(frame: Self.frame)
+        window.addSubview(field)
+        #expect(field.becomeFirstResponder())
+        let first = Self.terminal(opened, focused: true)
+        window.addSubview(first)
+        #expect(field.isFirstResponder, "the field keeps the keyboard")
+        #expect(!first.isFirstResponder)
+
+        // the system reports the keyboard after the session opened, its pane still loading
+        let hardware = HardwareKeyboard(fixed: false)
+        let late = TerminalKeyboard(hardware: hardware)
+        hardware.update(attached: true)
+        let second = Self.terminal(late, focused: true)
+        window.addSubview(second)
+        #expect(field.isFirstResponder, "the field keeps the keyboard")
+        #expect(!second.isFirstResponder)
+        #expect(!late.takeChatHandover(), "nothing is left for the chat or the pane selected next")
+    }
+
     @Test("a terminal's focus without the soft keyboard goes to its chat only while a hardware keyboard is attached")
     internal func chatTakesFocusWithHardware() throws {
         let window = try Self.window()
@@ -193,6 +218,8 @@ internal struct TerminalHandoverTests {
         // its pane turns to its chat, the soft keyboard closed
         terminal.drawsFocused = false
         #expect(!keyboard.takeChatHandover(), "the chat's field would open the soft keyboard")
+        #expect(!terminal.isFirstResponder, "the hidden terminal lets the focus and its extra keys go")
+        #expect(keyboard.target == nil)
         #expect(!keyboard.takeChatHandover(), "taken once")
 
         hardware.update(attached: true)

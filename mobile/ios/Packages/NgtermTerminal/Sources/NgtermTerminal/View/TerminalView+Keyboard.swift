@@ -50,7 +50,12 @@ extension TerminalView {
     /// The terminal drawn focused (the selected pane) in a window takes the focus the last selected one handed over,
     /// opening the soft keyboard if that one had it open; the one that has the keyboard leaves it for the next pane.
     internal func takeHandover() {
-        guard drawsFocused, window != nil, keyboard.target !== self, let handover = keyboard.takeHandover() else {
+        guard
+            drawsFocused,
+            let window,
+            keyboard.target !== self,
+            let handover = keyboard.takeHandover(in: window)
+        else {
             return
         }
         focus(showingKeyboard: handover == .withKeyboard)
