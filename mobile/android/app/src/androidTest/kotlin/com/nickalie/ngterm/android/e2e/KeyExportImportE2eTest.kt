@@ -107,7 +107,7 @@ class KeyExportImportE2eTest {
         field("Passphrase").performTextReplacement(PASSPHRASE)
         tap("Import key")
 
-        awaitText("Then switch your machines")
+        awaitText("Add this key to your machines")
         assertEquals("the imported key is the exported one", made, publicKeyLine())
     }
 
