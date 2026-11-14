@@ -1,15 +1,6 @@
 import UIKit
 
 extension TerminalView {
-    /// Draws the rows marked for drawing now, as the next screen update would.
-    public func displayNow() {
-        layoutIfNeeded()
-        for row in rowLayers {
-            row.displayIfNeeded()
-        }
-        textInput.layer.displayIfNeeded()
-    }
-
     /// Shows a touch selection's handles where the screen has it, and the edit menu over it once it is wanted.
     internal func refreshHandles() {
         let spots = selection.isTouchSelection ? HandleSpots(screen.selection, font: font, size: bounds.size) : nil

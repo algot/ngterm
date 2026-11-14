@@ -22,9 +22,13 @@ extension TerminalView {
 
     /// ``drawsFocused`` is about to become `next`: a terminal the selection leaves finishes its composition while it
     /// still types, and lets the program's held keys go, their repeat stopping; a chord held (the one that moved the
-    /// selection) stays the app's.
+    /// selection) stays the app's. One with the keyboard leaves it for what is drawn focused next: another pane, or
+    /// its own pane's chat, shown over it.
     internal func focusWillMove(drawingFocused next: Bool) {
         if drawsFocused, !next {
+            if keyboard.target === self {
+                keyboard.handOver()
+            }
             commitComposition()
             for key in heldKeys.letGoProgramKeys() {
                 send(key: KeyMapping.key(key, as: .release))

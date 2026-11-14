@@ -41,15 +41,20 @@ internal struct PaneSlot: View {
                 Color(uiColor: actions.look.palette.background.uiColor)
                     .accessibilityHidden(true)
                 if let shown = spot.shown {
-                    if spot.isChatView {
-                        terminal(shown, isChat: true)
-                            .opacity(0)
-                            .allowsHitTesting(false)
-                            .accessibilityHidden(true)
+                    // one terminal in both views, so the chat view's coming finds the keyboard handed over to it
+                    let isChat = spot.isChatView
+                    let cover = isChat ? nil : veil(size: size)
+                    terminal(shown, isChat: isChat)
+                        .opacity(isChat ? 0 : 1)
+                        .allowsHitTesting(!isChat)
+                        .accessibilityHidden(isChat || cover != nil)
+                        .overlay {
+                            if let cover {
+                                cover
+                            }
+                        }
+                    if isChat {
                         chatContent
-                            .covered(by: veil(size: size))
-                    } else {
-                        terminal(shown, isChat: false)
                             .covered(by: veil(size: size))
                     }
                 }
