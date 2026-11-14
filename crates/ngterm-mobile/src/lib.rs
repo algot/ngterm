@@ -69,7 +69,7 @@ pub use chat::{
     AgentCommand, AgentCommandKind, ChatApproval, ChatBody, ChatEvent, ChatNoticeKind, ChatQuestion, ChatQuestionItem,
     ChatQuestionOption, ChatState, ChatTool, ChatToolKind, ChatToolStatus, ChatUsage, UploadCancel, filter_commands,
 };
-pub use keys::{KeyError, KeyPair};
+pub use keys::{ExportProtection, KeyError, KeyPair};
 pub use pane::{ClipboardPart, ClipboardReply, ClipboardWriteStatus, PaneClipboard, PaneEnd, PaneRef, PaneRole};
 pub use peer::{PeerCapabilities, PeerKind, peer_capabilities};
 pub use presentation::{

@@ -22,7 +22,7 @@ pub use self::pane::{
 use crate::actor::{Actor, Command};
 use crate::chat::input::InputTiming;
 use crate::chat::{AgentCommand, ChatEvent, ChatState, UploadCancel};
-use crate::keys::{self, KeyError, KeyPair};
+use crate::keys::{self, ExportProtection, KeyError, KeyPair};
 use crate::pane::{ClipboardPart, ClipboardReply, ClipboardWriteStatus, PaneClipboard, PaneEnd, PaneRef, PaneRole};
 use crate::presentation::{
     AskReply, PresentationRole, RemoteAsk, RemoteHud, RemoteLayout, RemoteNotice, RemoteStatus, StreamState,
@@ -879,6 +879,21 @@ pub fn import_key(private_key: Vec<u8>, passphrase: Option<String>) -> Result<Ke
     keys::import(&private_key, passphrase.as_deref().map(String::as_str))
 }
 
+/// The stored key `private_key` (what a [`KeyVault`] holds, as [`generate_key`] or [`import_key`] returned it) as an
+/// OpenSSH private key file for the user to carry to another install, where [`import_key`] reads it back with its
+/// passphrase: encrypted under `protection`'s passphrase (aes256-ctr, bcrypt-pbkdf: what `ssh-keygen` writes and
+/// reads), or unencrypted only on [`ExportProtection::Unprotected`]. `private_key` and the passphrase are wiped once
+/// read; the app wipes what it gets once it has written it out, and authenticates the user before it asks.
+///
+/// # Errors
+///
+/// [`KeyError::Invalid`] for an empty passphrase or bytes that aren't a stored key.
+#[uniffi::export]
+pub fn export_key(private_key: Vec<u8>, protection: ExportProtection) -> Result<Vec<u8>, KeyError> {
+    let private_key = zeroize::Zeroizing::new(private_key);
+    keys::export(&private_key, protection).map(|exported| exported.as_bytes().to_vec())
+}
+
 #[cfg(test)]
 mod tests {
     //! The facade over the scripted fake transport, its actor on its own thread as in the app: each call reaches the
@@ -1020,6 +1035,24 @@ mod tests {
             import_key(b"not a key".to_vec(), Some("secret".to_owned())),
             Err(KeyError::Invalid { .. })
         ));
+    }
+
+    #[test]
+    fn an_exported_key_imports_back_with_its_passphrase() {
+        let pair = generate_key("phone".to_owned()).unwrap();
+        let protection = ExportProtection::Passphrase {
+            passphrase: "correct horse".to_owned(),
+        };
+
+        let exported = export_key(pair.private_key.clone(), protection).unwrap();
+
+        assert_ne!(exported, pair.private_key);
+        assert_eq!(import_key(exported.clone(), None), Err(KeyError::PassphraseRequired));
+        let imported = import_key(exported, Some("correct horse".to_owned())).unwrap();
+        assert_eq!(imported.authorized_key, pair.authorized_key);
+        assert_eq!(imported.fingerprint, pair.fingerprint);
+        let open = export_key(pair.private_key.clone(), ExportProtection::Unprotected).unwrap();
+        assert_eq!(import_key(open, None), Ok(pair));
     }
 
     #[test]

@@ -1,6 +1,7 @@
 //! The app's ssh keys: [`generate`] makes an ed25519 key, [`import`] reads one the user brings (OpenSSH, PKCS#1 or
-//! PKCS#8, with its passphrase), and [`load`] turns the bytes a [`crate::KeyVault`] hands over back into a key for a
-//! connection.
+//! PKCS#8, with its passphrase), [`load`] turns the bytes a [`crate::KeyVault`] hands over back into a key for a
+//! connection, and [`export`] writes a stored key out for the user to carry to another install, under a passphrase
+//! unless they chose none.
 //!
 //! The private bytes the app stores are always an unencrypted OpenSSH key: the platform protects them (the Android
 //! Keystore wraps them, the iOS Keychain holds them), so an imported key loses its passphrase here, once. Every private
@@ -9,6 +10,7 @@
 
 use ::russh::keys::ssh_key::LineEnding;
 use ::russh::keys::{Algorithm, HashAlg, PrivateKey, decode_secret_key};
+use zeroize::Zeroizing;
 
 /// A private key as the app stores it, with what it shows of it.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -20,6 +22,25 @@ pub struct KeyPair {
     pub authorized_key: String,
     /// The public key's OpenSSH `SHA256:` fingerprint.
     pub fingerprint: String,
+}
+
+/// What protects an exported private key.
+#[derive(Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum ExportProtection {
+    /// OpenSSH's own encryption (aes256-ctr under a bcrypt-pbkdf key) with the user's passphrase, as `ssh-keygen -p`
+    /// writes it.
+    Passphrase { passphrase: String },
+    /// Nothing: whoever reads the export has the key. Only on the user's explicit, warned choice.
+    Unprotected,
+}
+
+impl std::fmt::Debug for ExportProtection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Passphrase { .. } => "Passphrase",
+            Self::Unprotected => "Unprotected",
+        })
+    }
 }
 
 /// Why a key could not be made or read.
@@ -94,6 +115,34 @@ pub fn load(bytes: &[u8]) -> Result<PrivateKey, KeyError> {
         return Err(KeyError::PassphraseRequired);
     }
     Ok(key)
+}
+
+/// The stored key in `bytes` (as [`generate`] or [`import`] produced it) as an OpenSSH private key file, encrypted
+/// under `protection`'s passphrase or, on [`ExportProtection::Unprotected`], as it is stored. [`import`] reads it
+/// back. The passphrase and this side's copies of the key are wiped; the caller wipes `bytes` and what it gets.
+///
+/// # Errors
+///
+/// [`KeyError::Invalid`] for an empty passphrase, bytes that aren't a stored key, or a failed encryption (the
+/// system's random source failed).
+pub fn export(bytes: &[u8], protection: ExportProtection) -> Result<Zeroizing<String>, KeyError> {
+    let passphrase = match protection {
+        ExportProtection::Passphrase { passphrase } => Some(Zeroizing::new(passphrase)),
+        ExportProtection::Unprotected => None,
+    };
+    if passphrase.as_ref().is_some_and(|passphrase| passphrase.is_empty()) {
+        return Err(KeyError::Invalid {
+            reason: "the passphrase is empty".to_owned(),
+        });
+    }
+    let key = load(bytes)?;
+    let key = match passphrase {
+        Some(passphrase) => key
+            .encrypt(&mut ::russh::keys::key::safe_rng(), passphrase.as_bytes())
+            .map_err(invalid)?,
+        None => key,
+    };
+    key.to_openssh(LineEnding::LF).map_err(invalid)
 }
 
 /// Whether the PEM text holds an encrypted key: an OpenSSH key with a cipher, or an encrypted PKCS#8 or PKCS#5 one.
@@ -179,6 +228,132 @@ mod tests {
         assert_eq!(import(&locked, Some("")), Err(KeyError::PassphraseRequired));
         assert_eq!(import(&locked, Some("wrong")), Err(KeyError::WrongPassphrase));
         assert_eq!(load(&locked).err(), Some(KeyError::PassphraseRequired));
+    }
+
+    fn locked(passphrase: &str) -> ExportProtection {
+        ExportProtection::Passphrase {
+            passphrase: passphrase.to_owned(),
+        }
+    }
+
+    #[test]
+    fn an_export_under_a_passphrase_is_an_encrypted_openssh_key_that_imports_back_as_the_same_key() {
+        let pair = generate("phone").unwrap();
+
+        let exported = export(&pair.private_key, locked("correct horse")).unwrap();
+
+        assert!(exported.starts_with("-----BEGIN OPENSSH PRIVATE KEY-----\n"));
+        let parsed = PrivateKey::from_openssh(exported.as_str()).unwrap();
+        assert!(parsed.is_encrypted());
+        assert_eq!(parsed.cipher().as_str(), "aes256-ctr");
+        assert!(parsed.kdf().is_bcrypt());
+        let imported = import(exported.as_bytes(), Some("correct horse")).unwrap();
+        assert_eq!(imported.authorized_key, pair.authorized_key);
+        assert_eq!(imported.fingerprint, pair.fingerprint);
+        assert_eq!(
+            load(&imported.private_key).unwrap().key_data(),
+            load(&pair.private_key).unwrap().key_data()
+        );
+    }
+
+    #[test]
+    fn an_export_opens_only_with_its_passphrase() {
+        let pair = generate("phone").unwrap();
+
+        let exported = export(&pair.private_key, locked("correct horse")).unwrap();
+
+        assert_eq!(
+            import(exported.as_bytes(), Some("wrong")),
+            Err(KeyError::WrongPassphrase)
+        );
+        assert_eq!(import(exported.as_bytes(), None), Err(KeyError::PassphraseRequired));
+        assert_eq!(load(exported.as_bytes()).err(), Some(KeyError::PassphraseRequired));
+    }
+
+    #[test]
+    fn two_exports_of_a_key_under_one_passphrase_differ() {
+        let pair = generate("phone").unwrap();
+
+        let first = export(&pair.private_key, locked("secret")).unwrap();
+        let second = export(&pair.private_key, locked("secret")).unwrap();
+
+        assert_ne!(*first, *second);
+    }
+
+    #[test]
+    fn an_unprotected_export_is_the_stored_key() {
+        let pair = generate("phone").unwrap();
+
+        let exported = export(&pair.private_key, ExportProtection::Unprotected).unwrap();
+
+        assert_eq!(exported.as_bytes(), pair.private_key.as_slice());
+        assert_eq!(import(exported.as_bytes(), None).unwrap(), pair);
+    }
+
+    #[test]
+    fn an_export_refuses_an_empty_passphrase_and_what_is_not_a_stored_key() {
+        let pair = generate("phone").unwrap();
+
+        assert_eq!(
+            export(&pair.private_key, locked("")),
+            Err(KeyError::Invalid {
+                reason: "the passphrase is empty".to_owned()
+            })
+        );
+        assert!(matches!(
+            export(b"hello", locked("secret")),
+            Err(KeyError::Invalid { .. })
+        ));
+        let exported = export(&pair.private_key, locked("secret")).unwrap();
+        assert_eq!(
+            export(exported.as_bytes(), locked("again")),
+            Err(KeyError::PassphraseRequired)
+        );
+    }
+
+    #[test]
+    fn an_export_protection_never_prints_its_passphrase() {
+        assert_eq!(format!("{:?}", locked("hunter2")), "Passphrase");
+        assert_eq!(format!("{:?}", ExportProtection::Unprotected), "Unprotected");
+    }
+
+    /// `ssh-keygen -y` prints the public half of a private key file it can read, so it accepting the export (with
+    /// its passphrase) and printing the app's public key is OpenSSH itself reading the format.
+    #[cfg(unix)]
+    #[test]
+    fn ssh_keygen_reads_an_export_with_its_passphrase() {
+        use std::io::Write as _;
+        use std::process::Command;
+
+        if Command::new("ssh-keygen").arg("-?").output().is_err() {
+            eprintln!("skipped: no ssh-keygen on this machine");
+            return;
+        }
+        let pair = generate("phone").unwrap();
+        let public = |output: std::process::Output| {
+            let text = String::from_utf8(output.stdout).unwrap();
+            PublicKey::from_openssh(text.trim()).map(|key| key.key_data().clone())
+        };
+        let expected = PublicKey::from_openssh(&pair.authorized_key).unwrap();
+        let keygen = |exported: &str, passphrase: &str| {
+            let mut file = tempfile::NamedTempFile::new().unwrap();
+            file.write_all(exported.as_bytes()).unwrap();
+            file.flush().unwrap();
+            Command::new("ssh-keygen")
+                .args(["-y", "-P", passphrase, "-f"])
+                .arg(file.path())
+                .output()
+                .unwrap()
+        };
+
+        let exported = export(&pair.private_key, locked("correct horse")).unwrap();
+
+        let read = keygen(&exported, "correct horse");
+        assert!(read.status.success(), "{}", String::from_utf8_lossy(&read.stderr));
+        assert_eq!(public(read).unwrap(), *expected.key_data());
+        assert!(!keygen(&exported, "wrong").status.success());
+        let open = export(&pair.private_key, ExportProtection::Unprotected).unwrap();
+        assert_eq!(public(keygen(&open, "")).unwrap(), *expected.key_data());
     }
 
     #[test]
