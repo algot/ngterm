@@ -140,6 +140,7 @@ class Connections(
     /**
      * The app each machine runs, by id, as its connection's last listing with a session named it; a machine not here
      * runs ngterm or hasn't said. A machine that runs both apps is ngterm's: [sessionPeers] names its agterm sessions.
+     * While its ngterm lists no session it reads as agterm's, as every session listed there is agterm's.
      */
     val peers: StateFlow<Map<String, MachinePeer>> = peerState.asStateFlow()
 

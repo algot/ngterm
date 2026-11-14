@@ -100,7 +100,8 @@ pub(crate) type Reporter = Rc<dyn Fn(LinkKey, LinkEvent)>;
 pub(crate) struct ChannelLinks<C> {
     /// `None` while the machine's connection is down.
     connection: RefCell<Option<Rc<C>>>,
-    /// The app its session is one of, when that is not the machine's own: agterm's beside an ngterm.
+    /// The app that listed its session, whose CLI opens the stream whatever the machine's own app is; `None` only
+    /// where no listing named it (tests).
     app: Option<RemotePeer>,
     report: Reporter,
     /// The launches' tasks that may still be running, so a suspend can wait for them to write what they hold.

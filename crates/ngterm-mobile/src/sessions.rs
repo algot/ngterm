@@ -66,7 +66,8 @@ pub struct RemoteSession {
     pub pane_count: u32,
     /// The divider's direction when it has a split.
     pub split_axis: Option<String>,
-    /// The app the machine runs ([`crate::peer`]); `None` reads as ngterm.
+    /// The app that listed this session ([`crate::peer`]), which on a machine running both may differ from session to
+    /// session; `None` reads as ngterm.
     #[uniffi(default = None)]
     pub peer: Option<crate::peer::PeerKind>,
 }

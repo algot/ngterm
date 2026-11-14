@@ -287,6 +287,7 @@ reading, not a poster), the mark on top of the welcome.
   (a lost or unreachable connection keeps it); the card isn't the place for its note, which the sessions screen and
   the session bar give on a tap. A machine with no sessions listed yet says nothing either way: its listing names the
   app. A Mac that runs both apps is ngterm's and shows no badge here: its agterm sessions carry their own, below.
+  While its ngterm lists no session, every listed session is agterm's, so it reads as agterm's and shows the badge.
 - **Remove** asks nothing: the machine goes at once and a snackbar offers Undo, which puts it back where it was, with
   its pinned key.
 - **Add and Edit machine:** a `ScreenFrame` with Close and Save. Name, Host, Port and User (mono for what is compared
