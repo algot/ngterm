@@ -958,7 +958,7 @@ scripts/build-android.sh :koverHtmlReportDebugJvm :koverXmlReportDebugJvm   # bo
 scripts/build-android.sh installGithubDebug    # onto the device or emulator adb sees
 scripts/test-mobile-e2e.sh            # the mobile core against a real ngterm-headless behind a private sshd, typing into a session of conformance's stand-in agterm Mac, and one machine that runs both, which a second ngterm-headless lists and attaches (Linux; python3 runs its fake agent and the stand-in)
 scripts/test-mobile-e2e.sh --coverage DIR   # the headless app's e2e line coverage into DIR, as CI's headless-e2e job (cargo-llvm-cov)
-scripts/test-android-e2e.sh [TEST...]  # the app on the device adb sees, against a real ngterm-headless behind a private sshd, conformance's stand-in agterm Mac on a second port, and on a third one host that runs both (Linux)
+scripts/test-android-e2e.sh [TEST...]  # the app on the device adb sees, against a real ngterm-headless behind a private sshd (with the mobile e2e's stand-in Claude Code on its PATH), conformance's stand-in agterm Mac on a second port, and on a third one host that runs both (Linux)
 ```
 
 `build-android.sh` builds `libngterm_mobile.so` for arm64-v8a and x86_64 through cargo-ndk, generates the Kotlin
@@ -1031,7 +1031,8 @@ every other viewer see as before; the chat is a second view of it, read from the
   (`.credentials.json`, or the macOS Keychain); Codex's from its `auth.json` and the rate limits its rollout records.
   What the origin can't read is left out;
 - the session bar's Show terminal / Show chat switch for the focused pane: picking the terminal holds for that pane
-  until its agent's next conversation, and the agent ending returns it to the terminal. A notification about the pane
+  until its agent's next conversation (or until the chat is picked again, there or with More ▸ Chat view), and the
+  agent ending returns it to the terminal. A prompt being written stays with the pane through the switch. A notification about the pane
   opens its chat at the newest message.
 
 **Answering takes control.** A chat action (a prompt, Stop, an approval, an answer) from a device that does not lead
@@ -1040,7 +1041,10 @@ with the agent's screen matcher that the pane shows what the action answers; onl
 reading a chat claims and resizes nothing. An approval goes only to the dialog that shows the card's call: its
 command or URL, or a file tool's path relative to the agent's working directory. A card the pane can't confirm (one
 answered elsewhere, or an MCP tool's, whose dialog shows nothing the card names) sends nothing and stays up with
-Answer in terminal until the agent moves on. Two calls a dialog shows alike (the same command twice) can't be told
+Answer in terminal until the agent moves on. A prompt the pane can't take (its prompt isn't on screen as the matcher
+knows it, or holds a draft typed at the terminal) sends nothing either and stays in the composer. The matchers read
+Claude Code's screens with and without a session name (`-n`, `/rename`), which it draws into the rule over its prompt
+and under its dialogs. Two calls a dialog shows alike (the same command twice) can't be told
 apart on screen (`docs/backlog/a-phone-approval-can-answer-a-later-dialog-that-shows-the-same-call.md`).
 
 **The origin** needs this build's `ngtermctl` and its agent-status hooks reinstalled (Help ▸ Install Agent Status

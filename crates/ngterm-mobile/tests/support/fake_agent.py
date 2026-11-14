@@ -31,8 +31,19 @@ would, so the origin's agent record, `ngtermctl agent chat` and the phone's chat
   `question` appends `ask` (the `request_user_input` call) and shows its picker, where `2` (Green) appends `answer`.
   `exit` ends it, as Claude's `/exit` does.
 
+- `--standalone [NAME]` is the Android e2e test's form (scripts/test-android-e2e.sh puts it on the machine's PATH as
+  `e2e-claude`), started by hand in a pane's shell as a person starts Claude Code: it needs no config and no
+  capture. It takes the pane, the session and the control socket from the pane's own `NGTERM_*` variables, starts a
+  conversation with nothing said yet (an empty transcript under the home's `.claude/projects`), and draws Claude Code
+  2.1.325's idle prompt for whatever grid the pane has: the box's rules, the upper one holding the session's NAME
+  before its last `─` as Claude Code draws a session started with `-n` (`team-lead` when none is given), the
+  input rows and the footer. A paste of four lines or more, or of over 800 characters, shows in the box as
+  `[Pasted text #1 +N lines]` and is written to the transcript between `<pasted_content id="…">` lines, as
+  Claude Code writes it; a shorter one shows as typed. Each prompt submitted shows above the box in full and gets the
+  reply `ok`.
+
 Usage: fake_agent.py CONFIG.json (the keys: agent, capture, transcript, backlog, payload, user_template, screens,
-ngtermctl, socket, target, pane_id, control, pid, keys, question, groups).
+ngtermctl, socket, target, pane_id, control, pid, keys, question, groups), or fake_agent.py --standalone [NAME].
 """
 
 import codecs
@@ -328,6 +339,94 @@ class Agent:
         return True
 
 
+class Standalone(Agent):
+    """Claude Code 2.1.325's prompt drawn for any grid, in a session with a name (the module docs)."""
+
+    PLACEHOLDER = 'Try "how does <filepath> work?"'
+
+    def __init__(self, config, name):
+        super().__init__(config, {})
+        self.name = name
+        self.pastes = []
+        self.replies = []
+
+    def take_control(self):
+        return True
+
+    def stand_in(self, index):
+        return f"[Pasted text #{index + 1} +{self.pastes[index].count(chr(10))} lines]"
+
+    def handle(self, action, value):
+        if action == "paste" and (value.count("\n") >= 3 or len(value) > 800):
+            self.pastes.append(value)
+            self.composer += self.stand_in(len(self.pastes) - 1)
+            self.draw()
+            return True
+        return super().handle(action, value)
+
+    def submit(self):
+        text, self.composer = self.composer, ""
+        if text.strip() == "/exit":
+            return False
+        written = shown = text
+        for index, paste in enumerate(self.pastes):
+            block = f'\n\n<pasted_content id="{index + 1:04x}">\n{paste}\n</pasted_content id="{index + 1:04x}">\n'
+            written = written.replace(self.stand_in(index), block)
+            shown = shown.replace(self.stand_in(index), paste)
+        self.pastes = []
+        self.write_prompt(written)
+        reply = {"parentUuid": self.parent, "isSidechain": False, "type": "assistant", "uuid": str(uuid.uuid4()),
+                 "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+        self.parent = reply["uuid"]
+        self.append([self.stamped(reply)])
+        self.history.append(shown)
+        return True
+
+    def draw(self):
+        cols, rows = self.size()
+        text = cols - 2
+        said = []
+        for prompt in self.history:
+            lines = [part[at : at + text] for part in prompt.split("\n") for at in range(0, max(len(part), 1), text)]
+            said += [("\u276f " if index == 0 else "  ") + line for index, line in enumerate(lines)]
+            said += ["", "\u25cf ok", ""]
+        typed = [self.composer[at : at + text] for at in range(0, max(len(self.composer), 1), text)]
+        box = ["\u2500" * (cols - len(self.name) - 3) + f" {self.name} \u2500"]
+        box += [("\u276f " if index == 0 else "  ") + line for index, line in enumerate(typed)]
+        box += ["\u2500" * cols, "  \u23f5\u23f5 auto mode on (shift+tab to cycle)"]
+        above = said[-max(rows - len(box), 0) :] if rows > len(box) else []
+        screen = above + [""] * (rows - len(box) - len(above)) + box
+        frame = "\x1b[?1049h\x1b[?2004h\x1b[0m\x1b[2J"
+        for index, line in enumerate(screen[-rows:]):
+            frame += f"\x1b[{index + 1};1H{line[:cols]}"
+        if not self.composer:
+            frame += f"\x1b[{rows - 2};3H\x1b[2m{self.PLACEHOLDER[:text]}\x1b[0m"
+        frame += f"\x1b[{rows - 2};{3 + len(typed[-1])}H"
+        out(frame.encode())
+
+
+def standalone_config(home):
+    """The config of a conversation with nothing said yet, in the pane the environment names."""
+    session = str(uuid.uuid4())
+    directory = os.path.join(home, ".claude", "projects", "-e2e-standalone")
+    os.makedirs(directory, exist_ok=True)
+    transcript = os.path.join(directory, f"{session}.jsonl")
+    cwd = os.getcwd()
+    payload = os.path.join(directory, f"{session}.session-start.json")
+    with open(payload, "w", encoding="utf-8") as file:
+        json.dump({"session_id": session, "transcript_path": transcript, "cwd": cwd, "hook_event_name": "SessionStart",
+                   "source": "startup", "model": "claude-sonnet-5-5"}, file)
+    open(transcript, "a", encoding="utf-8").close()
+    return {
+        "agent": "claude", "transcript": transcript, "payload": payload,
+        "ngtermctl": shutil.which("ngtermctl"), "socket": os.environ["NGTERM_SOCKET"],
+        "target": os.environ["NGTERM_SESSION_ID"], "pane_id": os.environ["NGTERM_PANE_ID"],
+        "user_template": {"parentUuid": None, "isSidechain": False, "type": "user", "uuid": "", "promptId": "",
+                          "message": {"role": "user", "content": ""}, "timestamp": "", "sessionId": session,
+                          "cwd": cwd, "version": "2.1.325", "userType": "external"},
+    }
+
+
 QUESTION_CALL = "toolu_e2e_question"
 
 
@@ -342,11 +441,15 @@ def out(data):
 
 
 def main():
-    with open(sys.argv[1], encoding="utf-8") as file:
-        config = json.load(file)
-    captures = load_captures(config["screens"], config["capture"])
-    os.makedirs(os.path.dirname(config["transcript"]), exist_ok=True)
-    shutil.copyfile(config["backlog"], config["transcript"])
+    if sys.argv[1] == "--standalone":
+        config = standalone_config(os.path.expanduser("~"))
+        agent = Standalone(config, sys.argv[2] if len(sys.argv) > 2 else "team-lead")
+    else:
+        with open(sys.argv[1], encoding="utf-8") as file:
+            config = json.load(file)
+        agent = Agent(config, load_captures(config["screens"], config["capture"]))
+        os.makedirs(os.path.dirname(config["transcript"]), exist_ok=True)
+        shutil.copyfile(config["backlog"], config["transcript"])
     report(config)
     # SIGWINCH wakes the loop through this pipe: a handler alone would not end the select
     wake, waker = os.pipe()
@@ -354,13 +457,14 @@ def main():
     signal.set_wakeup_fd(waker)
     signal.signal(signal.SIGWINCH, lambda *_: None)
     signal.signal(signal.SIGUSR1, lambda *_: None)
-    with open(config["pid"], "w", encoding="utf-8") as file:
-        file.write(str(os.getpid()))
+    if "pid" in config:
+        with open(config["pid"], "w", encoding="utf-8") as file:
+            file.write(str(os.getpid()))
     stdin = sys.stdin.fileno()
     saved = termios.tcgetattr(stdin)
     tty.setraw(stdin)
     try:
-        Agent(config, captures).run(wake)
+        agent.run(wake)
     finally:
         out(RESTORE)
         termios.tcsetattr(stdin, termios.TCSADRAIN, saved)

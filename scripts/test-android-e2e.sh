@@ -7,6 +7,10 @@
 # and client key, and runs the instrumented tests through scripts/build-android.sh with the machine's address, user and
 # client key as instrumentation arguments (the tests import the key and add the machine as a person does).
 #
+# The machine's PATH also holds `e2e-claude`: the mobile e2e's stand-in Claude Code in its standalone form
+# (crates/ngterm-mobile/tests/support/fake_agent.py --standalone, on the system's python3), which a test starts in a
+# session's shell as a person starts Claude Code (ChatFirstMessageE2eTest).
+#
 # The same sshd answers on a second port as a Mac running upstream agterm (AgtermPeerE2eTest): its logins get a home
 # and a PATH of their own holding only the conformance suite's stand-in agterm
 # (conformance/agterm_conformance/fake_agterm.py: its `agtermctl` and bundled `zmx`, no `ngtermctl`), seeded with one
@@ -94,8 +98,8 @@ mkdir -p "$ROOT"
 WORK="$(mktemp -d "$ROOT/ae2e.XXXXXX")"
 WORK="$(cd "$WORK" && pwd)"
 USER_NAME="$(id -un)"
-PRIVATE=(env -i "NGTERM_STATE_DIR=$WORK/s" "HOME=$WORK/home" "PATH=$WORK/stage/bin:/usr/bin:/bin" SHELL=/bin/bash
-  "USER=$USER_NAME" "LOGNAME=$USER_NAME" LANG=C.UTF-8)
+PRIVATE=(env -i "NGTERM_STATE_DIR=$WORK/s" "HOME=$WORK/home" "PATH=$WORK/bin:$WORK/stage/bin:/usr/bin:/bin"
+  SHELL=/bin/bash "USER=$USER_NAME" "LOGNAME=$USER_NAME" LANG=C.UTF-8)
 PORT=
 AGTERM_PORT=
 BOTH_PORT=
@@ -194,7 +198,10 @@ trap 'exit 143' TERM
 SOCKET="$WORK/s/ngterm.sock"
 ((${#SOCKET} <= 103)) || die "the control socket path is too long ($SOCKET): set a shorter MOBILE_E2E_WORK_ROOT"
 scripts/stage.sh "$WORK/stage" --profile debug
-mkdir -p "$WORK/s" "$WORK/home" "$WORK/sshd"
+mkdir -p "$WORK/s" "$WORK/home" "$WORK/sshd" "$WORK/bin"
+printf '#!/bin/sh\nexec %q -I %q --standalone "$@"\n' "$(command -v python3)" \
+  "$NATIVE_ROOT/crates/ngterm-mobile/tests/support/fake_agent.py" >"$WORK/bin/e2e-claude"
+chmod 755 "$WORK/bin/e2e-claude"
 
 # the instance's live namespace: /tmp/ngterm-live-<FNV-1a 64 of the resolved state dir> (ngterm_core::live)
 python3 -I - "$WORK/s" >"$WORK/live-dir" <<'EOF'
@@ -220,7 +227,7 @@ cat >"$WORK/force-command.sh" <<EOF
 #!/bin/sh
 export NGTERM_STATE_DIR='$WORK/s'
 export HOME='$WORK/home'
-export PATH='$WORK/stage/bin:/usr/bin:/bin'
+export PATH='$WORK/bin:$WORK/stage/bin:/usr/bin:/bin'
 exec /bin/sh -c "\$SSH_ORIGINAL_COMMAND"
 EOF
 chmod 755 "$WORK/force-command.sh"
