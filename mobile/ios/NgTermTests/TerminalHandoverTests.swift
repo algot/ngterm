@@ -181,27 +181,28 @@ internal struct TerminalHandoverTests {
         #expect(keyboard.target === second)
     }
 
-    @Test("a terminal with the focus that leaves its window hands it to what takes its pane's place")
-    internal func leavingHandsOver() throws {
+    @Test("a terminal with the focus drawn unfocused leaves the keyboard to what is drawn focused next, its chat too")
+    internal func unfocusedHandsOver() throws {
         let window = try Self.window()
         defer { window.isHidden = true }
         let keyboard = TerminalKeyboard(hardware: HardwareKeyboard(fixed: false))
         let first = Self.terminal(keyboard, focused: true)
+        let next = Self.terminal(keyboard, focused: false)
         window.addSubview(first)
-        first.focus(showingKeyboard: true)
-        first.removeFromSuperview()
-        let next = Self.terminal(keyboard, focused: true)
         window.addSubview(next)
+        first.focus(showingKeyboard: true)
+        first.drawsFocused = false
+        next.drawsFocused = true
         #expect(next.isFirstResponder)
         #expect(next.softKeyboardWanted, "the soft keyboard stays up")
 
-        // a chat in its place takes it as well; a terminal without the focus that leaves hands nothing
-        next.removeFromSuperview()
+        // its pane turned to its chat, the chat shown over it takes the keyboard
+        next.drawsFocused = false
         #expect(keyboard.takeChatHandover())
-        let unfocused = Self.terminal(keyboard, focused: true)
-        window.addSubview(unfocused)
-        #expect(!unfocused.isFirstResponder)
-        unfocused.removeFromSuperview()
+        // a terminal without the keyboard drawn unfocused leaves nothing
+        first.drawsFocused = true
+        #expect(!first.isFirstResponder)
+        first.drawsFocused = false
         #expect(!keyboard.takeChatHandover())
     }
 }
