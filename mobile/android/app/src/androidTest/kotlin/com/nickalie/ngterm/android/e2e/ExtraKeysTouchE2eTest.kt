@@ -9,6 +9,7 @@ import android.view.InputDevice
 import android.view.MotionEvent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
@@ -21,6 +22,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
@@ -98,23 +100,36 @@ class ExtraKeysTouchE2eTest {
 
     /**
      * The test's keyboard on, the device's animations off (a key is touched where it rests) and gesture navigation
-     * on for the test; the device's own input method, animations and navigation back after it.
+     * on for the test; the device's own input method, animations and navigation back after it, also when the setup
+     * itself fails half way. Only what the test changed is put back, to the value it had.
      */
     private val deviceSetup =
         object : ExternalResource() {
-            private var keyboardBefore: String? = null
-            private var gesturesBefore = true
             private val scales = mutableMapOf<String, String>()
+            private var navigationBefore: String? = null
+            private var keyboardBefore: String? = null
+            private var keyboardChanged = false
 
             override fun before() {
+                // JUnit runs after() only once before() has returned: a setup that fails puts the device back itself
+                runCatching { setUp() }
+                    .onFailure { runCatching { after() } }
+                    .getOrThrow()
+            }
+
+            private fun setUp() {
                 ANIMATION_SCALES.forEach { name ->
                     scales[name] = shell("settings get global $name").trim()
                     shell("settings put global $name 0")
                 }
-                gesturesBefore = navigationMode() == GESTURES
-                if (!gesturesBefore) shell("cmd overlay enable-exclusive --category $GESTURE_OVERLAY")
+                val navigation = navigationMode()
+                if (navigation != GESTURES) {
+                    navigationBefore = navigation
+                    shell("cmd overlay enable-exclusive --category $GESTURE_OVERLAY")
+                }
                 awaitShell("gesture navigation is on (now ${navigationMode()})") { navigationMode() == GESTURES }
                 keyboardBefore = currentKeyboard().takeIf { it.contains('/') }
+                keyboardChanged = true
                 // a test APK installed a moment ago may not be listed as an input method yet: until it is, try again
                 val keyboard = QaKeyboard.id(testPackage)
                 awaitShell("the test keyboard is the device's input method (now ${currentKeyboard()})") {
@@ -144,9 +159,15 @@ class ExtraKeysTouchE2eTest {
             }
 
             override fun after() {
-                keyboardBefore?.let { shell("ime set $it") } ?: shell("ime reset")
-                shell("ime disable ${QaKeyboard.id(testPackage)}")
-                if (!gesturesBefore) shell("cmd overlay enable-exclusive --category $BUTTONS_OVERLAY")
+                if (keyboardChanged) {
+                    keyboardBefore?.let { shell("ime set $it") } ?: shell("ime reset")
+                    shell("ime disable ${QaKeyboard.id(testPackage)}")
+                }
+                navigationBefore?.let { mode ->
+                    // the overlay of the mode the device was in; a mode with no overlay of its own: the test's one off
+                    NAVIGATION_OVERLAYS[mode]?.let { shell("cmd overlay enable-exclusive --category $it") }
+                        ?: shell("cmd overlay disable $GESTURE_OVERLAY")
+                }
                 scales.forEach { (name, value) ->
                     shell(if (value == "null") "settings delete global $name" else "settings put global $name $value")
                 }
@@ -460,6 +481,8 @@ class ExtraKeysTouchE2eTest {
         try {
             touches()
         } finally {
+            // a step that failed with Ctrl or Alt held would close its line, and type the next ones, as chords
+            runCatching { letGoOfModifiers() }.onFailure { Log.e(TAG, "Ctrl and Alt could not be let go", it) }
             typeWord("z", end = QaKeyboard.ENTER)
         }
         var line: String? = null
@@ -473,6 +496,22 @@ class ExtraKeysTouchE2eTest {
         assertTrue("the shell never printed the line $marker...z back; the terminal shows:\n${terminalText()}", came)
         Log.i(TAG, "line $marker: the shell received [$line]")
         return line.orEmpty()
+    }
+
+    /**
+     * Ctrl and Alt off, wherever a step left them. Through each key's accessibility click, which acts at once: the
+     * touch is what the steps test, and a step that failed on it must not keep the next ones from running.
+     */
+    private fun letGoOfModifiers() {
+        val off = text(R.string.sticky_off)
+        for (modifier in listOf(R.string.key_ctrl, R.string.key_alt)) {
+            // held for one key, a click locks it and the next lets it go
+            repeat(CLICKS_TO_OFF) {
+                if (sticky(modifier) != off) {
+                    compose.onNode(extraKey(modifier)).performSemanticsAction(SemanticsActions.OnClick)
+                }
+            }
+        }
     }
 
     /** The marker of the test's line [number]: two digits, so no marker is the start of another. */
@@ -701,10 +740,20 @@ class ExtraKeysTouchE2eTest {
         /** Where screenshots go on the device; scripts/test-android-e2e.sh collects them. */
         const val EVIDENCE_DIR = "/data/local/tmp/ngterm-e2e"
 
-        /** `settings get secure navigation_mode` under gesture navigation, and the overlays that pick the mode. */
+        /**
+         * `settings get secure navigation_mode` under gesture navigation, the overlay that turns it on, and the
+         * overlays of the other modes by their `navigation_mode`: three buttons, two buttons.
+         */
         const val GESTURES = "2"
         const val GESTURE_OVERLAY = "com.android.internal.systemui.navbar.gestural"
-        const val BUTTONS_OVERLAY = "com.android.internal.systemui.navbar.threebutton"
+        val NAVIGATION_OVERLAYS =
+            mapOf(
+                "0" to "com.android.internal.systemui.navbar.threebutton",
+                "1" to "com.android.internal.systemui.navbar.twobutton",
+            )
+
+        /** The most clicks that take a sticky key to off: from held for one key, through locked. */
+        const val CLICKS_TO_OFF = 2
 
         /** A quick tap's time on the key; a slide's moves and the time between them (the whole slide: 80 ms). */
         const val TAP_MS = 40L
