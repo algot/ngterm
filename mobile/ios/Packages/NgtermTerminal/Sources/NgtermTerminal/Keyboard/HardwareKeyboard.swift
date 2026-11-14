@@ -1,18 +1,23 @@
 import Foundation
 import GameController
+import Observation
 
 /// Whether a hardware keyboard is attached (`GCKeyboard`): it has every key the extra keys have, so they stand aside
 /// while one is.
+///
+/// GameController reports a keyboard only a moment after the app first asks, so one attached all along can come after
+/// a session opened.
 @preconcurrency
 @MainActor
+@Observable
 public final class HardwareKeyboard {
-    private var observers: [any NSObjectProtocol] = []
+    @ObservationIgnored private var observers: [any NSObjectProtocol] = []
 
     /// Whether a keyboard is attached now.
     public private(set) var isAttached: Bool
 
     /// Runs as a keyboard comes or goes.
-    public var onChange: (@MainActor () -> Void)?
+    @ObservationIgnored public var onChange: (@MainActor () -> Void)?
 
     /// The system's keyboards, followed as they come and go.
     public init() {

@@ -257,6 +257,7 @@ public final class TerminalView: UIView {
         layer.addSublayer(handles)
         _ = (gestures, pointerGestures, editMenu)
         sendColors()
+        self.keyboard.serve(self)
     }
 
     @available(*, unavailable, message: "a terminal view is made in code")

@@ -1,3 +1,5 @@
+import Foundation
+
 /// The keyboard's side of the terminals on screen (mobile/android's `TerminalKeyboard`).
 ///
 /// What the soft keyboard types, the extra keys and a hardware keyboard's keys go to the ``target`` and nowhere else,
@@ -12,6 +14,7 @@ public final class TerminalKeyboard {
     private static let enter = "enter"
 
     private var madeBar: ExtraKeysBar?
+    private let terminals = NSHashTable<TerminalView>.weakObjects()
     // the focus the terminal or chat that had it left when the selection moved on, or a session opened with a hardware
     // keyboard gives its selected pane: the pane selected next takes it
     private var handingOver: Handover?
@@ -68,7 +71,8 @@ public final class TerminalKeyboard {
     ///
     /// A session opened while a hardware keyboard is attached gives its selected pane the focus as it comes on, so
     /// typing and the chords go on there without a tap (Android's `FollowFocus`); the soft keyboard still waits for
-    /// one.
+    /// one. So does a session a hardware keyboard comes to while none of its terminals or chats has the keyboard: the
+    /// system reports a keyboard attached all along only after the first session opened.
     public init(shortcuts: TerminalShortcuts = TerminalShortcuts(), hardware: HardwareKeyboard? = nil) {
         self.shortcuts = shortcuts
         self.hardware = hardware ?? HardwareKeyboard()
@@ -76,7 +80,7 @@ public final class TerminalKeyboard {
             handingOver = .focus
         }
         self.hardware.onChange = { [weak self] in
-            self?.target?.reloadInputViews()
+            self?.hardwareChanged()
         }
     }
 
@@ -194,9 +198,27 @@ public final class TerminalKeyboard {
         return handingOver
     }
 
+    /// `terminal` types through this keyboard: it takes the focus a hardware keyboard that comes gives the selected pane.
+    internal func serve(_ terminal: TerminalView) {
+        terminals.add(terminal)
+    }
+
     /// Shows the extra keys as things stand now: the sticky modifiers, and whether the soft keyboard is open.
     internal func refreshBar() {
         madeBar?.refresh()
+    }
+
+    // a keyboard came or went: the extra keys show or stand aside, and one that came with nothing holding the keyboard
+    // gives the selected pane the focus, now or as it comes on (a chat takes it as it sees the keyboard come)
+    private func hardwareChanged() {
+        target?.reloadInputViews()
+        guard hardware.isAttached, target == nil, chatField == nil else {
+            return
+        }
+        handingOver = handingOver ?? .focus
+        for terminal in terminals.allObjects {
+            terminal.takeHandover()
+        }
     }
 
     private func set(_ modifier: StickyModifier, _ state: Sticky) {
