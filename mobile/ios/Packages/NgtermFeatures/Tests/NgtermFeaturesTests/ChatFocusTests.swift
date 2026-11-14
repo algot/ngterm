@@ -8,8 +8,9 @@ import UIKit
 @testable import NgtermFeatures
 
 /// The chat's prompt field and the keyboard (mobile/android's `ChatPane` focus): a chat the selection moves to takes
-/// the keyboard when it was in use, and tells the keyboard its field has it; one the selection leaves lets it go. A
-/// selected chat takes it too when the system reports a hardware keyboard after the chat came on.
+/// the keyboard when it was in use, and tells the keyboard its field has it; one the selection leaves lets it go.
+///
+/// A selected chat takes it too when the system reports a hardware keyboard after the chat came on.
 @MainActor
 @Suite("the chat's focus")
 internal struct ChatFocusTests {
