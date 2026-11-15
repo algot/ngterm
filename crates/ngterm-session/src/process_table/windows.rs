@@ -1,4 +1,4 @@
-//! The Windows process table: an argv from the process's command line, the parent from a tool-help snapshot, the
+//! The Windows process table: an argv from the process's command line, the parent from its basic information, the
 //! console's stand-in foreground ([`super::console_foreground`], over a live pane's shell's descendants here and over
 //! an in-app pane's job in [`job_foreground`]), the working directory and the environment's `Path` from the process
 //! environment block, and the image path from `QueryFullProcessImageNameW`.
@@ -24,18 +24,18 @@ use windows_sys::Wdk::System::Threading::{
 };
 use windows_sys::Win32::Foundation::{
     HANDLE, LocalFree, NTSTATUS, STATUS_BUFFER_OVERFLOW, STATUS_BUFFER_TOO_SMALL, STATUS_INFO_LENGTH_MISMATCH,
-    UNICODE_STRING,
+    UNICODE_STRING, WAIT_TIMEOUT,
 };
 use windows_sys::Win32::System::Diagnostics::Debug::ReadProcessMemory;
 use windows_sys::Win32::System::Threading::{
-    PROCESS_BASIC_INFORMATION, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ,
-    QueryFullProcessImageNameW,
+    PROCESS_BASIC_INFORMATION, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+    PROCESS_VM_READ, QueryFullProcessImageNameW, WaitForSingleObject,
 };
 use windows_sys::Win32::UI::Shell::CommandLineToArgvW;
 
 use super::{ConsoleMember, console_foreground};
 use crate::job;
-use crate::job::windows::{creation_time, open, snapshot};
+use crate::job::windows::{creation_time, open};
 
 /// The live Windows process table.
 #[derive(Debug, Clone, Copy, Default)]
@@ -54,16 +54,26 @@ impl ProcessTable for ProcTable {
         argv_of(&read_command_line(&process)?)
     }
 
-    /// The process with its parent; it stands in for its own group, and leads its session when this process started
-    /// it (a pane's program on its pseudoconsole).
+    /// The process with its parent, while it runs; it stands in for its own group, and leads its session when this
+    /// process started it (a pane's program on its pseudoconsole). Read through a handle to that process alone: the
+    /// `tree` reads every pane's, and a tool-help walk of every process per pane held the main thread for seconds.
     fn stat(&self, pid: i32) -> Option<ProcessStat> {
         let wanted = u32::try_from(pid).ok()?;
-        let process = snapshot()?.into_iter().find(|process| process.pid == wanted)?;
+        let process = open(wanted, PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE)?;
+        if !running(&process) {
+            return None;
+        }
+        let parent = job::windows::parent(&process)?;
+        let session = if started_here(wanted, u32::try_from(parent).ok()?) {
+            pid
+        } else {
+            0
+        };
         Some(ProcessStat {
             pid,
-            ppid: i32::try_from(process.parent).ok()?,
+            ppid: parent,
             pgrp: pid,
-            session: if started_here(wanted, process.parent) { pid } else { 0 },
+            session,
         })
     }
 
@@ -223,7 +233,14 @@ fn job_member(pid: u32) -> Option<ConsoleMember> {
     })
 }
 
-/// Whether this process started process `pid` whose snapshot names `parent`: the parent is this process, and `pid`
+/// Whether `process` has not exited: a handle someone still holds keeps an exited process openable, where a tool-help
+/// walk lists it no more.
+fn running(process: &OwnedHandle) -> bool {
+    // SAFETY: the handle is an open process handle with `SYNCHRONIZE`; a zero timeout only polls its state.
+    unsafe { WaitForSingleObject(process.as_raw_handle(), 0) == WAIT_TIMEOUT }
+}
+
+/// Whether this process started process `pid` whose handle names `parent`: the parent is this process, and `pid`
 /// was created after it (so the parent link is not left from an earlier holder of this process's pid).
 fn started_here(pid: u32, parent: u32) -> bool {
     let own = std::process::id();
@@ -603,6 +620,32 @@ mod tests {
         assert_eq!(table.stat(-1), None);
         assert_eq!(table.argv(0), None);
         assert_eq!(table.executable_path(0), None);
+    }
+
+    /// The `tree` reads every pane's ids: a tool-help walk of every process for each pane held the app's main thread
+    /// for seconds once a window had dozens of panes, and its control socket went unanswered.
+    #[test]
+    fn reading_a_process_s_ids_walks_no_process_list() {
+        let table = ProcTable::new();
+        let pid = i32::try_from(std::process::id()).unwrap();
+        let walked = job::windows::WALKS.get();
+        for _ in 0..50 {
+            assert_eq!(table.stat(pid).map(|own| own.pid), Some(pid));
+        }
+        assert_eq!(job::windows::WALKS.get() - walked, 0, "tool-help walks for 50 reads");
+    }
+
+    #[test]
+    fn an_exited_process_has_no_ids_while_its_handle_is_held() {
+        let mut child = std::process::Command::new("cmd.exe")
+            .args(["/D", "/C", "exit 0"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        child.wait().unwrap();
+        // `child` still holds its process handle, so the exited process can be opened
+        assert_eq!(ProcTable::new().stat(i32::try_from(child.id()).unwrap()), None);
     }
 
     #[test]

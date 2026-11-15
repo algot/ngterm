@@ -76,7 +76,7 @@ fn entry(process: Snapshotted) -> Option<ProcessEntry> {
 }
 
 /// The pid of the process that created `process` (`InheritedFromUniqueProcessId`); `None` when it cannot be read.
-fn parent(process: &OwnedHandle) -> Option<i32> {
+pub(crate) fn parent(process: &OwnedHandle) -> Option<i32> {
     let mut basic = PROCESS_BASIC_INFORMATION::default();
     let size = u32::try_from(size_of::<PROCESS_BASIC_INFORMATION>()).ok()?;
     // SAFETY: the handle is an open process handle with query access, and `basic` a writable
@@ -98,6 +98,8 @@ fn parent(process: &OwnedHandle) -> Option<i32> {
 
 /// Every process of a fresh tool-help snapshot; `None` when no snapshot could be taken.
 pub(crate) fn snapshot() -> Option<Vec<Snapshotted>> {
+    #[cfg(test)]
+    WALKS.set(WALKS.get() + 1);
     // SAFETY: no pointer arguments; the result is checked before use.
     let raw = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
     if raw == INVALID_HANDLE_VALUE {
@@ -121,6 +123,12 @@ pub(crate) fn snapshot() -> Option<Vec<Snapshotted>> {
         more = unsafe { Process32NextW(handle.as_raw_handle(), &raw mut entry) } != 0;
     }
     Some(processes)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many tool-help walks of every process this thread took: a test's measure of what a read costs.
+    pub(crate) static WALKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// `pid` opened with `access`; `None` when it is gone or may not be opened so.
