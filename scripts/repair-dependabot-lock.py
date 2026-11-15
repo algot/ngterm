@@ -212,6 +212,73 @@ def reported_runs(directory):
     return triggers(workflow)["workflow_run"], workflow["concurrency"]["group"]
 
 
+PINNED = re.compile(r"@[0-9a-f]{40}$")
+GATE = ("github.event.pull_request.user.login == 'dependabot[bot]'",
+        "github.event.pull_request.head.repo.full_name == github.repository",
+        "startsWith(github.event.pull_request.head.ref, 'dependabot/cargo/')")
+
+
+def privileged_faults(text, repair):
+    """What a workflow that runs with the base branch's rights (the repair, or the one that reports its runs) must
+    not be: `text` is its file, `repair` whether it is dependabot-lock-edges.yml. No fault is the empty list."""
+    import yaml
+
+    workflow = yaml.safe_load(text)
+    faults = []
+    if workflow.get("permissions") != {}:
+        faults.append("the top-level permissions are not {}")
+    if "secrets." in text:
+        faults.append("it reads a secret")
+    for name, job in workflow["jobs"].items():
+        if "environment" in job:
+            faults.append(f"{name} runs in an environment")
+        for step in job["steps"]:
+            uses, settings = step.get("uses", ""), step.get("with") or {}
+            if uses and not PINNED.search(uses):
+                faults.append(f"{name} uses {uses}, not a commit")
+            if "cache" in uses:
+                faults.append(f"{name} uses a cache: {uses}")
+            # the base branch alone is checked out, and its checkout keeps no credential
+            if uses.startswith("actions/checkout@") and (settings.get("persist-credentials") is not False or {"ref", "repository"} & set(settings)):
+                faults.append(f"{name} checks out another ref, or keeps the token in .git")
+            # an expression in a script is the event's text run as shell: a value reaches a script as an environment variable
+            if "${{" in step.get("run", ""):
+                faults.append(f"{name} has an expression in a run step")
+    if repair:
+        if triggers(workflow) != {"pull_request_target": {"types": ["opened", "synchronize", "reopened"]}}:
+            faults.append("it starts on something else than a pull request's commits")
+        fix, push = workflow["jobs"]["fix"], workflow["jobs"]["push"]
+        if not all(part in fix.get("if", "") for part in GATE) or "||" in fix.get("if", ""):
+            faults.append("fix does not hold the pull request to Dependabot's own cargo branch of this repository")
+        if push.get("needs") != "fix" or push.get("if") != "needs.fix.outputs.repaired == 'true'":
+            faults.append("push runs without fix")
+        # the job that gives the pull request's manifests and the crates they name to cargo can write nothing
+        if fix.get("permissions") != {"contents": "read"} or "github.token" in str(fix) or "GITHUB_TOKEN" in str(fix):
+            faults.append("fix holds more than a read-only token it never uses")
+        if any("cargo" in str(step) and "repair-dependabot-lock.py commit" not in str(step) for step in push["steps"]):
+            faults.append("push runs cargo")
+    return faults
+
+
+def dispatched_faults(text):
+    """What a workflow the repair dispatches must not be: its run builds what a Dependabot update pulled in (build
+    scripts, proc macros) as a `workflow_dispatch` run, which has the secrets and the token rights the workflow asks
+    for, not the read-only token and Dependabot secrets of Dependabot's own `pull_request` run."""
+    import yaml
+
+    workflow = yaml.safe_load(text)
+    faults = ["it reads a secret"] if "secrets." in text else []
+    if workflow.get("permissions") != {"contents": "read"}:
+        faults.append("the top-level permissions are not contents: read")
+    for name, job in workflow["jobs"].items():
+        if "environment" in job:
+            faults.append(f"{name} runs in an environment")
+        asked = job.get("permissions") or {}
+        if asked != "read-all" and (isinstance(asked, str) or any(access not in ("read", "none") for access in asked.values())):
+            faults.append(f"{name} asks for more than read access")
+    return faults
+
+
 LOCK_TEXT = 'version = 4\n\n[[package]]\nname = "app"\nversion = "0.1.0"\ndependencies = [\n "sys {}",\n]\n'
 
 
@@ -288,6 +355,15 @@ def cargo_fixture(parent):
     manifest = '[package]\nname = "app"\nversion = "0.1.0"\n[dependencies]\nranged = "1"\nstrict = "1"\nsys = "0.60"\n'
     (repo / "Cargo.toml").write_text(manifest)
     (repo / "Cargo.lock").write_text(CARGO_LOCK_TEXT.format("0.61.2"))
+    # what the checked tree must not be able to make cargo run or use: cargo is run from the trusted checkout, so it
+    # reads neither. The gate lets no pull request change them, but the tree of an old merge base is not vetted.
+    ran = Path(parent) / "ran"
+    hostile = Path(parent) / "rustc"
+    hostile.write_text(f"#!/bin/sh\ntouch {str(ran)!r}\nexit 1\n")
+    hostile.chmod(0o755)
+    (repo / ".cargo").mkdir()
+    (repo / ".cargo" / "config.toml").write_text(f"[build]\nrustc = {str(hostile)!r}\n[alias]\nmetadata = \"no-such-command\"\n")
+    (repo / "rust-toolchain.toml").write_text('[toolchain]\nchannel = "no-such-toolchain"\n')
     snapshot(repo, "base")
     return repo, home
 
@@ -309,6 +385,7 @@ def real_fix_test(parent, branch):
     finally:
         os.environ.pop("CARGO_HOME") if kept is None else os.environ.update(CARGO_HOME=kept)
     assert (ROOT / "Cargo.lock").read_bytes() == own_lock, "the fix reached this checkout's Cargo.lock"
+    assert not (Path(parent) / "ran").exists(), "cargo took its config from the checked tree"
     assert git(repo, "status", "--porcelain") == "" and git(repo, "worktree", "list").count("\n") == 1
 
 
@@ -359,6 +436,48 @@ def trigger_test():
     others = [run(9, "completed", "success", head_sha="b" * 40), run(9, "completed", "success", workflow_id=8),
               run(9, "completed", "success", event="pull_request")]
     assert posted(run(1, "completed", "failure"), *others) == ("failure", "1", "failure")
+
+
+def privileged_test(workflows):
+    repair = (workflows / "dependabot-lock-edges.yml").read_text()
+    checks = (workflows / "dependabot-lock-checks.yml").read_text()
+    assert privileged_faults(repair, True) == [], privileged_faults(repair, True)
+    assert privileged_faults(checks, False) == [], privileged_faults(checks, False)
+    pin = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
+    unsafe = [
+        ("permissions: {}", "permissions: write-all"),
+        (pin, "actions/checkout@v7"),
+        ("persist-credentials: false", "persist-credentials: true"),
+        ("persist-credentials: false", "ref: ${{ github.event.pull_request.head.sha }}"),
+        ('fix "$HEAD_SHA"', "fix ${{ github.event.pull_request.head.ref }}"),
+        ("GH_TOKEN: ${{ github.token }}", "GH_TOKEN: ${{ secrets.PUSH_TOKEN }}"),
+        ("types: [opened, synchronize, reopened]", "types: [opened, synchronize, reopened, edited]"),
+        ("github.event.pull_request.user.login == 'dependabot[bot]'", "github.actor == 'dependabot[bot]'"),
+        ("github.event.pull_request.head.repo.full_name == github.repository &&", ""),
+        ("startsWith(github.event.pull_request.head.ref, 'dependabot/cargo/')", "true"),
+        ("      contents: read\n    outputs:", "      contents: write\n    outputs:"),
+        ("if: needs.fix.outputs.repaired == 'true'", "if: always()"),
+        ("    timeout-minutes: 10\n", "    timeout-minutes: 10\n    environment: release\n"),
+        ("      - uses: actions/download-artifact@", f"      - uses: actions/cache@{'a' * 40}\n      - uses: actions/download-artifact@"),
+        ("      - name: commit the repaired lock", "      - run: cargo metadata\n      - name: commit the repaired lock"),
+    ]
+    for old, new in unsafe:
+        assert old in repair, f"dependabot-lock-edges.yml no longer has {old!r}: the self-test's cases are stale"
+        assert privileged_faults(repair.replace(old, new), True), f"accepted: {old!r} as {new!r}"
+    assert privileged_faults(checks.replace("COMMIT: ${{", "COMMIT: ${{ secrets.X }} # ${{"), False)
+    assert privileged_faults(checks.replace('statuses/$COMMIT"', 'statuses/${{ github.event.workflow_run.head_sha }}"'), False)
+
+    for file in WORKFLOWS:
+        text = (workflows / file).read_text()
+        assert dispatched_faults(text) == [], f"{file}, which the repair dispatches on a Dependabot branch: {dispatched_faults(text)}"
+    linux = (workflows / "linux.yml").read_text()
+    for old, new in [("permissions:\n  contents: read", "permissions:\n  contents: write"),
+                     ("permissions:\n  contents: read", "permissions: {}\nenv:\n  KEY: ${{ secrets.SIGNING_KEY }}"),
+                     ("    runs-on: ubuntu-26.04\n", "    runs-on: ubuntu-26.04\n    permissions:\n      id-token: write\n"),
+                     ("    runs-on: ubuntu-26.04\n", "    runs-on: ubuntu-26.04\n    permissions: write-all\n"),
+                     ("    runs-on: ubuntu-26.04\n", "    runs-on: ubuntu-26.04\n    environment: release\n")]:
+        assert old in linux, f"linux.yml no longer has {old!r}: the self-test's cases are stale"
+        assert dispatched_faults(linux.replace(old, new)), f"accepted in a dispatched workflow: {new!r}"
 
 
 def self_test():
@@ -446,6 +565,7 @@ def self_test():
     # the group is joined before the job's `if`: a run that is not reported must not share a reported one's group
     for part in ("workflow_id", "head_sha", "event"):
         assert f"github.event.workflow_run.{part} " in group, f"dependabot-lock-checks.yml's group has no {part}: {group}"
+    privileged_test(workflows)
     print("repair-dependabot-lock: self-test passed")
     return 0
 

@@ -1433,7 +1433,11 @@ already holds changes no file, so the path-filtered workflows don't start on it.
   workflow, so that job then dispatches the workflows a `Cargo.lock` change starts (the script's `WORKFLOWS`, which
   its self-test holds to the workflows' triggers) on the branch, and cancels the runs of Dependabot's own commit once
   every dispatch is in. The repair commit carries `[dependabot skip]`, so Dependabot still rebases the pull request,
-  and each rebase is repaired again.
+  and each rebase is repaired again. A dispatched run builds what the update pulled in with the rights its workflow
+  asks for, not with the read-only token of Dependabot's own run, so those workflows stay read-only and free of
+  secrets and environments; the script's self-test holds them, and the two Dependabot workflows' own safeguards, to
+  that. GitHub blocks `pull_request_target` in public repositories unless an Actions event policy of the repository
+  allows it: the repair needs one that allows this workflow file.
 - `dependabot-lock-checks.yml` (the runs the workflow above dispatches): GitHub shows no dispatched run's checks on a
   pull request, so this reports each of those runs on the repaired commit as a commit status named after its workflow
   (`linux`, `android`, ...), pending and then the run's result, with a link to the run. The status is the state of

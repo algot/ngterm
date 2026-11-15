@@ -90,7 +90,10 @@ jobs:
       - name: commit the repaired lock
         id: commit
         run: scripts/repair-dependabot-lock.py commit "$HEAD_SHA" "$BRANCH" "$RUNNER_TEMP/repaired/Cargo.lock"
-      # not forced: a branch Dependabot has pushed to since refuses it, and that push's own run repairs it
+      # Only onto the commit that was repaired: the lease refuses a branch Dependabot has pushed to since (that push's
+      # own run repairs it) and one deleted since (a closed pull request's is not made again), and the commit is that
+      # commit's child, so nothing is ever overwritten. A rerun finds its commit there and pushes nothing. The
+      # credential is masked in the log and is in git's environment, not on its command line.
       - name: push it to the pull request's branch
         if: steps.commit.outputs.commit != ''
         shell: bash
@@ -98,9 +101,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           COMMIT: ${{ steps.commit.outputs.commit }}
         run: |
+          there="$(git ls-remote origin "refs/heads/$BRANCH" | cut -f1)"
+          if [[ $there == "$COMMIT" ]]; then
+            echo "$BRANCH is at $COMMIT already"
+            exit 0
+          fi
           auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
-          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
-            push origin "$COMMIT:refs/heads/$BRANCH"
+          echo "::add-mask::$auth"
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="http.https://github.com/.extraheader"
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth"
+          git push --force-with-lease="refs/heads/$BRANCH:$HEAD_SHA" origin "$COMMIT:refs/heads/$BRANCH"
       # every workflow is tried, and the old commit's runs go only when each has its replacement
       - name: run the pull request's checks on the repaired commit
         if: steps.commit.outputs.commit != ''
