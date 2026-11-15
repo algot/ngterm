@@ -255,16 +255,20 @@ fn watch_stdin() -> Result<Receiver<()>, Failure> {
     Ok(receiver)
 }
 
-/// Writes `events` to standard output, one per line, and flushes them. An error means the reader went away.
+/// Writes `events` to standard output, one per line, and flushes them. An error means the reader went away. The
+/// lines go in one write (standard output alone would flush at each newline), so a reader is less likely to get a
+/// `reset` in one read and the conversation it starts in the next.
 fn write_events(events: &[ChatEvent]) -> io::Result<()> {
     if events.is_empty() {
         return Ok(());
     }
-    let mut stdout = io::stdout().lock();
+    let mut lines = String::new();
     for event in events {
-        stdout.write_all(event.to_ndjson().as_bytes())?;
-        stdout.write_all(b"\n")?;
+        lines.push_str(&event.to_ndjson());
+        lines.push('\n');
     }
+    let mut stdout = io::stdout().lock();
+    stdout.write_all(lines.as_bytes())?;
     stdout.flush()
 }
 

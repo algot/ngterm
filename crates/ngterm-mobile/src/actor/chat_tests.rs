@@ -993,9 +993,9 @@ fn a_channel_lost_before_live_resumes_where_its_catch_up_began() {
         retried(chat, FAILED).await;
         let chat = fixture.chat(&resumed(Side::Left, 0, "c2"));
 
-        // a `reset` lost before any main event of its own: a plain backlog, the app having dropped what it showed
+        // a `reset` lost before any main event of its own: a plain backlog, which hands the `reset` over
         feed(&chat, &[reset()]).await;
-        assert_eq!(texts(&fixture.reported().0), ["reset"]);
+        assert_eq!(texts(&fixture.reported().0), [""; 0]);
         retried(chat, FAILED).await;
         let chat = fixture.chat(&chat_tail(
             ngterm_core::remote::origin::OriginShell::Posix,
@@ -1004,7 +1004,10 @@ fn a_channel_lost_before_live_resumes_where_its_catch_up_began() {
             None,
         ));
         feed(&chat, &[conversation("c3", 0), assistant("line-0", 0, "z"), live(60)]).await;
-        assert_eq!(texts(&fixture.reported().0), ["conversation:c3", "line-0:z", "live"]);
+        assert_eq!(
+            texts(&fixture.reported().0),
+            ["reset", "conversation:c3", "line-0:z", "live"]
+        );
     });
 }
 
@@ -1141,6 +1144,50 @@ fn a_chat_named_with_nothing_said_yet_resumes_in_its_conversation() {
         // the pane moved on meanwhile, to one with nothing said yet either
         feed(&chat, &[reset(), conversation("c2", 0), live(0)]).await;
         assert_eq!(texts(&fixture.reported().0), ["reset", "conversation:c2", "live"]);
+        chat.end(FAILED).await;
+        settle().await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        settle().await;
+        fixture.chat(&resumed(Side::Left, 0, "c2"));
+    });
+}
+
+/// A `reset` and the conversation it starts may come in two reads: the app gets them in one update, so it never
+/// holds a chat that was reset and names no conversation while the origin has one to name.
+#[test]
+fn a_reset_read_alone_reaches_the_app_with_the_conversation_that_follows_it() {
+    local(async {
+        let mut fixture = Fixture::start().await;
+        fixture.open(LEFT).await.unwrap();
+        let chat = fixture.chat(&chat_tail(
+            ngterm_core::remote::origin::OriginShell::Posix,
+            SESSION,
+            Side::Left,
+            None,
+        ));
+        feed(&chat, &[conversation("c1", 0), assistant("line-0", 0, "a"), live(10)]).await;
+        fixture.actor.sink.take();
+
+        feed(&chat, &[assistant("line-10", 10, "b"), reset()]).await;
+        assert_eq!(
+            texts(&fixture.reported().0),
+            ["line-10:b"],
+            "the reset waits for what it starts"
+        );
+        feed(&chat, &[conversation("c2", 0), live(0)]).await;
+        let batches: Vec<Vec<String>> = fixture
+            .actor
+            .sink
+            .take()
+            .into_iter()
+            .filter_map(|event| match event {
+                MobileEvent::Chat { events, .. } => Some(texts(&events)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(batches, [["reset", "conversation:c2", "live"]], "one update");
+
+        // the chat started over when the reset was read: it resumes in the new conversation
         chat.end(FAILED).await;
         settle().await;
         tokio::time::sleep(Duration::from_secs(2)).await;

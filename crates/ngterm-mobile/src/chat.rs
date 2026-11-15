@@ -25,6 +25,11 @@
 //!   answers a `reset` and the new backlog, which start the chat over as a `reset` on a live channel does. The
 //!   presentation stream's [`MobileEvent::PaneAgent`] plays no part in it: it may come before the channel is back,
 //!   after it or not at all.
+//! - **A `reset` and what follows it.** The origin writes a `reset` with the conversation it starts, but a read may
+//!   end between the two. The chat starts over at once (its cursors, its generation, the pane's catalog); the app is
+//!   shown the `reset` only with the next event, in one [`MobileEvent::Chat`], so it never holds a chat that was
+//!   reset and has no conversation named yet when the origin names one. A channel lost in between hands the `reset`
+//!   over with the backlog of the next one.
 //! - **The resume cursor.** The origin ends each batch it writes with a `live`: a launch's catch-up (the main
 //!   transcript's lines, then the subagents': the backlogs of those among them, and what every subagent wrote since
 //!   the main line before the cursor, by its stamp to the minute), a `reset`'s backlog, and each poll's new lines
@@ -455,6 +460,8 @@ struct Chat<C> {
     /// This chat's conversation shown now (a new one at each `reset`), from [`Chats`]' one counter: an older page
     /// begun under another generation, of this chat or of an earlier chat of the pane, is stale.
     generation: u64,
+    /// A `reset` read and not shown yet: it goes to the app with the next event shown (the module docs).
+    held: Option<ChatEvent>,
 }
 
 impl<C: Connection> Chat<C> {
@@ -480,7 +487,7 @@ impl<C: Connection> Chat<C> {
     }
 
     /// The events of one read the app has not seen, and whether a `reset` was among them; a `reset` takes the next
-    /// of `generations`.
+    /// of `generations`, and is shown with the event after it, of this read or of a later one.
     fn take(&mut self, events: Vec<wire::ChatEvent>, generations: &mut u64) -> (Vec<ChatEvent>, bool) {
         let mut shown = Vec::with_capacity(events.len());
         let mut reset = false;
@@ -497,6 +504,8 @@ impl<C: Connection> Chat<C> {
                     self.prompts.clear();
                     self.named.clear();
                     self.catching_up = true;
+                    self.held = Some(event.into());
+                    continue;
                 }
                 EventBody::Live => {
                     self.started = true;
@@ -506,6 +515,7 @@ impl<C: Connection> Chat<C> {
                     if !std::mem::replace(&mut self.catching_up, false) {
                         continue;
                     }
+                    shown.extend(self.held.take());
                     shown.extend(self.end_unnamed(event.cursor));
                 }
                 body => {
@@ -520,6 +530,7 @@ impl<C: Connection> Chat<C> {
                     }
                 }
             }
+            shown.extend(self.held.take());
             shown.push(event.into());
         }
         (shown, reset)
@@ -780,6 +791,7 @@ impl<C: Connection> Chats<C> {
             prompts: HashMap::new(),
             named: HashSet::new(),
             generation: self.last_generation,
+            held: None,
         };
         chat.launch(&mut self.last_launch);
         self.open.push(chat);
