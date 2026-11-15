@@ -5,9 +5,10 @@
 #
 # A line every INTERVAL seconds (default 10): the UTC time; `late`, how much longer than INTERVAL the sample took to
 # come round, which is how long the whole machine stood still (a sleeping shell is the last thing to be held up); the
-# load averages; memory_pressure's free percentage; the swap in use; and the pages swapped and compressed since the
-# last line (vm_stat's pageins, pageouts, swapins, swapouts). Every sixth line adds the processes with the most
-# resident memory and the most CPU. It starts with the machine's memory, CPUs and free disk.
+# load averages; memory_pressure's free percentage; the swap in use; and the pages paged, swapped and compressed
+# since the last line (vm_stat's pageins, pageouts, swapins, swapouts, compressions, decompressions). Every sixth line
+# adds the processes with the most resident memory and the most CPU. It starts with the machine's memory, CPUs and
+# free disk.
 #
 # Usage: scripts/ci-host-monitor.sh <log> [interval]
 # macOS only.
@@ -49,7 +50,7 @@ while :; do
   line+=" load=$(sysctl -n vm.loadavg | tr -d '{}' | awk '{ print $1 "," $2 "," $3 }')"
   line+=" free=$(memory_pressure -Q 2>/dev/null | awk -F': ' '/percentage/ { print $2 }')"
   line+=" swap=$(sysctl -n vm.swapusage | awk '{ print $6 }')"
-  for counter in Pageins Pageouts Swapins Swapouts; do
+  for counter in Pageins Pageouts Swapins Swapouts Compressions Decompressions; do
     line+=" $(tr '[:upper:]' '[:lower:]' <<<"$counter")=+$(($(vm_counter "$counter" "$stats") - $(vm_counter "$counter" "$previous")))"
   done
   if ((count % 6 == 0)); then

@@ -277,7 +277,9 @@ jobs:
         name: keep the runner's log beside the load samples
         if: failure() || cancelled() || hashFiles('mobile/ios/build/retried-tests.txt') != ''
         run: |
-          worker="$(ps -axo command= | awk '$1 ~ /\/bin\/Runner\.Worker$/ { print $1; exit }')"
+          # awk reads ps to the end: an early exit would leave ps writing to a closed pipe, and pipefail would fail the
+          # step on its SIGPIPE
+          worker="$(ps -axo command= | awk '$1 ~ /\/bin\/Runner\.Worker$/ && w == "" { w = $1 } END { print w }')"
           [[ -n "$worker" ]] || { echo "no Runner.Worker process to find the runner's _diag by"; exit 0; }
           mkdir -p mobile/ios/build/host-diagnostics
           cp "$(dirname "$(dirname "$worker")")"/_diag/Runner_*.log mobile/ios/build/host-diagnostics/ || true
