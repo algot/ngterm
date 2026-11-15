@@ -3,9 +3,11 @@ package com.nickalie.ngterm.android.ui.sessions
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -16,6 +18,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -263,7 +267,8 @@ private fun Banners(
     }
 }
 
-// no sessions: the invitation to start one, under what the banners say (the panel scrolls, so pull to refresh works)
+// no sessions: the invitation to start one, centered under what the banners say; the two scroll as one when they are
+// taller than the window (a long hint at a large font scale), and the scroller lets pull to refresh work
 @Composable
 private fun Empty(
     state: MachineSessions,
@@ -274,12 +279,20 @@ private fun Empty(
 ) {
     val spacing = NgtermTheme.spacing
     val name = state.machine.title
-    Column(
-        modifier = modifier.fillMaxSize().padding(horizontal = gutter(), vertical = spacing.sm),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Banners(state.offline, failure, state.hint, actions.onRefresh, Modifier.widthIn(max = spacing.readableWidth))
-        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+    BoxWithConstraints(modifier.fillMaxSize()) {
+        val window = maxHeight
+        Column(
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .heightIn(min = window)
+                    .padding(horizontal = gutter(), vertical = spacing.sm),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            val wide = Modifier.widthIn(max = spacing.readableWidth)
+            Banners(state.offline, failure, state.hint, actions.onRefresh, wide)
+            Spacer(Modifier.weight(1f))
             EmptyState(
                 icon = R.drawable.ic_sessions,
                 title = stringResource(R.string.machine_sessions_empty_title, name),
@@ -290,9 +303,12 @@ private fun Empty(
                         R.drawable.ic_add,
                         actions.onNewSession,
                     ),
+                // the panel scrolls itself, which needs a bounded height inside this scroller
+                modifier = Modifier.heightIn(max = window),
                 busy = starting,
                 enabled = !starting && !state.creating,
             )
+            Spacer(Modifier.weight(1f))
         }
     }
 }

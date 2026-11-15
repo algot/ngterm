@@ -2,11 +2,13 @@ package com.nickalie.ngterm.android.ui.sessions
 
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertHasClickAction
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.junit4.StateRestorationTester
@@ -16,6 +18,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
 import androidx.lifecycle.ViewModelProvider
 import com.nickalie.ngterm.android.TestGraph
@@ -42,6 +45,7 @@ import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
+import org.robolectric.annotation.Config
 
 private const val ROUTE_WAIT_MS = 10_000L
 
@@ -396,6 +400,26 @@ class SessionsRouteTest {
         runBlocking { test.connections.listSessions("m1") }
         gone(hint)
         compose.onNodeWithText("build").assertExists()
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h320dp", fontScale = 2f)
+    fun aHintTallerThanAShortWindowScrollsWithTheEmptyStateToItsEndAndTheAction() {
+        val hint =
+            "agterm on build-01 is not in Live sessions mode: set Settings > General > Restore sessions to Live " +
+                "sessions and restart agterm; only sessions started after that can be attached"
+        test.core.hints["m1"] = hint
+        connect()
+        route()
+        compose.awaitText(hint)
+
+        compose.onNodeWithText(hint).performScrollTo().assertIsDisplayed()
+        // the panel's action, not the top row's
+        compose
+            .onNode(
+                hasText("New session") and hasAnyAncestor(hasScrollAction()),
+            ).performScrollTo()
+            .assertIsDisplayed()
     }
 
     @Test
