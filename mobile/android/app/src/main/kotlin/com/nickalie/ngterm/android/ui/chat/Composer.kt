@@ -101,18 +101,22 @@ private fun HeldLine(modifier: Modifier = Modifier) {
  * Keeps [pane]'s draft (its [composer]'s, written in [conversation]) while the app is put away and its process let go,
  * and hands it to [onRestore] (the conversation it was written for, its text) when the app comes back to the same
  * pane; the chat puts it back only into that conversation and only into an empty field, so another pane or
- * conversation starts empty. A draft longer than [KEPT_DRAFT_MAX] isn't kept, as saved state has a size limit.
+ * conversation starts empty. A draft longer than [KEPT_DRAFT_MAX] isn't kept, as saved state has a size limit, and
+ * neither is one still [sending], as it may go once the state is saved.
  */
 @Composable
 fun KeepDraft(
     pane: PaneRef,
     composer: ChatComposer,
     conversation: () -> String?,
+    sending: () -> Boolean,
     onRestore: (conversation: String, text: String) -> Unit,
 ) {
     val named by rememberUpdatedState(conversation)
+    val going by rememberUpdatedState(sending)
     val restore by rememberUpdatedState(onRestore)
-    val kept = rememberSaveable(pane, saver = keptDraftSaver(pane, composer) { named() }) { KeptDraft(null, "") }
+    val kept =
+        rememberSaveable(pane, saver = keptDraftSaver(pane, composer, { named() }, { going() })) { KeptDraft(null, "") }
     LaunchedEffect(kept) {
         val written = kept.conversation ?: return@LaunchedEffect
         restore(written, kept.text)
@@ -180,18 +184,20 @@ internal class KeptDraft(
 
 /**
  * How [KeepDraft] saves: [pane], the [conversation] and the [composer]'s text, read as the state is saved (nothing for
- * a blank or oversized draft, or before the conversation is named); one saved for another pane is let go.
+ * a blank or oversized draft, one still [sending], or before the conversation is named); one saved for another pane
+ * is let go.
  */
 internal fun keptDraftSaver(
     pane: PaneRef,
     composer: ChatComposer,
     conversation: () -> String?,
+    sending: () -> Boolean,
 ): Saver<KeptDraft, Any> =
     Saver(
         save = {
-            val text = composer.draft.text
+            val text = composer.draft.text.takeIf { it.isNotBlank() && it.length <= KEPT_DRAFT_MAX }
             val named = conversation()
-            if (named == null || text.isBlank() || text.length > KEPT_DRAFT_MAX) {
+            if (named == null || text == null || sending()) {
                 null
             } else {
                 arrayListOf(pane.machineId, pane.sessionId, pane.paneId, named, text)

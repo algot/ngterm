@@ -68,7 +68,7 @@ fun ChatPane(
                 onUploadShown = chat::uploadShown,
             )
         }
-    KeepDraft(chat.pane, chat.composer, chat::conversation, chat::restoreDraft)
+    KeepDraft(chat.pane, chat.composer, chat::conversation, { chat.sending != null }, chat::restoreDraft)
     ChatScreen(state, machine, actions, modifier, chat.composer, focusRequester, selected)
 }
 

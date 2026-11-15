@@ -79,7 +79,8 @@ class ChatComposerTest {
     private fun names(): List<String>? = (composer.menu as? SlashMenu.Commands)?.commands?.map { it.name }
 
     // what saving the app's state keeps of [chat]'s draft
-    private fun saver(chat: ChatViewModel) = keptDraftSaver(chat.pane, chat.composer, chat::conversation)
+    private fun saver(chat: ChatViewModel) =
+        keptDraftSaver(chat.pane, chat.composer, chat::conversation) { chat.sending != null }
 
     private fun asked() =
         bed.test.core.calls
@@ -281,6 +282,32 @@ class ChatComposerTest {
         eventually { !chat.state.value.busy }
         assertEquals("", composer.draft.text)
         assertEquals(1, pane.actions.size)
+    }
+
+    @Test
+    fun aMessageStillOnItsWayIsSavedOnlyOnceItDidNotGo() {
+        fun saved() = with(saver(chat)) { SaverScope { true }.save(KeptDraft(null, "")) }
+        // saved while on its way, it would come back in the app's next process though it went
+        val gate = CompletableDeferred<Unit>()
+        pane.gate = gate
+        type("run the tests")
+        chat.send()
+        assertEquals("run the tests", composer.draft.text)
+        assertNull(saved())
+        gate.complete(Unit)
+        eventually { !chat.state.value.busy }
+        assertNull(saved())
+
+        // one that did not go is kept again
+        pane.outcome = AgentInputOutcome.NOT_ON_SCREEN
+        val second = CompletableDeferred<Unit>()
+        pane.gate = second
+        type("and the docs")
+        chat.send()
+        assertNull(saved())
+        second.complete(Unit)
+        eventually { !chat.state.value.busy }
+        assertEquals("and the docs", saver(chat).restore(saved()!!)!!.text)
     }
 
     @Test
