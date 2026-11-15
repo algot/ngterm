@@ -1137,6 +1137,128 @@ fn live_present_reports_a_refusal_on_stderr_and_writes_no_frame() -> TestResult 
     Ok(())
 }
 
+/// The v0.42 leaves send their request and print what the app answers: a core with windows refuses each.
+#[test]
+fn the_v042_leaves_reach_the_app_and_print_its_refusal() -> TestResult {
+    let dir = short_dir()?;
+    let socket = dir.path().join("ngterm.sock");
+    let _server = serve_core(&socket)?;
+    let leaves: [(&[&str], &str); 9] = [
+        (&["session", "detach"], "session.detach"),
+        (&["session", "reattach", "--target", "ab12"], "session.reattach"),
+        (&["workspace", "detach"], "workspace.detach"),
+        (&["workspace", "reattach", "--target", "ab12"], "workspace.reattach"),
+        (&["window", "remote", "open", "buildbox"], "window.remote.open"),
+        (&["window", "remote", "dismiss"], "window.remote.dismiss"),
+        (&["session", "overlay", "wrap", "on"], "session.overlay.wrap"),
+        (&["session", "convert", "--companion"], "session.companion.convert"),
+        (
+            &["session", "overlay", "open", "--url", "http://localhost:1/", "--page"],
+            "session.page",
+        ),
+    ];
+    for (argv, command) in leaves {
+        assert_eq!(
+            outcome(&run_on(dir.path(), &socket, argv)?),
+            (
+                Some(1),
+                String::new(),
+                format!("error: {command} is not supported by this host\n")
+            ),
+            "{argv:?}"
+        );
+    }
+    assert_eq!(
+        outcome(&run_on(dir.path(), &socket, &["catalog", "op", "op-1"])?),
+        (
+            Some(1),
+            String::new(),
+            "error: catalog.op is served only by ngterm-headless\n".to_owned()
+        )
+    );
+    // a stream's refusal is the run's own failure, and no frame is written
+    assert_eq!(
+        outcome(&run_on(dir.path(), &socket, &["catalog", "subscribe"])?),
+        (
+            Some(1),
+            String::new(),
+            "Error: catalog.subscribe is served only by ngterm-headless\n".to_owned()
+        )
+    );
+    Ok(())
+}
+
+/// Upstream's `aConvertPrintsTheFreshParentItCreated`, `anAppTooOldForConvertIsNamedAndNothingElseIsSent` and
+/// `anAppTooOldForPageSessionsIsNamedAndNothingElseIsSent`.
+#[test]
+fn convert_prints_the_fresh_parent_and_an_app_too_old_is_named() -> TestResult {
+    let dir = short_dir()?;
+    let socket = dir.path().join("ngterm.sock");
+    let expected = serde_json::json!({"cmd": "session.companion.convert", "target": "9f3c"});
+    let _server = scripted(&socket, expected, serde_json::json!({"id": "9F3C", "parent": NEW_ID}))?;
+    let args = ["session", "convert", "--companion", "--target", "9f3c"];
+    assert_eq!(
+        outcome(&run_on(dir.path(), &socket, &args)?),
+        (Some(0), format!("{NEW_ID}\n"), String::new())
+    );
+    let json = run_on(dir.path(), &socket, &[&args[..], &["--json"]].concat())?;
+    let line = format!("{{\"ok\":true,\"result\":{{\"id\":\"9F3C\",\"parent\":\"{NEW_ID}\"}}}}\n");
+    assert_eq!(outcome(&json), (Some(0), line, String::new()));
+
+    let old = dir.path().join("old.sock");
+    let _old = serve(&old, (), |(), request: Request| {
+        Response::failure(format!(
+            "invalid request: Cannot initialize Command from invalid String value {}",
+            request.cmd
+        ))
+        .into()
+    })?;
+    assert_eq!(
+        outcome(&run_on(dir.path(), &old, &["session", "convert", "--companion"])?),
+        (
+            Some(1),
+            String::new(),
+            "error: the running app is too old for convert\n".to_owned()
+        )
+    );
+    let page = ["session", "overlay", "open", "--url", "http://localhost:1/", "--page"];
+    assert_eq!(
+        outcome(&run_on(dir.path(), &old, &page)?),
+        (
+            Some(1),
+            String::new(),
+            "error: the running app is too old for page sessions\n".to_owned()
+        )
+    );
+    Ok(())
+}
+
+/// `server install` is local: it takes no socket, names a destination ssh cannot be given, and refuses the rest
+/// until its installer lands.
+#[test]
+fn server_install_refuses_locally() -> TestResult {
+    let dir = short_dir()?;
+    let bad = run(dir.path(), &[], ["server", "install", "a b"])?;
+    assert_eq!(
+        outcome(&bad),
+        (
+            Some(1),
+            String::new(),
+            "Error: destination must be a host, user@host or an ssh alias, not 'a b'\n".to_owned()
+        )
+    );
+    let good = run(dir.path(), &[], ["server", "install", "-p", "2222", "me@buildbox"])?;
+    assert_eq!(
+        outcome(&good),
+        (
+            Some(1),
+            String::new(),
+            "Error: server install is not supported by this build\n".to_owned()
+        )
+    );
+    Ok(())
+}
+
 const LIVE_HELP: &str = "\
 OVERVIEW: Inspect and manage the daemons behind live sessions.
 
