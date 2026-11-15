@@ -289,4 +289,14 @@ class OnboardingViewModelTest {
                 model.viewModelScope.cancel()
             }
         }
+
+    @Test
+    fun aPassphraseTheCoreFindsTooShortIsSaidInWords() {
+        val short =
+            com.nickalie.ngterm.core.ffi.KeyException
+                .PassphraseTooShort(8u)
+
+        assertEquals("the passphrase needs at least 8 characters", short.describe())
+        assertEquals(ImportProblem.NotAKey("the passphrase needs at least 8 characters"), short.toProblem())
+    }
 }

@@ -11,7 +11,11 @@
 use ::russh::keys::ssh_key::rand_core::TryCryptoRng;
 use ::russh::keys::ssh_key::{Cipher, Kdf, KdfAlg, LineEnding};
 use ::russh::keys::{Algorithm, HashAlg, PrivateKey, decode_secret_key};
+use unicode_segmentation::UnicodeSegmentation;
 use zeroize::Zeroizing;
+
+/// The fewest characters an export's passphrase may have: it is all that slows guessing at a lost export.
+pub const EXPORT_PASSPHRASE_MIN_CHARS: u32 = 8;
 
 /// The bcrypt-pbkdf rounds of an export: what `ssh-keygen` writes by default since OpenSSH 9.4.
 const EXPORT_KDF_ROUNDS: u32 = 24;
@@ -59,6 +63,9 @@ pub enum KeyError {
     /// The passphrase does not open the key.
     #[error("the passphrase is wrong")]
     WrongPassphrase,
+    /// An export's passphrase has fewer than `minimum` characters, counted as a person counts them.
+    #[error("the passphrase needs at least {minimum} characters")]
+    PassphraseTooShort { minimum: u32 },
     /// The bytes are not a private key this app can use.
     #[error("{reason}")]
     Invalid { reason: String },
@@ -131,17 +138,18 @@ pub fn load(bytes: &[u8]) -> Result<PrivateKey, KeyError> {
 ///
 /// # Errors
 ///
-/// [`KeyError::Invalid`] for an empty passphrase, bytes that aren't a stored key, or a failed encryption (the
-/// system's random source failed); [`KeyError::PassphraseRequired`] for bytes that are an encrypted key, which is
-/// never a stored one.
+/// [`KeyError::PassphraseTooShort`] for a passphrase under [`EXPORT_PASSPHRASE_MIN_CHARS`] characters (grapheme
+/// clusters, not bytes); [`KeyError::Invalid`] for bytes that aren't a stored key or a failed encryption (the system's
+/// random source failed); [`KeyError::PassphraseRequired`] for bytes that are an encrypted key, which is never a
+/// stored one.
 pub fn export(bytes: &[u8], protection: ExportProtection) -> Result<Zeroizing<String>, KeyError> {
     let passphrase = match protection {
         ExportProtection::Passphrase { passphrase } => Some(Zeroizing::new(passphrase)),
         ExportProtection::Unprotected => None,
     };
-    if passphrase.as_ref().is_some_and(|passphrase| passphrase.is_empty()) {
-        return Err(KeyError::Invalid {
-            reason: "the passphrase is empty".to_owned(),
+    if passphrase.as_ref().is_some_and(|passphrase| too_short(passphrase)) {
+        return Err(KeyError::PassphraseTooShort {
+            minimum: EXPORT_PASSPHRASE_MIN_CHARS,
         });
     }
     let key = load(bytes)?;
@@ -150,6 +158,14 @@ pub fn export(bytes: &[u8], protection: ExportProtection) -> Result<Zeroizing<St
         None => key,
     };
     key.to_openssh(LineEnding::LF).map_err(invalid)
+}
+
+fn too_short(passphrase: &str) -> bool {
+    passphrase
+        .graphemes(true)
+        .take(EXPORT_PASSPHRASE_MIN_CHARS as usize)
+        .count()
+        < EXPORT_PASSPHRASE_MIN_CHARS as usize
 }
 
 fn encrypt<R: TryCryptoRng>(key: &PrivateKey, rng: &mut R, passphrase: &[u8]) -> Result<PrivateKey, KeyError> {
@@ -340,8 +356,8 @@ mod tests {
     fn two_exports_of_a_key_under_one_passphrase_differ() {
         let pair = generate("phone").unwrap();
 
-        let first = export(&pair.private_key, locked("secret")).unwrap();
-        let second = export(&pair.private_key, locked("secret")).unwrap();
+        let first = export(&pair.private_key, locked("correct horse")).unwrap();
+        let second = export(&pair.private_key, locked("correct horse")).unwrap();
 
         assert_ne!(*first, *second);
     }
@@ -357,24 +373,53 @@ mod tests {
     }
 
     #[test]
-    fn an_export_refuses_an_empty_passphrase_and_what_is_not_a_stored_key() {
+    fn an_export_refuses_what_is_not_a_stored_key() {
         let pair = generate("phone").unwrap();
 
-        assert_eq!(
-            export(&pair.private_key, locked("")),
-            Err(KeyError::Invalid {
-                reason: "the passphrase is empty".to_owned()
-            })
-        );
         assert!(matches!(
-            export(b"hello", locked("secret")),
+            export(b"hello", locked("correct horse")),
             Err(KeyError::Invalid { .. })
         ));
-        let exported = export(&pair.private_key, locked("secret")).unwrap();
+        let exported = export(&pair.private_key, locked("correct horse")).unwrap();
         assert_eq!(
-            export(exported.as_bytes(), locked("again")),
+            export(exported.as_bytes(), locked("another one")),
             Err(KeyError::PassphraseRequired)
         );
+    }
+
+    #[test]
+    fn an_export_refuses_a_passphrase_under_eight_characters_as_a_person_counts_them() {
+        let pair = generate("phone").unwrap();
+        let short = Err(KeyError::PassphraseTooShort { minimum: 8 });
+        // seven family emoji: 7 characters to a person, 49 code points, 175 bytes
+        let families = "👨‍👩‍👧‍👦".repeat(7);
+
+        assert_eq!(export(&pair.private_key, locked("")), short);
+        assert_eq!(export(&pair.private_key, locked("1234567")), short);
+        assert_eq!(export(&pair.private_key, locked(&families)), short);
+        assert_eq!(export(&pair.private_key, locked("e\u{301}".repeat(7).as_str())), short);
+        assert_eq!(
+            short.clone().unwrap_err().to_string(),
+            "the passphrase needs at least 8 characters"
+        );
+
+        for enough in ["12345678", "пароль12", &format!("{families}👨‍👩‍👧‍👦")] {
+            let exported = export(&pair.private_key, locked(enough)).unwrap();
+            assert_eq!(
+                import(exported.as_bytes(), Some(enough)).unwrap().fingerprint,
+                pair.fingerprint
+            );
+        }
+    }
+
+    #[test]
+    fn an_import_takes_a_key_under_any_passphrase_however_short() {
+        let pair = generate("laptop").unwrap();
+        let key = load(&pair.private_key).unwrap();
+
+        let imported = import(&encrypted(&key, "x"), Some("x")).unwrap();
+
+        assert_eq!(imported.fingerprint, pair.fingerprint);
     }
 
     #[test]

@@ -191,11 +191,13 @@ internal fun KeyException.toProblem(): ImportProblem =
         is KeyException.PassphraseRequired -> ImportProblem.NeedsPassphrase
         is KeyException.WrongPassphrase -> ImportProblem.WrongPassphrase
         is KeyException.Invalid -> ImportProblem.NotAKey(reason)
+        is KeyException.PassphraseTooShort -> ImportProblem.NotAKey(describe())
     }
 
 /** What went wrong, in words: UniFFI's messages are its fields (`reason=...`), so the reason is the words. */
 internal fun Exception.describe(): String =
     when (this) {
         is KeyException.Invalid -> reason
+        is KeyException.PassphraseTooShort -> "the passphrase needs at least $minimum characters"
         else -> message?.takeIf { it.isNotBlank() } ?: javaClass.simpleName
     }

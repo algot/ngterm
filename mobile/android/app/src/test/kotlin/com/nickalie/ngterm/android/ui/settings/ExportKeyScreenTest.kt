@@ -60,8 +60,10 @@ class ExportKeyScreenTest {
         compose.onNodeWithText("This is the key your machines trust.", substring = true).assertIsDisplayed()
         compose.onNodeWithText(FAKE_FINGERPRINT).assertIsDisplayed()
         compose
-            .onNodeWithText("A file is safer: other apps and your keyboard can read the clipboard.")
-            .performScrollTo()
+            .onNodeWithText(
+                "A file is safer: other apps and your keyboard can read the clipboard. " +
+                    "ngterm clears the key from it when you close this screen.",
+            ).performScrollTo()
             .assertIsDisplayed()
         val flags = compose.activity.window.attributes.flags
         assertTrue(flags and WindowManager.LayoutParams.FLAG_SECURE != 0)
@@ -71,14 +73,46 @@ class ExportKeyScreenTest {
     fun nothingIsSentWithoutAPassphraseOrWithTwoThatDiffer() {
         show()
 
+        compose.onNodeWithText("At least 8 characters.", substring = true).assertIsDisplayed()
         tap("Save to a file")
-        compose.onNodeWithText("Enter a passphrase.").assertIsDisplayed()
+        compose.onNodeWithText("Use at least 8 characters.").assertIsDisplayed()
         field("Passphrase").performTextReplacement("correct horse")
         field("Passphrase again").performTextReplacement("correct hoarse")
         tap("Copy to the clipboard")
         compose.onNodeWithText("The two passphrases differ.").assertIsDisplayed()
 
         assertTrue(saved.isEmpty() && copied.isEmpty())
+    }
+
+    @Test
+    fun aPassphraseUnderEightCharactersAsAPersonCountsThemSendsNothing() {
+        // seven accented letters: 14 chars to the JVM, 7 to a person
+        val seven = "e\u0301".repeat(7)
+        show()
+        field("Passphrase").performTextReplacement(seven)
+        field("Passphrase again").performTextReplacement(seven)
+
+        tap("Save to a file")
+        tap("Copy to the clipboard")
+
+        compose.onNodeWithText("Use at least 8 characters.").assertIsDisplayed()
+        assertTrue(saved.isEmpty() && copied.isEmpty())
+
+        field("Passphrase").performTextReplacement(seven + "x")
+        compose.onNodeWithText("Use at least 8 characters.").assertDoesNotExist()
+        compose.onNodeWithText("The two passphrases differ.").assertIsDisplayed()
+        field("Passphrase again").performTextReplacement(seven + "x")
+        tap("Copy to the clipboard")
+
+        assertEquals(listOf<ExportProtection>(ExportProtection.Passphrase(seven + "x")), copied)
+    }
+
+    @Test
+    fun charactersAreCountedAsAPersonCountsThem() {
+        assertEquals(0, characters(""))
+        assertEquals(8, characters("12345678"))
+        assertEquals(8, characters("пароль12"))
+        assertEquals(1, characters("e\u0301"))
     }
 
     @Test
@@ -155,6 +189,8 @@ class ExportKeyScreenTest {
         compose.onNodeWithText("It's been a while since you unlocked. Go back and export again.").assertExists()
         work = ExportWork(keyId = "k1", problem = ExportProblem.Interrupted)
         compose.onNodeWithText("ngterm was restarted while you chose the file", substring = true).assertExists()
+        work = ExportWork(keyId = "k1", problem = ExportProblem.ShortPassphrase(8))
+        compose.onNodeWithText("Use at least 8 characters.").assertExists()
         work = ExportWork(keyId = "k1", problem = ExportProblem.Gone)
         compose.onNodeWithText("This key is no longer on this device.").assertExists()
     }

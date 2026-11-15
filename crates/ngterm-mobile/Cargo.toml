@@ -43,6 +43,8 @@ russh.workspace = true
 # wipes private key bytes once a connection has used them
 zeroize.workspace = true
 thiserror.workspace = true
+# counts an export passphrase's characters as a person does (grapheme clusters)
+unicode-segmentation.workspace = true
 uniffi.workspace = true
 # the Android app's self-update: a release's SHA256SUMS signature, as ngterm-update checks it
 minisign-verify.workspace = true

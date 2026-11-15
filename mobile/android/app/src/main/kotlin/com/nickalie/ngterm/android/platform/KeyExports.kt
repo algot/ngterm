@@ -4,10 +4,13 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.net.Uri
+import android.os.Build
 import android.os.PersistableBundle
 import android.provider.DocumentsContract
+import androidx.annotation.ChecksSdkIntAtLeast
 import java.io.FileNotFoundException
 import java.io.IOException
+import java.util.UUID
 
 /** Where an exported private key goes; what it is handed is the caller's to wipe. */
 interface KeyExports {
@@ -24,6 +27,9 @@ interface KeyExports {
     /** Puts [key] on the clipboard, marked sensitive so the system's preview and other devices don't show it. */
     fun copy(key: ByteArray)
 
+    /** Empties the clipboard if what [copy] last put there is still on it; anything else on it stays. */
+    fun clearCopied()
+
     /** Removes the document [target] nothing was written to. */
     fun discard(target: Uri)
 }
@@ -31,7 +37,10 @@ interface KeyExports {
 /** [KeyExports] over the system's documents and clipboard. Nothing is written anywhere else. */
 class AndroidKeyExports(
     private val context: Context,
+    private val sdk: Int = Build.VERSION.SDK_INT,
 ) : KeyExports {
+    private var copied: String? = null
+
     override fun save(
         target: Uri,
         key: ByteArray,
@@ -50,10 +59,33 @@ class AndroidKeyExports(
     }
 
     override fun copy(key: ByteArray) {
+        val mark = UUID.randomUUID().toString()
         val clip = ClipData.newPlainText(LABEL, String(key, Charsets.US_ASCII))
-        clip.description.extras = PersistableBundle().apply { putBoolean(IS_SENSITIVE, true) }
+        clip.description.extras =
+            PersistableBundle().apply {
+                putBoolean(IS_SENSITIVE, true)
+                putString(MARK, mark)
+            }
         context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(clip)
+        copied = mark
     }
+
+    override fun clearCopied() {
+        val mark = copied ?: return
+        copied = null
+        val clipboard = context.getSystemService(ClipboardManager::class.java)
+        // an app without the focus is shown no clip: nothing to check, so nothing is cleared
+        if (clipboard?.primaryClipDescription?.extras?.getString(MARK) != mark) return
+        if (atLeast(Build.VERSION_CODES.P)) {
+            clipboard.clearPrimaryClip()
+        } else {
+            // no way to empty the clipboard before Android 9: an empty clip takes the key's place
+            clipboard.setPrimaryClip(ClipData.newPlainText("", ""))
+        }
+    }
+
+    @ChecksSdkIntAtLeast(parameter = 0)
+    private fun atLeast(api: Int) = sdk >= api
 
     override fun discard(target: Uri) {
         try {
@@ -67,6 +99,9 @@ class AndroidKeyExports(
 
     private companion object {
         const val LABEL = "ngterm private key"
+
+        // names this app's own clip, so only that one is ever cleared
+        const val MARK = "com.nickalie.ngterm.android.EXPORTED_KEY"
 
         // ClipDescription.EXTRA_IS_SENSITIVE, named only since Android 13; older versions ignore it
         const val IS_SENSITIVE = "android.content.extra.IS_SENSITIVE"

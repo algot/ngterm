@@ -37,6 +37,11 @@ sealed interface ExportProblem {
     /** The passphrase was lost while the system's file screen was up (the app was restarted under it). */
     data object Interrupted : ExportProblem
 
+    /** The passphrase has fewer than [minimum] characters. */
+    data class ShortPassphrase(
+        val minimum: Int,
+    ) : ExportProblem
+
     /** The key is no longer on this device. */
     data object Gone : ExportProblem
 
@@ -58,7 +63,8 @@ data class ExportWork(
 /**
  * Exporting one of [keys]' private keys through [exports]. Nothing leaves before [unlock], which the route calls
  * only once the device's owner has confirmed it is them, and which lasts [UNLOCKED_FOR_MS] by [now] or until
- * [close]. The exported bytes are wiped once handed over; the unsealed key never reaches this class.
+ * [close], which also takes a copied key back off the clipboard. The exported bytes are wiped once handed over; the
+ * unsealed key never reaches this class.
  */
 class ExportKeyViewModel(
     private val keys: AppKeys,
@@ -77,9 +83,17 @@ class ExportKeyViewModel(
         state.value = ExportWork(keyId = keyId)
     }
 
-    /** The export screen is left: nothing can be exported until the owner confirms again. */
+    /**
+     * The export screen is left: nothing can be exported until the owner confirms again, and a key copied from it
+     * leaves the clipboard.
+     */
     fun close() {
         state.value = ExportWork()
+        try {
+            exports.clearCopied()
+        } catch (_: RuntimeException) {
+            // a clipboard that refuses keeps what it has; leaving the screen never crashes on it
+        }
     }
 
     /** Saves the key under [protection] into the document [target] the user made. */
@@ -101,7 +115,8 @@ class ExportKeyViewModel(
 
     /** Copies the key under [protection] to the clipboard. */
     fun copy(protection: ExportProtection) {
-        if (ready()) export(protection, ExportDone.Copied) { exports.copy(it) }
+        // a copy that is ready only after the screen was left would stay on the clipboard: it isn't made
+        if (ready()) export(protection, ExportDone.Copied) { if (state.value.busy) exports.copy(it) }
     }
 
     // whether an export may start: a key is unlocked, recently enough, and none is under way
@@ -129,6 +144,8 @@ class ExportKeyViewModel(
                     exported = keys.export(keyId, protection)
                     deliver(exported)
                     null
+                } catch (error: KeyException.PassphraseTooShort) {
+                    ExportProblem.ShortPassphrase(error.minimum.toInt())
                 } catch (error: KeyException) {
                     ExportProblem.Failed(error.describe())
                 } catch (_: VaultException.Missing) {

@@ -260,12 +260,12 @@ class StoresTest {
             val maker = FakeKeyMaker()
             val keys = AppKeys(testStore(dir.root, "keys"), vault, maker, "ngterm@test")
             val made = keys.generate()
-            maker.exportFailure = KeyException.Invalid("the passphrase is empty")
+            maker.exportFailure = KeyException.PassphraseTooShort(8u)
 
             val refused = runCatching { keys.export(made.id, ExportProtection.Passphrase("")) }
             val missing = runCatching { keys.export("gone", ExportProtection.Unprotected) }
 
-            assertTrue(refused.exceptionOrNull() is KeyException.Invalid)
+            assertTrue(refused.exceptionOrNull() is KeyException.PassphraseTooShort)
             assertTrue(maker.exportedFrom.single().all { it == 0.toByte() })
             assertTrue(missing.exceptionOrNull() is VaultException.Missing)
             assertEquals(1, maker.exportedFrom.size)

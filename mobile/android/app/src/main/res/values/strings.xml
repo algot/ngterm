@@ -386,9 +386,15 @@
   <string name="export_warning">This is the key your machines trust. Whoever has the exported key and its passphrase can sign in to them as you. Keep it where only you can reach it, and delete it once it\'s imported.</string>
   <string name="export_key_label">Key to export</string>
   <string name="export_passphrase_label">Passphrase</string>
-  <string name="export_passphrase_note">It encrypts the exported key. You type it again when you import the key.</string>
+  <plurals name="export_passphrase_note">
+    <item quantity="one">At least %1$d character. It encrypts the exported key, and you type it again when you import the key.</item>
+    <item quantity="other">At least %1$d characters. It encrypts the exported key, and you type it again when you import the key.</item>
+  </plurals>
   <string name="export_confirm_label">Passphrase again</string>
-  <string name="export_passphrase_empty">Enter a passphrase.</string>
+  <plurals name="export_passphrase_short">
+    <item quantity="one">Use at least %1$d character.</item>
+    <item quantity="other">Use at least %1$d characters.</item>
+  </plurals>
   <string name="export_passphrase_mismatch">The two passphrases differ.</string>
   <string name="export_unprotected">Export without a passphrase</string>
   <string name="export_unprotected_note">Not recommended</string>
@@ -397,10 +403,10 @@
   <string name="export_unprotected_body">The exported key won\'t be encrypted. Anyone who gets the file or reads the clipboard can sign in to your machines as you.</string>
   <string name="export_save">Save to a file</string>
   <string name="export_copy">Copy to the clipboard</string>
-  <string name="export_copy_note">A file is safer: other apps and your keyboard can read the clipboard.</string>
+  <string name="export_copy_note">A file is safer: other apps and your keyboard can read the clipboard. ngterm clears the key from it when you close this screen.</string>
   <string name="export_working">Exporting the key</string>
   <string name="export_saved">Saved. Delete the file once you\'ve imported the key.</string>
-  <string name="export_copied">Copied. Paste it where it\'s going, then copy something else to clear the clipboard.</string>
+  <string name="export_copied">Copied. Paste it where it\'s going: ngterm clears it from the clipboard when you close this screen.</string>
   <string name="export_expired">It\'s been a while since you unlocked. Go back and export again.</string>
   <string name="export_interrupted">ngterm was restarted while you chose the file, so nothing was written. Enter the passphrase and save again.</string>
   <string name="export_gone">This key is no longer on this device.</string>

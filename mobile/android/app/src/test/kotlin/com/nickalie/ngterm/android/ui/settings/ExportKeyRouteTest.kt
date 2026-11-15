@@ -129,9 +129,11 @@ class ExportKeyRouteTest {
         tap("Copy to the clipboard")
         compose.awaitText("Copied. Paste it", substring = true)
         assertEquals(listOf(fakeExport(stored, "correct horse")), exports.copied)
+        assertEquals(fakeExport(stored, "correct horse"), exports.clipboard)
 
         compose.onNodeWithContentDescription("Back").performClick()
         compose.awaitText("core settings-test")
+        assertEquals("the copied key left the clipboard with the screen", null, exports.clipboard)
         auth.answer = AuthResult.Cancelled
         tap("Export private key")
         compose.waitForIdle()
@@ -152,10 +154,14 @@ class ExportKeyRouteTest {
         tap("Export private key")
         compose.awaitText(FAKE_FINGERPRINT)
         typePassphrase()
+        tap("Copy to the clipboard")
+        compose.awaitText("Copied. Paste it", substring = true)
 
         onSettings = false
         compose.waitForIdle()
         assertEquals("the unlock ended with the screen", ExportWork(), model.work.value)
+        assertEquals("and the copied key left the clipboard", null, exports.clipboard)
+        exports.copied.clear()
         onSettings = true
 
         compose.awaitText("core settings-test")

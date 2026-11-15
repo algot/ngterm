@@ -1086,14 +1086,18 @@ The plan, reviewed against the brief:
   biometric, or the PIN, pattern or password); a device with no screen lock exports nothing and is sent to the
   system's security settings, and backing out of the prompt does nothing. Then a `ScreenFrame` with Back, secure
   window as the import's: a `Banner` in the attention tone saying what the key is and who can use it, the key's
-  fingerprint on a `KeyPlate`, the passphrase and "Passphrase again" (hidden, one Show toggle for both; what is
-  wrong shows under the field it is about, once an export was tried), and the switch "Export without a passphrase"
+  fingerprint on a `KeyPlate`, the passphrase and "Passphrase again" (hidden, one Show toggle for both; the rule,
+  at least eight characters, always reads under the passphrase; what is wrong takes its place, under the field it is
+  about, once an export was tried, and goes as soon as it is put right), and the switch "Export without a passphrase"
   (Not recommended), which hides the fields, shows an error-tone `Banner` and is confirmed again by a
   `ConfirmDialog` whose button repeats those words. **Save to a file** is the filled button (the system's screen for
   making a document; a spinner and "Exporting the key" while it works), **Copy to the clipboard** a text button
-  with the line that a file is safer; the clip is marked sensitive. How it went shows under them: a healthy
-  `Banner` (Saved, Copied, each with what to do next) or the problem in words. The unlock lasts five minutes and
-  ends when the screen is left. The key is written nowhere but the document the user makes or the clipboard.
+  with the line that a file is safer and that the copy is cleared when the screen is closed; the clip is marked
+  sensitive. How it went shows under them: a healthy `Banner` (Saved, Copied, each with what to do next) or the
+  problem in words. The unlock lasts five minutes and ends when the screen is left, by Back or for another
+  destination, and the copied key leaves the clipboard then, if it is still the app's own clip there (leaving the
+  app to paste the key is not leaving the screen). The key is written nowhere but the document the user makes or
+  the clipboard.
 - **About:** the app's name and the core's version in mono.
 - **States:** a spinner while the stores are read; the reason and Retry when they can't be.
 

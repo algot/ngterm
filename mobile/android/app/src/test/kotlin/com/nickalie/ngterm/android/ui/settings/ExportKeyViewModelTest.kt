@@ -146,9 +146,9 @@ class ExportKeyViewModelTest {
         val key = test.seedKey()
         val model = model()
         model.unlock(key.id)
-        test.maker.exportFailure = KeyException.Invalid("the passphrase is empty")
+        test.maker.exportFailure = KeyException.Invalid("not a stored key")
         model.save(target, locked)
-        assertEquals(ExportProblem.Failed("the passphrase is empty"), model.settled().problem)
+        assertEquals(ExportProblem.Failed("not a stored key"), model.settled().problem)
         assertEquals(listOf(target), exports.discarded)
 
         test.vault.delete(key.id)
@@ -213,13 +213,59 @@ class ExportKeyViewModelTest {
         model.close()
         gate.countDown()
         val deadline = System.currentTimeMillis() + 10_000
-        while (exports.copied.isEmpty()) {
+        while (test.maker.exports.isEmpty() || test.maker.exports.any { export -> export.any { it != 0.toByte() } }) {
             check(System.currentTimeMillis() < deadline) { "the export never ended" }
             Thread.sleep(10)
         }
 
-        assertEquals(1, exports.copied.size)
+        assertEquals("one export was made", 1, test.maker.exports.size)
+        assertTrue("a copy ready after the screen was left stays off the clipboard", exports.copied.isEmpty())
         assertEquals(ExportWork(), model.work.value)
+    }
+
+    @Test
+    fun leavingTheScreenClearsTheCopiedKeyFromTheClipboardAndNothingElse() {
+        val key = test.seedKey()
+        val model = model()
+        model.unlock(key.id)
+        model.copy(locked)
+        assertEquals(ExportDone.Copied, model.settled().done)
+        assertEquals(fakeExport(stored, "correct horse"), exports.clipboard)
+
+        model.close()
+        assertEquals("the key left the clipboard with the screen", null, exports.clipboard)
+
+        model.unlock(key.id)
+        model.copy(locked)
+        model.settled()
+        exports.clipboard = "another app's text"
+        model.close()
+        assertEquals("another app's text", exports.clipboard)
+    }
+
+    @Test
+    fun aClipboardThatRefusesToBeClearedDoesNotKeepTheScreenOpen() {
+        val key = test.seedKey()
+        val model = model()
+        model.unlock(key.id)
+        exports.clearFailure = SecurityException("the clipboard is not this app's now")
+
+        model.close()
+
+        assertEquals(ExportWork(), model.work.value)
+    }
+
+    @Test
+    fun aPassphraseTheCoreFindsTooShortIsSaidWithItsMinimum() {
+        val key = test.seedKey()
+        val model = model()
+        model.unlock(key.id)
+        test.maker.exportFailure = KeyException.PassphraseTooShort(8u)
+
+        model.copy(ExportProtection.Passphrase("short"))
+
+        assertEquals(ExportProblem.ShortPassphrase(8), model.settled().problem)
+        assertTrue(exports.copied.isEmpty())
     }
 
     @Test
@@ -227,9 +273,9 @@ class ExportKeyViewModelTest {
         val key = test.seedKey()
         val model = model()
         model.unlock(key.id)
-        test.maker.exportFailure = KeyException.Invalid("the passphrase is empty")
+        test.maker.exportFailure = KeyException.Invalid("not a stored key")
         model.copy(locked)
-        assertEquals(ExportProblem.Failed("the passphrase is empty"), model.settled().problem)
+        assertEquals(ExportProblem.Failed("not a stored key"), model.settled().problem)
 
         test.vault.delete(key.id)
         model.copy(locked)

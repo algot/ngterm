@@ -29,6 +29,10 @@ class FakeKeyExports : KeyExports {
     val saved = mutableMapOf<Uri, String>()
     val copied = mutableListOf<String>()
     val discarded = mutableListOf<Uri>()
+
+    /** What is on the clipboard: the fake's own copy, or what a test puts there as another app would. */
+    var clipboard: String? = null
+    private var mine: String? = null
     val handed = mutableListOf<ByteArray>()
 
     /** When set, [save] fails with it. */
@@ -46,6 +50,17 @@ class FakeKeyExports : KeyExports {
     override fun copy(key: ByteArray) {
         handed += key
         copied += String(key)
+        clipboard = copied.last()
+        mine = clipboard
+    }
+
+    /** When set, [clearCopied] fails with it. */
+    var clearFailure: RuntimeException? = null
+
+    override fun clearCopied() {
+        clearFailure?.let { throw it }
+        if (mine != null && clipboard === mine) clipboard = null
+        mine = null
     }
 
     override fun discard(target: Uri) {

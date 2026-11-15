@@ -20,10 +20,11 @@ internal struct ErrorReasonTests {
     }
 
     @Test(
-        "a key's failure says why it couldn't be made or imported",
+        "a key's failure says why it couldn't be made, imported or exported",
         arguments: [
             (KeyError.PassphraseRequired, "the key is protected by a passphrase"),
             (KeyError.WrongPassphrase, "the passphrase doesn't open the key"),
+            (KeyError.PassphraseTooShort(minimum: 8), "the passphrase needs at least 8 characters"),
             (KeyError.Invalid(reason: "not a key"), "not a key"),
         ]
     )

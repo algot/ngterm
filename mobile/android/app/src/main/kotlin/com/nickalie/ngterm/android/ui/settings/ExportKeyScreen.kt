@@ -15,6 +15,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -32,13 +33,27 @@ import com.nickalie.ngterm.android.ui.onboarding.SecureWindow
 import com.nickalie.ngterm.android.ui.theme.NgtermTheme
 import com.nickalie.ngterm.android.ui.theme.StatusTone
 import com.nickalie.ngterm.core.ffi.ExportProtection
+import java.text.BreakIterator
+
+/** The fewest characters of an export's passphrase: the mobile core's rule, which refuses a shorter one itself. */
+internal const val EXPORT_PASSPHRASE_MIN = 8
+
+/** How many characters [text] has as a person counts them: an accented letter or an emoji is one. */
+internal fun characters(text: String): Int {
+    val breaks = BreakIterator.getCharacterInstance()
+    breaks.setText(text)
+    var count = 0
+    while (breaks.next() != BreakIterator.DONE) count++
+    return count
+}
 
 /** Where an export goes, as the screen's two actions name it. */
 private enum class Target { File, Clipboard }
 
 /**
  * Exporting the private key [fingerprint] names, after the device's owner confirmed it is them: what the exported
- * key is, the passphrase that encrypts it (typed twice), or the explicit choice of none, which is confirmed again;
+ * key is, the passphrase that encrypts it (typed twice, [EXPORT_PASSPHRASE_MIN] characters or more), or the explicit
+ * choice of none, which is confirmed again;
  * then Save to a file ([onSave]) or Copy to the clipboard ([onCopy]) with the protection chosen. [work] says how the
  * last one went. The passphrase lives only in this screen's memory, never in saved state; the window is secure
  * while it is up.
@@ -65,7 +80,7 @@ fun ExportKeyScreen(
     val start = { target: Target ->
         when {
             unprotected -> asking = target
-            passphrase.isEmpty() || passphrase != again -> checked = true
+            characters(passphrase) < EXPORT_PASSPHRASE_MIN || passphrase != again -> checked = true
             else -> send(target, ExportProtection.Passphrase(passphrase))
         }
     }
@@ -136,15 +151,20 @@ private fun Passphrases(
     onAgain: (String) -> Unit,
 ) {
     var shown by remember { mutableStateOf(false) }
-    val empty = checked && passphrase.isEmpty()
-    val differ = checked && !empty && passphrase != again
+    val short = checked && characters(passphrase) < EXPORT_PASSPHRASE_MIN
+    val differ = checked && !short && passphrase != again
     Column(verticalArrangement = Arrangement.spacedBy(NgtermTheme.spacing.sm)) {
         SecretField(
             value = passphrase,
             onValueChange = onPassphrase,
             label = stringResource(R.string.export_passphrase_label),
-            note = stringResource(if (empty) R.string.export_passphrase_empty else R.string.export_passphrase_note),
-            isError = empty,
+            note =
+                pluralStringResource(
+                    if (short) R.plurals.export_passphrase_short else R.plurals.export_passphrase_note,
+                    EXPORT_PASSPHRASE_MIN,
+                    EXPORT_PASSPHRASE_MIN,
+                ),
+            isError = short,
             shown = shown,
             enabled = enabled,
             imeAction = ImeAction.Next,
@@ -240,6 +260,7 @@ private fun ExportProblem.words(): String =
     when (this) {
         ExportProblem.Expired -> stringResource(R.string.export_expired)
         ExportProblem.Interrupted -> stringResource(R.string.export_interrupted)
+        is ExportProblem.ShortPassphrase -> pluralStringResource(R.plurals.export_passphrase_short, minimum, minimum)
         ExportProblem.Gone -> stringResource(R.string.export_gone)
         is ExportProblem.Failed -> stringResource(R.string.export_failed, reason)
     }

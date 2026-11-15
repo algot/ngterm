@@ -887,12 +887,21 @@ pub fn import_key(private_key: Vec<u8>, passphrase: Option<String>) -> Result<Ke
 ///
 /// # Errors
 ///
-/// [`KeyError::Invalid`] for an empty passphrase or bytes that aren't a stored key; [`KeyError::PassphraseRequired`]
-/// for bytes that are an encrypted key, which a vault never holds.
+/// [`KeyError::PassphraseTooShort`] for a passphrase under [`export_passphrase_min_chars`] characters;
+/// [`KeyError::Invalid`] for bytes that aren't a stored key; [`KeyError::PassphraseRequired`] for bytes that are an
+/// encrypted key, which a vault never holds.
 #[uniffi::export]
 pub fn export_key(private_key: Vec<u8>, protection: ExportProtection) -> Result<Vec<u8>, KeyError> {
     let private_key = zeroize::Zeroizing::new(private_key);
     keys::export(&private_key, protection).map(|exported| exported.as_bytes().to_vec())
+}
+
+/// The fewest characters (as a person counts them) [`export_key`] takes for a passphrase, for the app to say under
+/// its field.
+#[uniffi::export]
+#[must_use]
+pub fn export_passphrase_min_chars() -> u32 {
+    keys::EXPORT_PASSPHRASE_MIN_CHARS
 }
 
 #[cfg(test)]
@@ -1036,6 +1045,22 @@ mod tests {
             import_key(b"not a key".to_vec(), Some("secret".to_owned())),
             Err(KeyError::Invalid { .. })
         ));
+    }
+
+    #[test]
+    fn an_export_under_a_passphrase_shorter_than_the_minimum_is_refused_with_that_minimum() {
+        let pair = generate_key("phone".to_owned()).unwrap();
+        let minimum = super::export_passphrase_min_chars();
+        let passphrase = |length: u32| ExportProtection::Passphrase {
+            passphrase: "é".repeat(length as usize),
+        };
+
+        assert_eq!(minimum, 8);
+        assert_eq!(
+            export_key(pair.private_key.clone(), passphrase(minimum - 1)),
+            Err(KeyError::PassphraseTooShort { minimum })
+        );
+        assert!(export_key(pair.private_key, passphrase(minimum)).is_ok());
     }
 
     #[test]

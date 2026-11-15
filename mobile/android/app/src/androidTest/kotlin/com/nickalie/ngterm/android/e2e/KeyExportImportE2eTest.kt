@@ -36,8 +36,9 @@ import java.io.File
 /**
  * A key leaves the app and comes back, end to end, as when a person moves to another install of ngterm: the app makes
  * its key (the real mobile core, sealed by the device's Keystore), Settings' Export private key asks for the screen
- * lock through the system's own prompt, the key is copied under a passphrase, and Import a key reads that text back
- * with the passphrase into the same public key; the wrong passphrase is refused.
+ * lock through the system's own prompt, the key is copied under a passphrase and leaves the clipboard when the export
+ * screen is closed, and Import a key reads that text back with the passphrase into the same public key; the wrong
+ * passphrase is refused.
  *
  * The device gets a screen lock for the test ([PIN]) and loses it after; a device that has its own is skipped, since
  * the test can't unlock it. It needs no machine, but it needs the first run, so an app process of its own: the app's
@@ -118,6 +119,7 @@ class KeyExportImportE2eTest {
         compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
 
         awaitText("Import a key")
+        assertEquals("the copied key left the clipboard with the export screen", "", clipboard())
         tap("Import a key")
         field("Private key").performTextReplacement(exported)
         tap("Import key")
