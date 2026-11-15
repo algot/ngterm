@@ -13,14 +13,17 @@ Usage: scripts/repair-dependabot-lock.py fix HEAD_SHA BRANCH OUT
            commit LOCK (a file, read as data) as HEAD_SHA's Cargo.lock on top of HEAD_SHA; needs no cargo
        scripts/repair-dependabot-lock.py workflows
            the workflows a Cargo.lock change starts on a pull request, one per line
-       scripts/repair-dependabot-lock.py status ACTION CONCLUSION
-           the commit status state that reports a workflow run's `workflow_run` event
+       scripts/repair-dependabot-lock.py status RUN RUNS
+           the commit status, as the JSON body to post, of the commit of RUN (a file: a workflow run as the API gives
+           it): the state now of the newest dispatched run of that workflow on that commit, RUN or one in RUNS (a
+           file: the API's list of the workflow's runs)
        scripts/repair-dependabot-lock.py --self-test
 `fix` and `commit` append `repaired=true` and `commit=SHA` to $GITHUB_OUTPUT when they produced one. Neither pushes.
 The self-test needs cargo and PyYAML.
 """
 
 import contextlib
+import json
 import os
 import re
 import subprocess
@@ -133,13 +136,28 @@ def output(line):
             file.write(line + "\n")
 
 
-def status_state(action, conclusion):
-    """The commit status state for a `workflow_run` event of a dispatched run."""
-    if action != "completed":
+def status_state(status, conclusion):
+    """The commit status state for a workflow run in `status` (the API's, or a `workflow_run` event's action)."""
+    if status != "completed":
         return "pending"
     if conclusion in ("success", "neutral", "skipped"):
         return "success"
     return "error" if conclusion in ("cancelled", "stale") else "failure"
+
+
+def commit_status(run, listed):
+    """The commit status that reports `run`'s workflow on `run`'s commit.
+
+    It is the state of the newest dispatched run of that workflow on that commit, not of `run` itself: every event
+    of every such run then posts the same status, so neither their order nor a superseded run's late end matters. A
+    re-run keeps its run's number, and the API gives its last attempt.
+    """
+    same = ("workflow_id", "head_sha", "event")
+    runs = [other for other in listed if all(other[key] == run[key] for key in same)] + [run]
+    newest = max(runs, key=lambda other: other["run_number"])  # `listed` was read after `run`: on a tie it wins
+    result = newest["conclusion"] or "" if newest["status"] == "completed" else ""
+    return {"state": status_state(newest["status"], result), "context": run["name"], "target_url": newest["html_url"],
+            "description": f"{result or 'running'} (dispatched on the repaired Cargo.lock)"}
 
 
 def path_pattern(pattern):
@@ -186,11 +204,11 @@ def lock_workflows(directory):
     return found
 
 
-def reported_workflows(directory):
-    """The workflow names dependabot-lock-checks.yml reports the runs of."""
+def reported_runs(directory):
+    """The `workflow_run` trigger of dependabot-lock-checks.yml: the workflows and the events it reports."""
     import yaml
 
-    return triggers(yaml.safe_load((Path(directory) / "dependabot-lock-checks.yml").read_text()))["workflow_run"]["workflows"]
+    return triggers(yaml.safe_load((Path(directory) / "dependabot-lock-checks.yml").read_text()))["workflow_run"]
 
 
 LOCK_TEXT = 'version = 4\n\n[[package]]\nname = "app"\nversion = "0.1.0"\ndependencies = [\n "sys {}",\n]\n'
@@ -318,6 +336,29 @@ def trigger_test():
               ("completed", "action_required"): "failure", ("completed", ""): "failure", ("completed", "cancelled"): "error"}
     assert {case: status_state(*case) for case in states} == states
 
+    def run(number, status, conclusion=None, **other):
+        return {"workflow_id": 7, "head_sha": "a" * 40, "event": "workflow_dispatch", "name": "linux", "run_number": number,
+                "status": status, "conclusion": conclusion, "html_url": f"https://example.invalid/runs/{number}"} | other
+
+    def posted(event_run, *listed):
+        status = commit_status(event_run, list(listed))
+        assert status["context"] == "linux"
+        return status["state"], status["target_url"][-1], status["description"].split(" ")[0]
+
+    assert posted(run(1, "queued")) == ("pending", "1", "running")
+    assert posted(run(1, "completed", "startup_failure")) == ("failure", "1", "startup_failure")
+    # the event is behind the run: a late `requested` of a run that has ended, a re-run of one that had passed
+    assert posted(run(1, "queued"), run(1, "completed", "failure")) == ("failure", "1", "failure")
+    assert posted(run(1, "completed", "success"), run(1, "in_progress", "success")) == ("pending", "1", "running")
+    # a superseded run's late end does not replace the status of the run dispatched after it, in either list order
+    old, new = run(1, "completed", "cancelled"), run(2, "in_progress")
+    assert posted(old, new, old) == posted(old, old, new) == posted(new, old) == ("pending", "2", "running")
+    assert posted(old, run(2, "completed", "success")) == ("success", "2", "success")
+    # not this commit's, not this workflow's, not dispatched
+    others = [run(9, "completed", "success", head_sha="b" * 40), run(9, "completed", "success", workflow_id=8),
+              run(9, "completed", "success", event="pull_request")]
+    assert posted(run(1, "completed", "failure"), *others) == ("failure", "1", "failure")
+
 
 def self_test():
     os.environ["GIT_CONFIG_GLOBAL"] = os.environ["GIT_CONFIG_SYSTEM"] = os.devnull
@@ -395,8 +436,12 @@ def self_test():
     found = lock_workflows(workflows)
     assert [file for file, _, _ in found] == WORKFLOWS, f"WORKFLOWS is not the workflows a Cargo.lock change starts: {found}"
     assert all(dispatch for _, _, dispatch in found), f"a workflow to dispatch has no workflow_dispatch trigger: {found}"
-    reported = reported_workflows(workflows)
-    assert reported == [name for _, name, _ in found], f"dependabot-lock-checks.yml reports {reported}, not {found}"
+    reported = reported_runs(workflows)
+    names = [name for _, name, _ in found]
+    assert reported["workflows"] == names, f"dependabot-lock-checks.yml reports {reported['workflows']}, not {found}"
+    # a re-run has no `requested` event: without `in_progress` its commit keeps the result of the attempt before
+    events = ["requested", "in_progress", "completed"]
+    assert reported["types"] == events, f"dependabot-lock-checks.yml reports on {reported['types']}, not {events}"
     print("repair-dependabot-lock: self-test passed")
     return 0
 
@@ -408,7 +453,8 @@ def main(argv):
         print("\n".join(WORKFLOWS))
         return 0
     if len(argv) == 3 and argv[0] == "status":
-        print(status_state(argv[1], argv[2]))
+        run, listed = (json.loads(Path(path).read_text()) for path in argv[1:])
+        print(json.dumps(commit_status(run, listed["workflow_runs"])))
         return 0
     if len(argv) != 4 or argv[0] not in ("fix", "commit"):
         print(__doc__.strip().split("\n\n")[-1], file=sys.stderr)

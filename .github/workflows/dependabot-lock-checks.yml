@@ -4,6 +4,12 @@
 # commit as a commit status named after its workflow, linking the run: pending when the run starts, its result when
 # it ends. A status is shown on the pull request, and is what a required check of that name is held to.
 #
+# Each event of such a run (`in_progress` too: a re-run has no `requested`) posts the same thing, the state the newest
+# dispatched run of that workflow on that commit is in when the job reads it, and the jobs of one workflow and commit
+# run one at a time. So the status does not depend on the order the events are handled in: a run that ends before
+# its `requested` job posts is not left pending, and a superseded run's late end does not replace its successor's
+# status.
+#
 # `workflow_run`: this file and the script are the default branch's, the run's own data comes from the event, and
 # nothing of the branch is checked out or run. Only dispatched runs on a `dependabot/cargo/` branch of this repository
 # are reported: nobody without write access can dispatch one, and a pull request's own runs report themselves.
@@ -15,10 +21,15 @@ name: dependabot-lock-checks
 on:
   workflow_run:
     workflows: [android, conformance-gate, cross-platform, ios, linux, windows-installer]
-    types: [requested, completed]
+    types: [requested, in_progress, completed]
     branches: ["dependabot/cargo/**"]
 
 permissions: {}
+
+# never cancels a running job; a waiting one gives way to a newer one, which posts the same status or a newer one
+concurrency:
+  group: dependabot-lock-checks-${{ github.event.workflow_run.workflow_id }}-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
 
 jobs:
   status:
@@ -29,6 +40,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
+      actions: read
       contents: read
       statuses: write
     steps:
@@ -41,13 +53,12 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          ACTION: ${{ github.event.action }}
-          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
-          WORKFLOW: ${{ github.event.workflow_run.name }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          WORKFLOW_ID: ${{ github.event.workflow_run.workflow_id }}
           COMMIT: ${{ github.event.workflow_run.head_sha }}
-          RUN_URL: ${{ github.event.workflow_run.html_url }}
         run: |
-          state="$(scripts/repair-dependabot-lock.py status "$ACTION" "$CONCLUSION")"
-          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$COMMIT" \
-            -f state="$state" -f context="$WORKFLOW" -f target_url="$RUN_URL" \
-            -f description="${CONCLUSION:-running} (dispatched on the repaired Cargo.lock)"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" > "$RUNNER_TEMP/run.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$WORKFLOW_ID/runs?head_sha=$COMMIT&event=workflow_dispatch&per_page=100" \
+            > "$RUNNER_TEMP/runs.json"
+          scripts/repair-dependabot-lock.py status "$RUNNER_TEMP/run.json" "$RUNNER_TEMP/runs.json" > "$RUNNER_TEMP/status.json"
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$COMMIT" --input "$RUNNER_TEMP/status.json"

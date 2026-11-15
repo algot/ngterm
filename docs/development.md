@@ -1436,9 +1436,11 @@ already holds changes no file, so the path-filtered workflows don't start on it.
   and each rebase is repaired again.
 - `dependabot-lock-checks.yml` (the runs the workflow above dispatches): GitHub shows no dispatched run's checks on a
   pull request, so this reports each of those runs on the repaired commit as a commit status named after its workflow
-  (`linux`, `android`, ...), pending and then the run's result, with a link to the run. Those statuses are the
-  repaired pull request's checks: there is one per workflow, not one per job, and a required check on such a pull
-  request has to name a workflow. A dispatched run builds the branch as pushed, not its merge with `main`.
+  (`linux`, `android`, ...), pending and then the run's result, with a link to the run. The status is the state of
+  the newest dispatched run of that workflow on the commit, so a re-run or a second dispatch turns it pending again.
+  Those statuses are the repaired pull request's checks: there is one per workflow, not one per job, and a required
+  check on such a pull request has to name a workflow. A dispatched run builds the branch as pushed, not its merge
+  with `main`.
 - `reference-macos.yml` (PRs that change `conformance/`, and by hand): the suite against upstream's macOS release.
 
 ### Sharded suite
