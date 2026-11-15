@@ -30,7 +30,10 @@ def stage(tmp_path: Path) -> Path:
     return stage
 
 
-@pytest.mark.parametrize("modified_ns", [MODIFIED_NS, 1_700_000_000_000_456_789, 999_999_999, 1_700_000_000_000_000_000])
+@pytest.mark.parametrize(
+    "modified_ns",
+    [MODIFIED_NS, 1_700_000_000_000_456_789, 999_999_999, 1_700_000_000_000_000_000, 1_700_000_000_999_999_999],
+)
 def test_the_id_line_names_the_modification_time_to_the_nanosecond(tmp_path: Path, modified_ns: int) -> None:
     """Every digit, where a stat that formats the time through a float (uutils `%.9Y`) rounds the last ones."""
     binary = tmp_path / "ngterm-session"
@@ -43,6 +46,35 @@ def test_the_id_line_names_the_modification_time_to_the_nanosecond(tmp_path: Pat
         capture_output=True, text=True, check=False,
     )
     assert (done.returncode, done.stdout) == (0, f"6 {modified_ns}\n"), done.stderr
+
+
+@pytest.mark.parametrize(
+    ("seconds", "readable", "modified_ns"),
+    [
+        # 1700000000.999999900 as a float is 1700000001.0
+        (1_700_000_001, "2023-11-14 22:13:20.999999900 +0000", 1_700_000_000_999_999_900),
+        # the carry crosses a minute
+        (1_700_000_040, "2023-11-14 22:13:59.999999999 +0000", 1_700_000_039_999_999_999),
+        (1_700_000_000, "2023-11-14 22:13:20.123456789 +0000", MODIFIED_NS),
+    ],
+)
+def test_the_id_line_takes_back_a_second_the_stat_rounded_up(seconds: int, readable: str, modified_ns: int) -> None:
+    """The uutils `%Y` goes through a float too: a fraction just under a whole second carries into the seconds."""
+    stat = f'stat() {{ [[ "$1" == --version ]] || echo "6 {seconds} {readable}"; }}'
+    done = subprocess.run(
+        ["bash", "-c", f'source "$1" && {stat} && size_and_mtime_ns binary', "bash", NATIVE],
+        capture_output=True, text=True, check=False,
+    )
+    assert (done.returncode, done.stdout) == (0, f"6 {modified_ns}\n"), done.stderr
+
+
+def test_the_id_line_refuses_seconds_the_readable_time_does_not_hold() -> None:
+    stat = 'stat() { [[ "$1" == --version ]] || echo "6 1700000007 2023-11-14 22:13:20.000000000 +0000"; }'
+    done = subprocess.run(
+        ["bash", "-c", f'source "$1" && {stat} && size_and_mtime_ns binary', "bash", NATIVE],
+        capture_output=True, text=True, check=False,
+    )
+    assert (done.returncode, done.stdout) == (1, ""), done.stderr
 
 
 def test_an_unpacked_stage_keeps_what_its_build_id_names(tmp_path: Path, stage: Path) -> None:

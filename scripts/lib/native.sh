@@ -83,15 +83,21 @@ sha256_of() {
 # FILE's size in bytes and modification time in nanoseconds since the Unix epoch, as `<size> <mtime-ns>`: GNU stat
 # (Linux, Git Bash), else BSD stat (stock macOS). The GNU form takes the whole seconds (%Y) and the nine digits of
 # the readable time (%y), not `%.9Y`: the uutils stat (Ubuntu 26.04's) passes that one through a float and loses
-# the last digits. In the C locale, whose decimal point is the dot (a comma-decimal locale's stat writes a comma).
+# the last digits. Its %Y goes through the same float, which rounds a fraction just under a whole second up into the
+# seconds, so the seconds of the readable time (in UTC, where they are the epoch's own) take that one back. In the C
+# locale, whose decimal point is the dot (a comma-decimal locale's stat writes a comma).
 size_and_mtime_ns() {
-  local stat size seconds time fraction
+  local stat size seconds time fraction carried
   if stat --version >/dev/null 2>&1; then
-    # `<size> <seconds> <date> <time>.<nine digits> <zone>`
-    stat="$(LC_ALL=C stat -c '%s %Y %y' "$1")" || return 1
+    # `<size> <seconds> <date> <hours>:<minutes>:<seconds>.<nine digits> <zone>`
+    stat="$(LC_ALL=C TZ=UTC stat -c '%s %Y %y' "$1")" || return 1
     read -r size seconds _ time _ <<<"$stat"
-    fraction="${time#*.}"
-    [[ "$time" == *.* && "$fraction" =~ ^[0-9]{9}$ ]] || return 1
+    [[ "$seconds" =~ ^-?[0-9]+$ && "$time" =~ ^[0-9]{2}:[0-9]{2}:([0-9]{2})\.([0-9]{9})$ ]] || return 1
+    fraction="${BASH_REMATCH[2]}"
+    # how far %Y is past the readable time's seconds: nothing, or the one second a float rounded up
+    carried=$((((seconds - 10#${BASH_REMATCH[1]}) % 60 + 60) % 60))
+    ((carried <= 1)) || return 1
+    seconds=$((seconds - carried))
     stat="$size $seconds.$fraction"
   else
     stat="$(LC_ALL=C stat -f '%z %.9Fm' "$1")" || return 1
