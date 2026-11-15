@@ -3,7 +3,7 @@
 ## Overview
 
 - Bring ngterm from upstream `umputun/agterm` v0.41.1 to v0.42.3 (104 commits; releases v0.42.0 of 2026-11-11,
-  v0.42.1 of 2026-11-12, v0.42.2 and v0.42.3 of 2026-11-13). The mechanical part is commit `51a3f37b`, before this plan
+  v0.42.1 of 2026-11-12, v0.42.2 and v0.42.3 of 2026-11-13). The mechanical part is commit `ea08c441`, before this plan
   on the branch: the catalog and ui ids regenerated from v0.42.3 (11 commands, 14 fields, 11 CLI leaves, 4 ui ids),
   the parity target, the macOS reference level and the committed-catalog snapshots moved, the 4 new ui ids parked in
   `crates/ngterm-gpui/src/ui_ids.rs` `PENDING`. Left out: the Rust claim (Task 41), the agent-status package and the

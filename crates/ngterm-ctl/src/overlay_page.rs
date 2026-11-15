@@ -130,15 +130,20 @@ pub struct PageRunner<'a> {
 
 impl PageRunner<'_> {
     /// Opens the page with `open`, then polls its outcome until it leaves `pending`, prints it and exits with its
-    /// status. A page companion's open refused by an app predating companions names that, outside `--json` (upstream's
-    /// `companionSend`).
+    /// status. A page row's open (a page companion, a page session) refused by an app predating it names that, outside
+    /// `--json` (upstream's `companionSend`).
     pub fn block(&mut self, open: &Request) -> Result<(), Failure> {
         let opened = self.io.send(open)?;
-        if !self.json
-            && open.cmd == Command::Session(SessionCmd::CompanionPage)
+        let too_old = match open.cmd {
+            Command::Session(SessionCmd::CompanionPage) => Some(crate::companions::TOO_OLD),
+            Command::Session(SessionCmd::Page) => Some(crate::companions::TOO_OLD_FOR_PAGES),
+            _ => None,
+        };
+        if let Some(too_old) = too_old
+            && !self.json
             && crate::companions::refuses_unknown(&opened.response, open.cmd)
         {
-            self.io.error_output(crate::companions::TOO_OLD);
+            self.io.error_output(too_old);
             return Err(Failure::Exit(ExitCode::FAILURE));
         }
         self.require_success(&opened)?;
@@ -462,23 +467,33 @@ mod tests {
         );
     }
 
-    /// A blocked page companion refused by an app predating companions names that, and `--json` keeps the raw reply.
+    /// A blocked page row refused by an app predating it names that, a page companion and a page session each in its
+    /// own words, and `--json` keeps the raw reply.
     #[test]
-    fn a_blocked_page_companion_on_an_app_too_old_for_it_says_so() {
-        let companion = Request {
-            cmd: Command::Session(SessionCmd::CompanionPage),
-            ..open_request()
-        };
-        let unknown = r#"{"ok":false,"error":"invalid request: unknown variant session.companion.page"}"#;
-        for json in [false, true] {
-            let mut io = FakeIo::new(|_: &Request| Ok(reply(unknown)));
-            let status = exit_status(PageRunner { json, io: &mut io }.block(&companion));
-            assert_eq!(status, Some(ExitCode::FAILURE));
-            assert_eq!(io.requests.len(), 1);
-            if json {
-                assert_eq!(io.lines, [unknown]);
-            } else {
-                assert_eq!(io.errors, [crate::companions::TOO_OLD]);
+    fn a_blocked_page_row_on_an_app_too_old_for_it_says_so() {
+        let rows = [
+            (SessionCmd::CompanionPage, crate::companions::TOO_OLD),
+            (SessionCmd::Page, crate::companions::TOO_OLD_FOR_PAGES),
+        ];
+        for (cmd, too_old) in rows {
+            let row = Request {
+                cmd: Command::Session(cmd),
+                ..open_request()
+            };
+            let unknown = format!(
+                r#"{{"ok":false,"error":"invalid request: unknown variant {}"}}"#,
+                row.cmd
+            );
+            for json in [false, true] {
+                let mut io = FakeIo::new(|_: &Request| Ok(reply(&unknown)));
+                let status = exit_status(PageRunner { json, io: &mut io }.block(&row));
+                assert_eq!(status, Some(ExitCode::FAILURE));
+                assert_eq!(io.requests.len(), 1);
+                if json {
+                    assert_eq!(io.lines, [unknown.as_str()]);
+                } else {
+                    assert_eq!(io.errors, [too_old]);
+                }
             }
         }
     }

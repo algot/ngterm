@@ -509,7 +509,7 @@ def test_scratch_cwd_reads_back_while_the_session_has_a_scratch(ctl):
         assert_absent(_node(ctl, sid), "scratchCwd")
         assert_ok(ctl.request("session.scratch", sid, mode="on"))
         # the scratch shell starts in the session's directory
-        node = ctl.wait_tree(lambda tree: "scratchCwd" in find_session(tree, sid) and find_session(tree, sid))
+        node = find_session(ctl.wait_tree(lambda tree: "scratchCwd" in find_session(tree, sid)), sid)
         assert node["scratchCwd"] == node["cwd"], node
         # a hidden scratch keeps its shell, so its directory stays
         assert_ok(ctl.request("session.scratch", sid, mode="off"))

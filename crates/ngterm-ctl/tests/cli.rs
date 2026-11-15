@@ -1230,6 +1230,18 @@ fn convert_prints_the_fresh_parent_and_an_app_too_old_is_named() -> TestResult {
             "error: the running app is too old for page sessions\n".to_owned()
         )
     );
+    // a blocked page session opens through the page runner, which names the old app the same way
+    let html = dir.path().join("page.html");
+    std::fs::write(&html, "<html></html>")?;
+    let blocked = ["session", "overlay", "open", "--html", "page.html", "--page", "--block"];
+    assert_eq!(
+        outcome(&run_on(dir.path(), &old, &blocked)?),
+        (
+            Some(1),
+            String::new(),
+            "error: the running app is too old for page sessions\n".to_owned()
+        )
+    );
     Ok(())
 }
 

@@ -200,7 +200,7 @@ struct TreeResult {
 const NOT_JSON: &str = "The given data was not valid JSON.";
 
 /// The refusal of a command sent with an operation id (upstream's dispatcher, naming this build's headless server:
-/// conformance/docs/rust-build.md > renamed strings). Only that server keeps receipts.
+/// conformance/docs/rust-build.md > Other strings of the build's own). Only that server keeps receipts.
 pub const OPERATION_RECEIPTS_ERROR: &str = "operation receipts are served only by ngterm-headless";
 
 /// Decodes one request line (newline excluded), as upstream's `handleConnection` decodes a `ControlRequest`
@@ -918,8 +918,8 @@ impl Core {
             }
             Command::Recent(cmd) => result_or_success(commands::recent::dispatch(self, cmd, request)?),
             Command::Agent(cmd) => result_of(&commands::agent::dispatch(self, cmd, request)?),
-            // `browser.clear` and `config.reload` start through `deferred`
             Command::Catalog(cmd) => Err(commands::catalog::refusal(cmd, request)),
+            // `browser.clear` and `config.reload` start through `deferred`
             cmd @ (Command::Browser(BrowserCmd::Clear) | Command::Config(_) | Command::Live(_)) => {
                 Err(ControlError::NotSupported(cmd))
             }
