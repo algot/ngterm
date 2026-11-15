@@ -176,6 +176,9 @@ pub enum TitlebarEvent {
         kind: PopoverKind,
         anchor: gpui_kit::Point<Pixels>,
     },
+    /// The maximize button or a double click on the bar: the window maximizes or restores, through its own requests
+    /// ([`crate::window_zoom`]).
+    ToggleZoom,
 }
 
 /// Where a popover opened by a click on the bar hangs from: the pointer's x at the bar's bottom edge.
@@ -608,7 +611,7 @@ impl Titlebar {
         match event.button {
             MouseButton::Left if event.click_count >= 2 => {
                 self.pressed = false;
-                window.zoom_window();
+                cx.emit(TitlebarEvent::ToggleZoom);
             }
             MouseButton::Left => self.pressed = true,
             MouseButton::Right if draws_controls(window.window_decorations()) => {
@@ -1066,11 +1069,18 @@ impl Titlebar {
     }
 
     /// The window controls of one side.
-    fn window_controls(&self, buttons: Vec<WindowButton>, colors: ChromeColors, window: &Window) -> Div {
+    fn window_controls(
+        &self,
+        buttons: Vec<WindowButton>,
+        colors: ChromeColors,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Div {
         let ink = chrome::color(colors.foreground, 1.0);
         let maximized = window.is_maximized();
         let id = self.window;
         let poster = self.poster.clone();
+        let bar = cx.entity().downgrade();
         let controls = buttons.into_iter().map(move |button| {
             let name = match button {
                 WindowButton::Minimize => IconName::WindowMinimize,
@@ -1078,7 +1088,7 @@ impl Titlebar {
                 WindowButton::Maximize => IconName::WindowMaximize,
                 WindowButton::Close => IconName::WindowClose,
             };
-            let poster = poster.clone();
+            let (poster, bar) = (poster.clone(), bar.clone());
             // Windows hit-tests the control as its own (the maximize button's hover opens Windows 11's snap layouts);
             // the press and the click stay the bar's, which handles them as on Linux
             let area = match button {
@@ -1093,9 +1103,11 @@ impl Titlebar {
                 .wash(ink)
                 .keeps_keyboard()
                 .when(cfg!(windows), |control| control.window_control_area(area))
-                .on_click(move |_, window, _| match button {
+                .on_click(move |_, window, cx| match button {
                     WindowButton::Minimize => window.minimize_window(),
-                    WindowButton::Maximize => window.zoom_window(),
+                    WindowButton::Maximize => {
+                        let _ = bar.update(cx, |_, cx| cx.emit(TitlebarEvent::ToggleZoom));
+                    }
                     // through the app's close path, as the window manager's close button goes
                     WindowButton::Close => post(&poster, move |state: &mut AppState| state.close_requested(id)),
                 })
@@ -1130,8 +1142,8 @@ impl Render for Titlebar {
             _ => bar.model.label.clone(),
         };
         let drawn = draws_controls(decorations);
-        let leading = self.window_controls(controls(drawn, supported, layout, true), colors, window);
-        let trailing = self.window_controls(controls(drawn, supported, layout, false), colors, window);
+        let leading = self.window_controls(controls(drawn, supported, layout, true), colors, window, cx);
+        let trailing = self.window_controls(controls(drawn, supported, layout, false), colors, window, cx);
         let uncovered = bar.cover == Cover::None;
         // a translucent window's backing shows through the bar (upstream's chrome paints nothing below full opacity)
         let see_through = chrome::see_through(window, cx);

@@ -764,3 +764,20 @@ fn the_buttons_do_nothing_after_the_quit_save(cx: &mut TestAppContext) {
     h.state.exit_dashboard(window);
     assert!(h.state.core.dashboard(window).is_some(), "still open");
 }
+
+/// A double click on the bar asks its window to maximize or restore; the window sends the request
+/// (`crate::window_zoom`), so the bar itself asks the window manager for nothing.
+#[gpui_kit::test]
+fn a_double_click_on_the_bar_asks_the_window_to_zoom(cx: &mut TestAppContext) {
+    let (h, cx) = harness(cx, |_| {});
+    let bar = cx.debug_bounds("titlebar").expect("the bar is drawn");
+    let press = |click_count: usize| MouseDownEvent {
+        button: MouseButton::Left,
+        position: bar.center(),
+        modifiers: gpui_kit::Modifiers::default(),
+        click_count,
+        first_mouse: false,
+    };
+    cx.simulate_event(press(2));
+    assert_eq!(*h.events.borrow(), [TitlebarEvent::ToggleZoom]);
+}

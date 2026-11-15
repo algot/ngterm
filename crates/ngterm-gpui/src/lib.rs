@@ -64,6 +64,7 @@ pub mod watermark;
 pub mod welcome;
 pub mod window;
 pub mod window_frames;
+pub mod window_zoom;
 pub mod windows;
 
 #[cfg(target_os = "macos")]

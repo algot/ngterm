@@ -336,6 +336,48 @@ impl ngterm_host::MainLoop<AppState> for Posted {
     }
 }
 
+/// The bar's double click and maximize button, and the window command, reach the window's own zoom request
+/// (`crate::window_zoom`): the second undoes the first while that one still waits to be sent.
+#[gpui_kit::test]
+fn the_bars_zoom_and_the_window_command_share_the_windows_request(cx: &mut TestAppContext) {
+    let s = shell(cx);
+    let (view, id) = (s.view.clone(), s.window);
+    let bar = view.read_with(s.cx, |view, _| {
+        view.zoom.uncommit();
+        view.titlebar().clone()
+    });
+    bar.update(s.cx, |_, cx| cx.emit(TitlebarEvent::ToggleZoom));
+    s.cx.run_until_parked();
+    assert!(
+        !view.read_with(s.cx, |view, _| view.zoom.is_settled()),
+        "the bar's zoom is the window's request"
+    );
+    view.update_in(s.cx, |view, window, cx| {
+        view.apply(WindowRequest::ToggleZoom(id), 0, window, cx);
+    });
+    assert!(
+        view.read_with(s.cx, |view, _| view.zoom.is_settled()),
+        "toggled back before anything was sent"
+    );
+    // a window with nothing to restore takes a resize at once
+    let asked = ngterm_core::windows::WindowSize {
+        width: 640,
+        height: 400,
+    };
+    view.update_in(s.cx, |view, window, cx| {
+        view.apply(
+            WindowRequest::Resize {
+                window: id,
+                size: asked,
+            },
+            0,
+            window,
+            cx,
+        );
+        assert_eq!(window.bounds().size, size(px(640.), px(400.)));
+    });
+}
+
 /// A window over a real core whose posts the test runs, as the app's loop and the windows' sync do.
 struct Shell<'a> {
     state: AppState,

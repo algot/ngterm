@@ -22,7 +22,7 @@ use crate::keymap_dispatch::{self, KeyOrigin};
 use crate::state::{AppState, Poster, post};
 use crate::terminal::{Terminal, TerminalView, ViewRole};
 
-use super::zoom::{Settle, ZoomRequest};
+use crate::window_zoom::{Settle, ZoomRequest};
 
 /// The frame's corner radius and the edge's white opacity (upstream's `QuickTerminalPanelContent`).
 const RADIUS: f32 = 12.;
@@ -143,7 +143,7 @@ impl QuickView {
         window.focus(&handle, cx);
     }
 
-    /// Maximizes (`zoomed`) or restores the window host for the zoom ([`super::zoom`]).
+    /// Maximizes (`zoomed`) or restores the window host for the zoom ([`crate::window_zoom`]).
     pub fn zoom(&mut self, zoomed: bool, window: &mut Window, cx: &mut Context<Self>) {
         match &mut self.zoom {
             Some(request) => request.want(zoomed),
@@ -152,8 +152,8 @@ impl QuickView {
         self.settle_zoom_after_a_frame(window, cx);
     }
 
-    /// Settles the zoom over two frames ([`super::zoom`]): the callbacks run as a frame starts, so the first one reads
-    /// the maximize that frame commits, and the second one settles after it.
+    /// Settles the zoom over two frames ([`crate::window_zoom`]): the callbacks run as a frame starts, so the first one
+    /// reads the maximize that frame commits, and the second one settles after it.
     fn settle_zoom_after_a_frame(&self, window: &mut Window, cx: &mut Context<Self>) {
         if self.zoom.is_none() {
             return;
@@ -180,7 +180,7 @@ impl QuickView {
         }
     }
 
-    /// The window's maximize as the zoom settles on it ([`super::zoom`]).
+    /// The window's maximize as the zoom settles on it ([`crate::window_zoom`]).
     #[cfg(not(target_os = "macos"))]
     #[expect(clippy::unused_self, reason = "the macOS form reads the panel's kept frame")]
     fn zoomed(&self, window: &Window) -> bool {

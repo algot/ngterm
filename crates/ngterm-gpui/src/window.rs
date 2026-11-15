@@ -60,6 +60,7 @@ use crate::sidebar::Sidebar;
 use crate::state::{AppState, FirstFocus, Poster, post};
 use crate::terminal::input::KeyStroke;
 use crate::titlebar::{Cover, Titlebar, TitlebarEvent};
+use crate::window_zoom::WindowZoom;
 
 /// The window title: the active session's display name, then the window's custom name when it has one (upstream's
 /// `WindowTitleSync.title`).
@@ -244,6 +245,8 @@ pub struct WindowView {
     /// The platform background last asked for (opaque, transparent or blurred: [`crate::chrome::Translucency`]).
     appearance: Cell<gpui_kit::WindowBackgroundAppearance>,
     painted: Rc<Cell<Painted>>,
+    /// The window's maximize requests, one at a time ([`crate::window_zoom`]).
+    zoom: Rc<WindowZoom>,
     /// The minimized state last asked of an X11 window and the request's number, until the window manager confirms it
     /// or [`MINIMIZE_SETTLE`] passes ([`reported_minimized`]).
     pending_minimized: Rc<Cell<Option<(bool, u64)>>>,
@@ -312,16 +315,26 @@ impl WindowView {
         });
         crate::keymap_dispatch::register_window(window.window_handle(), KeyOrigin::Window(id));
         let (activation, first_focus, raised) = Self::observe_activation(id, &poster, frontmost_takes, window, cx);
-        let bounds = cx.observe_window_bounds(window, |_, _, cx| cx.notify());
+        let zoom = WindowZoom::new(window);
+        let bounds = cx.observe_window_bounds(window, |view, window, cx| {
+            view.zoom.bounds_changed(window);
+            cx.notify();
+        });
         let titlebar = cx.new(|_| Titlebar::new(id, poster.clone()));
         let sidebar = cx.new(|_| Sidebar::new(id, poster.clone()));
         let popovers = cx.new(|cx| Popovers::new(id, poster.clone(), cx));
-        let opening = cx.subscribe_in(&titlebar, window, |view, _, event: &TitlebarEvent, window, cx| {
-            let TitlebarEvent::Popover { kind, anchor } = *event;
-            view.popovers
-                .update(cx, |popovers, cx| popovers.toggle(kind, anchor, window, cx));
-            view.sync_popover_layer(cx);
-        });
+        let opening = cx.subscribe_in(
+            &titlebar,
+            window,
+            |view, _, event: &TitlebarEvent, window, cx| match *event {
+                TitlebarEvent::Popover { kind, anchor } => {
+                    view.popovers
+                        .update(cx, |popovers, cx| popovers.toggle(kind, anchor, window, cx));
+                    view.sync_popover_layer(cx);
+                }
+                TitlebarEvent::ToggleZoom => view.zoom.toggle(window),
+            },
+        );
         let popped = cx.observe(&popovers, |view, _, cx| view.sync_popover_layer(cx));
         // an alert opening or closing (anywhere: the registry is the app's) is the window's to re-sync, so the
         // keyboard goes back to the shown terminal once the last one is answered
@@ -360,6 +373,7 @@ impl WindowView {
             close_asked: Rc::new(Cell::new(false)),
             appearance: Cell::new(gpui_kit::WindowBackgroundAppearance::Opaque),
             painted: Rc::new(Cell::new(Painted::default())),
+            zoom,
             pending_minimized: Rc::new(Cell::new(None)),
             minimize_requests: Cell::new(0),
             first_focus,
@@ -995,16 +1009,15 @@ impl WindowView {
                 self.present(window, cx);
             }
             WindowRequest::Resize { size: requested, .. } => {
-                // leaving the maximized state makes the window take the size now, as `setFrame` resizes a zoomed
-                // `NSWindow` at once
-                if window.is_maximized() && !window.is_fullscreen() {
-                    window.zoom_window();
-                }
                 #[expect(clippy::cast_precision_loss, reason = "a window side fits an f32")]
-                let (width, height) = (requested.width as f32, requested.height as f32);
-                window.resize(size(px(width), px(height)));
+                let size = size(px(requested.width as f32), px(requested.height as f32));
+                // a maximized window leaves that state and then takes the size, as `setFrame` resizes a zoomed
+                // `NSWindow`
+                if window.is_fullscreen() || !self.zoom.restore_to(size, window) {
+                    window.resize(size);
+                }
             }
-            WindowRequest::ToggleZoom(_) => window.zoom_window(),
+            WindowRequest::ToggleZoom(_) => self.zoom.toggle(window),
             WindowRequest::ToggleFullscreen(_) => window.toggle_fullscreen(),
             WindowRequest::Minimize { minimized, .. } => {
                 if minimized {
