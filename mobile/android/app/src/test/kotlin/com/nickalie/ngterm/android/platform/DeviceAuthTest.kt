@@ -3,6 +3,7 @@ package com.nickalie.ngterm.android.platform
 import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
+import android.hardware.biometrics.BiometricManager.Authenticators
 import android.hardware.biometrics.BiometricPrompt
 import android.os.Build
 import androidx.test.core.app.ApplicationProvider
@@ -56,6 +57,13 @@ class DeviceAuthTest {
 
         assertTrue(launched.isEmpty())
         assertEquals(listOf<AuthResult>(AuthResult.Failed("")), results)
+    }
+
+    @Test
+    fun thePromptTakesOnlyAStrongBiometricOrTheCredential() {
+        val prompt = auth(Build.VERSION.SDK_INT).build("Export private key", "Confirm it's you")
+
+        assertEquals(Authenticators.BIOMETRIC_STRONG or Authenticators.DEVICE_CREDENTIAL, prompt.allowedAuthenticators)
     }
 
     @Test

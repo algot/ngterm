@@ -47,8 +47,8 @@ interface DeviceAuth {
 }
 
 /**
- * The system's own prompt: a biometric with the screen lock's credential as the other way in (Android 10 and later),
- * the keyguard's credential screen before that, where the prompt takes no credential.
+ * The system's own prompt: a strong biometric with the screen lock's credential as the other way in (Android 10 and
+ * later), the keyguard's credential screen before that, where the prompt takes no credential.
  */
 @Composable
 fun rememberDeviceAuth(): DeviceAuth {
@@ -103,14 +103,23 @@ class SystemDeviceAuth(
         subtitle: String,
         onResult: (AuthResult) -> Unit,
     ) {
+        build(title, subtitle).authenticate(CancellationSignal(), context.mainExecutor, PromptCallback(onResult))
+    }
+
+    // a class 3 biometric or the credential: a weak one (a 2D face unlock) is not proof enough to release a key
+    @RequiresApi(Build.VERSION_CODES.Q)
+    internal fun build(
+        title: String,
+        subtitle: String,
+    ): BiometricPrompt {
         val builder = BiometricPrompt.Builder(context).setTitle(title).setSubtitle(subtitle)
         if (atLeast(Build.VERSION_CODES.R)) {
-            builder.setAllowedAuthenticators(Authenticators.BIOMETRIC_WEAK or Authenticators.DEVICE_CREDENTIAL)
+            builder.setAllowedAuthenticators(Authenticators.BIOMETRIC_STRONG or Authenticators.DEVICE_CREDENTIAL)
         } else {
             @Suppress("DEPRECATION") // Android 10 has no setAllowedAuthenticators
             builder.setDeviceCredentialAllowed(true)
         }
-        builder.build().authenticate(CancellationSignal(), context.mainExecutor, PromptCallback(onResult))
+        return builder.build()
     }
 }
 

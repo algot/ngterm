@@ -8,9 +8,16 @@
 //! byte this module reads or writes on its own side is wiped once used ([`zeroize::Zeroizing`]); the bytes returned in
 //! a [`KeyPair`] are the app's to store and wipe.
 
-use ::russh::keys::ssh_key::LineEnding;
+use ::russh::keys::ssh_key::rand_core::TryCryptoRng;
+use ::russh::keys::ssh_key::{Cipher, Kdf, KdfAlg, LineEnding};
 use ::russh::keys::{Algorithm, HashAlg, PrivateKey, decode_secret_key};
 use zeroize::Zeroizing;
+
+/// The bcrypt-pbkdf rounds of an export: what `ssh-keygen` writes by default since OpenSSH 9.4.
+const EXPORT_KDF_ROUNDS: u32 = 24;
+
+/// The most bcrypt-pbkdf rounds an imported key may ask for: a file can name any count, and each is real work.
+const MAX_IMPORT_KDF_ROUNDS: u32 = 1024;
 
 /// A private key as the app stores it, with what it shows of it.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -80,6 +87,7 @@ pub fn import(bytes: &[u8], passphrase: Option<&str>) -> Result<KeyPair, KeyErro
         reason: "the key is not text".to_owned(),
     })?;
     let passphrase = passphrase.filter(|passphrase| !passphrase.is_empty());
+    refuse_excessive_kdf(text)?;
     let key = decode_secret_key(text, passphrase).map_err(|error| match error {
         ::russh::keys::Error::KeyIsEncrypted => KeyError::PassphraseRequired,
         _ if is_encrypted(text) => {
@@ -138,12 +146,36 @@ pub fn export(bytes: &[u8], protection: ExportProtection) -> Result<Zeroizing<St
     }
     let key = load(bytes)?;
     let key = match passphrase {
-        Some(passphrase) => key
-            .encrypt(&mut ::russh::keys::key::safe_rng(), passphrase.as_bytes())
-            .map_err(invalid)?,
+        Some(passphrase) => encrypt(&key, &mut ::russh::keys::key::safe_rng(), passphrase.as_bytes())?,
         None => key,
     };
     key.to_openssh(LineEnding::LF).map_err(invalid)
+}
+
+fn encrypt<R: TryCryptoRng>(key: &PrivateKey, rng: &mut R, passphrase: &[u8]) -> Result<PrivateKey, KeyError> {
+    let checkint = rng.try_next_u32().map_err(|_| invalid("the random source failed"))?;
+    let mut kdf = Kdf::new(KdfAlg::Bcrypt, rng).map_err(invalid)?;
+    if let Kdf::Bcrypt { rounds, .. } = &mut kdf {
+        *rounds = EXPORT_KDF_ROUNDS;
+    }
+    key.encrypt_with(Cipher::Aes256Ctr, kdf, checkint, passphrase)
+        .map_err(invalid)
+}
+
+fn refuse_excessive_kdf(text: &str) -> Result<(), KeyError> {
+    let rounds = PrivateKey::from_openssh(text).ok().and_then(|key| match key.kdf() {
+        Kdf::Bcrypt { rounds, .. } => Some(*rounds),
+        _ => None,
+    });
+    match rounds {
+        Some(rounds) if rounds > MAX_IMPORT_KDF_ROUNDS => Err(KeyError::Invalid {
+            reason: format!(
+                "the key's passphrase protection asks for {rounds} rounds, more than the {MAX_IMPORT_KDF_ROUNDS} \
+                 this app works through"
+            ),
+        }),
+        _ => Ok(()),
+    }
 }
 
 /// Whether the PEM text holds an encrypted key: an OpenSSH key with a cipher, or an encrypted PKCS#8 or PKCS#5 one.
@@ -247,13 +279,46 @@ mod tests {
         let parsed = PrivateKey::from_openssh(exported.as_str()).unwrap();
         assert!(parsed.is_encrypted());
         assert_eq!(parsed.cipher().as_str(), "aes256-ctr");
-        assert!(parsed.kdf().is_bcrypt());
+        assert!(matches!(parsed.kdf(), Kdf::Bcrypt { salt, rounds: 24 } if salt.len() == 16));
         let imported = import(exported.as_bytes(), Some("correct horse")).unwrap();
         assert_eq!(imported.authorized_key, pair.authorized_key);
         assert_eq!(imported.fingerprint, pair.fingerprint);
         assert_eq!(
             load(&imported.private_key).unwrap().key_data(),
             load(&pair.private_key).unwrap().key_data()
+        );
+    }
+
+    #[test]
+    fn an_import_refuses_a_key_that_asks_for_excessive_kdf_work() {
+        let pair = generate("phone").unwrap();
+        let key = load(&pair.private_key).unwrap();
+        let salt = vec![7; 16];
+        let within = key
+            .encrypt_with(Cipher::Aes256Ctr, Kdf::Bcrypt { salt, rounds: 2 }, 1, "secret")
+            .unwrap();
+        let mut bytes = within.to_bytes().unwrap().to_vec();
+        let rounds = bytes.windows(4).position(|window| window == [0, 0, 0, 2]).unwrap();
+        bytes[rounds..rounds + 4].copy_from_slice(&u32::MAX.to_be_bytes());
+        let hostile = PrivateKey::from_bytes(&bytes)
+            .unwrap()
+            .to_openssh(LineEnding::LF)
+            .unwrap();
+
+        let refused = import(hostile.as_bytes(), Some("secret"));
+
+        assert_eq!(
+            refused,
+            Err(KeyError::Invalid {
+                reason: "the key's passphrase protection asks for 4294967295 rounds, more than the 1024 this app \
+                         works through"
+                    .to_owned()
+            })
+        );
+        let within = within.to_openssh(LineEnding::LF).unwrap();
+        assert_eq!(
+            import(within.as_bytes(), Some("secret")).unwrap().fingerprint,
+            pair.fingerprint
         );
     }
 
