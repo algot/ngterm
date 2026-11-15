@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 SCRIPT = Path(__file__).parents[1] / "tools" / "stage-archive.sh"
+NATIVE = Path(__file__).parents[2] / "scripts" / "lib" / "native.sh"
 # a modification time no whole-second archive keeps
 MODIFIED_NS = 1_700_000_000_123_456_789
 
@@ -27,6 +28,21 @@ def stage(tmp_path: Path) -> Path:
     (stage / "share" / "ngterm").mkdir(parents=True)
     (stage / "share" / "ngterm" / "session-BUILD").write_text(f"{'a' * 64}\nbinary 6 {MODIFIED_NS}\n")
     return stage
+
+
+@pytest.mark.parametrize("modified_ns", [MODIFIED_NS, 1_700_000_000_000_456_789, 999_999_999, 1_700_000_000_000_000_000])
+def test_the_id_line_names_the_modification_time_to_the_nanosecond(tmp_path: Path, modified_ns: int) -> None:
+    """Every digit, where a stat that formats the time through a float (uutils `%.9Y`) rounds the last ones."""
+    binary = tmp_path / "ngterm-session"
+    binary.write_bytes(b"server")
+    os.utime(binary, ns=(modified_ns, modified_ns))
+    if binary.stat().st_mtime_ns != modified_ns:
+        pytest.skip("this filesystem keeps no nanoseconds")
+    done = subprocess.run(
+        ["bash", "-c", 'source "$1" && size_and_mtime_ns "$2"', "bash", NATIVE, binary],
+        capture_output=True, text=True, check=False,
+    )
+    assert (done.returncode, done.stdout) == (0, f"6 {modified_ns}\n"), done.stderr
 
 
 def test_an_unpacked_stage_keeps_what_its_build_id_names(tmp_path: Path, stage: Path) -> None:

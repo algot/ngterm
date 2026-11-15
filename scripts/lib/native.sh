@@ -81,12 +81,18 @@ sha256_of() {
 }
 
 # FILE's size in bytes and modification time in nanoseconds since the Unix epoch, as `<size> <mtime-ns>`: GNU stat
-# (Linux, Git Bash), else BSD stat (stock macOS); in the C locale, whose decimal point is the dot (a comma-decimal
-# locale's GNU stat writes `<seconds>,<digits>`).
+# (Linux, Git Bash), else BSD stat (stock macOS). The GNU form takes the whole seconds (%Y) and the nine digits of
+# the readable time (%y), not `%.9Y`: the uutils stat (Ubuntu 26.04's) passes that one through a float and loses
+# the last digits. In the C locale, whose decimal point is the dot (a comma-decimal locale's stat writes a comma).
 size_and_mtime_ns() {
-  local stat
+  local stat size seconds time fraction
   if stat --version >/dev/null 2>&1; then
-    stat="$(LC_ALL=C stat -c '%s %.9Y' "$1")" || return 1
+    # `<size> <seconds> <date> <time>.<nine digits> <zone>`
+    stat="$(LC_ALL=C stat -c '%s %Y %y' "$1")" || return 1
+    read -r size seconds _ time _ <<<"$stat"
+    fraction="${time#*.}"
+    [[ "$time" == *.* && "$fraction" =~ ^[0-9]{9}$ ]] || return 1
+    stat="$size $seconds.$fraction"
   else
     stat="$(LC_ALL=C stat -f '%z %.9Fm' "$1")" || return 1
   fi
