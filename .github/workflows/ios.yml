@@ -28,8 +28,9 @@
 # - `results`: when a `unit` or `ui` job fails (or runs out of time, or retried a test:
 #   mobile/ios/build/retried-tests.txt) its result bundles are kept, and the failed snapshots' images
 #   (mobile/ios/build/snapshot-failures/) with the failed tests' attachments exported from the result bundles (each
-#   snapshot's reference, failure and difference images, the UI audits' screenshots). This job gathers what those jobs
-#   kept into `ios-results` and `ios-failure-diffs`, a directory per job (the jobs' own `ios-results-*` and
+#   snapshot's reference, failure and difference images, the UI audits' screenshots), and the Mac's load samples with
+#   the runner's own log (mobile/ios/build/host-diagnostics/: scripts/ci-host-monitor.sh). This job gathers what those
+#   jobs kept into `ios-results` and `ios-failure-diffs`, a directory per job (the jobs' own `ios-results-*` and
 #   `ios-failure-diffs-*` last a day);
 # - `archive`: scripts/build-ios.sh archive, an unsigned Release archive for devices, checked to hold no
 #   NgtermCoreFakes symbol (the fake core is for Debug builds only), to answer the export compliance question, and to
@@ -229,6 +230,11 @@ jobs:
       - *ghostty-vt
       - *ios-toolchain
       - *prebuilt-core
+      # the Mac's load every 10 s while the tests run (scripts/ci-host-monitor.sh), kept with the runner's own log when
+      # the job fails or is cancelled (keep the runner's log, below). The runner kills it with the job's leftovers
+      - &host-monitor
+        name: sample the Mac's load in the background
+        run: nohup scripts/ci-host-monitor.sh mobile/ios/build/host-diagnostics/load.log </dev/null >/dev/null 2>&1 &
       - name: the Unit test plan on the phone and tablet, its coverage floors
         run: scripts/build-ios.sh --prebuilt-core coverage
       - name: upload the coverage summary
@@ -261,6 +267,22 @@ jobs:
             xcrun xcresulttool export attachments --path "$bundle" \
               --output-path "mobile/ios/build/failure-attachments/$(basename "$bundle" .xcresult)" || true
           done
+      # the runner's own log (its Runner_*.log in _diag, beside bin/Runner.Worker), which names what ended a cancelled
+      # job: a cancel from the service, a shutdown, or the job's lease it failed to renew. Runner v2.338.2 cancels a job
+      # on the first renewal that fails after the first one has passed (its run-service RenewJobRequestAsync reads a
+      # `request` it never sets), and its renewals, a minute apart, have taken up to 142 s while the tablet simulator
+      # started: such a failure shows only as "The operation was canceled" mid-test. Its renewal and cancel lines are
+      # printed here too
+      - &runner-log
+        name: keep the runner's log beside the load samples
+        if: failure() || cancelled() || hashFiles('mobile/ios/build/retried-tests.txt') != ''
+        run: |
+          worker="$(ps -axo command= | awk '$1 ~ /\/bin\/Runner\.Worker$/ { print $1; exit }')"
+          [[ -n "$worker" ]] || { echo "no Runner.Worker process to find the runner's _diag by"; exit 0; }
+          mkdir -p mobile/ios/build/host-diagnostics
+          cp "$(dirname "$(dirname "$worker")")"/_diag/Runner_*.log mobile/ios/build/host-diagnostics/ || true
+          grep -hE 'renew|[Cc]ancel|Abandon|[Ee]xception|[Ss]hutdown' mobile/ios/build/host-diagnostics/Runner_*.log |
+            grep -v 'Successfully renew' || true
       - &upload-failure-diffs
         name: upload the failed snapshots and attachments
         if: failure() || cancelled() || hashFiles('mobile/ios/build/retried-tests.txt') != ''
@@ -270,6 +292,7 @@ jobs:
           path: |
             mobile/ios/build/snapshot-failures/
             mobile/ios/build/failure-attachments/
+            mobile/ios/build/host-diagnostics/
           if-no-files-found: ignore
           retention-days: 1
 
@@ -298,6 +321,7 @@ jobs:
       - *ghostty-vt
       - *ios-toolchain
       - *prebuilt-core
+      - *host-monitor
       - name: the UI test plan (${{ matrix.options }})
         env:
           OPTIONS: ${{ matrix.options }}
@@ -306,6 +330,7 @@ jobs:
           scripts/build-ios.sh --prebuilt-core "${options[@]}" ui
       - *upload-results
       - *export-attachments
+      - *runner-log
       - *upload-failure-diffs
 
   # what the unit and ui jobs kept, under the names a run of one job gave them
