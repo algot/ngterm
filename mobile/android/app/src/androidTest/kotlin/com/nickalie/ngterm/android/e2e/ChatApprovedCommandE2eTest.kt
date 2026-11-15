@@ -118,11 +118,17 @@ class ChatApprovedCommandE2eTest {
         assertTrue("no Working with Stop ${ANSWER_WAIT_MS}ms after Yes; the pane shows:\n${paneText()}", shown)
         holdWorking("yes-held")
 
-        // the chat opened again while the command runs: no card comes back
+        // the chat opened again while the command runs: it loads with Working and Stop, and no card comes back
         compose.onNode(barSwitch(R.string.session_show_terminal)).performClick()
         compose.waitUntil(CONNECT_WAIT_MS) { nodes(terminal()) > 0 }
         compose.onNode(barSwitch(R.string.session_show_chat)).performClick()
         compose.waitUntil(CONNECT_WAIT_MS) { nodes(composer()) > 0 }
+        val reopened = SystemClock.elapsedRealtime() + ANSWER_WAIT_MS
+        while (!working() && SystemClock.elapsedRealtime() < reopened) {
+            assertEquals("the answered card came back in the chat opened again", 0, nodes(card()))
+            assertEquals("the session waits again", 0, nodes(badge(R.string.agent_blocked)))
+            SystemClock.sleep(SAMPLE_MS)
+        }
         holdWorking("reopened")
 
         // Stop: the call is interrupted
@@ -175,7 +181,9 @@ class ChatApprovedCommandE2eTest {
     private fun holdWorking(step: String) {
         val until = SystemClock.elapsedRealtime() + HOLD_MS
         while (SystemClock.elapsedRealtime() < until) {
-            assertTrue("the session stopped showing Working with Stop; the pane shows:\n${paneText()}", working())
+            if (!working()) {
+                throw AssertionError("the session stopped showing Working with Stop (${missing()}):\n${paneText()}")
+            }
             assertEquals("the session waits again", 0, nodes(badge(R.string.agent_blocked)))
             assertEquals("the answered card came back", 0, nodes(card()))
             assertEquals(0, nodes(hasText(text(R.string.chat_activity_background), substring = true)))
@@ -189,6 +197,15 @@ class ChatApprovedCommandE2eTest {
             nodes(hasText(workingLine(), substring = true)) > 0 &&
             nodes(stop()) > 0 &&
             nodes(card()) == 0
+
+    // what of working() is not on screen
+    private fun missing(): String =
+        listOfNotNull(
+            "the bar's Working".takeIf { nodes(badge(R.string.agent_active)) == 0 },
+            "the foot's working line".takeIf { nodes(hasText(workingLine(), substring = true)) == 0 },
+            "Stop".takeIf { nodes(stop()) == 0 },
+            "no card".takeIf { nodes(card()) > 0 },
+        ).joinToString()
 
     private fun workingLine(): String = text(R.string.chat_activity_working, text(R.string.chat_agent_claude))
 
