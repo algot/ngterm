@@ -1,7 +1,8 @@
 //! Remote sessions: what this instance offers another machine attaching one of its live sessions (the origin side),
 //! and the sessions it attached from other machines (the viewer side).
 //!
-//! - [`tree`]: `live.tree`, the attachable sessions here or, over ssh, on another host;
+//! - [`tree`]: `live.tree`, the attachable sessions here or, over ssh, on another host, and [`not_live`]: why an
+//!   agterm there lists none;
 //! - [`frames`] and [`hub`]: the `live.present` stream that carries a session's presentation (status, context, info,
 //!   name, layout, HUD, notifications) to its viewers, and decides which one viewer is the session's sole presenter;
 //!   what each pane runs goes only to a viewer that asks for it ([`agents`]);
@@ -41,6 +42,7 @@ pub(crate) mod group_attach;
 mod handoff;
 pub mod hub;
 mod layout;
+pub mod not_live;
 pub mod origin;
 pub mod origin_replies;
 pub(crate) mod origin_sessions;
@@ -255,7 +257,7 @@ pub(crate) fn begin_tree(core: &mut Core, request: &Request) -> Dispatched {
     let Some(host) = host else {
         return Dispatched::done(local_tree(core));
     };
-    match attach::start_tree_read(core, &host) {
+    match attach::start_listing_read(core, &host) {
         Ok(answer) => poll_tree(answer, host),
         Err(error) => Dispatched::done(Err(error)),
     }

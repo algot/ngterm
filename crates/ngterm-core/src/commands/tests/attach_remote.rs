@@ -1033,14 +1033,122 @@ fn new_session_asks_the_app_the_picker_listed() {
             ..agterm
         },
     );
+    // agterm listed nothing, so the listing asks its restore mode
+    attach.wait_for_runs(2);
+    attach.runner.answer(1, restore_mode("live"));
     attach.drive("the session picker opens", |attach| attach.pending().is_some());
     let picker = attach.pending().unwrap();
+    assert_eq!(
+        picker.items,
+        [new_session_row_on(host)],
+        "agterm in Live sessions mode gets no hint"
+    );
     crate::remote::peer::learn(host, crate::remote::peer::RemotePeer::Ngterm);
 
-    attach.pick_new_session(1, &picker);
+    attach.pick_new_session(2, &picker);
 
-    let check = attach.runner.lines()[1].clone();
+    let check = attach.runner.lines()[2].clone();
     assert!(check.contains("agtermctl") && !check.contains("ngtermctl"), "{check}");
+}
+
+fn new_session_row_on(host: &str) -> ngterm_proto::PickItem {
+    ngterm_proto::PickItem {
+        subtitle: Some(format!("create a session on {host} and attach it")),
+        ..new_session_row()
+    }
+}
+
+const NOT_LIVE: &str = "agterm on studio is not in Live sessions mode: set Settings > General > Restore sessions to \
+                        Live sessions and restart agterm; only sessions started after that can be attached";
+
+#[test]
+fn an_agterm_outside_live_sessions_mode_is_asked_once_and_its_row_says_how_to_turn_it_on() {
+    let mut attach = Attach::new(Some("agterm:studio\n"));
+    let window = attach.fixture.window;
+    attach.core().attach_remote(window);
+    attach.wait_for_runs(1);
+    attach.runner.answer(0, agterm_listing(&[]));
+    attach.wait_for_runs(2);
+    let ask = attach.runner.lines()[1].clone();
+    assert!(
+        ask.contains("agtermctl") && ask.contains("restore") && !ask.contains("ngtermctl"),
+        "{ask}"
+    );
+    assert_eq!(attach.runner.hosts()[1], "studio");
+    attach.runner.answer(1, restore_mode("none"));
+    attach.drive("the session picker opens", |attach| attach.pending().is_some());
+    let picker = attach.pending().unwrap();
+    let (label, subtitle) = NOT_LIVE.split_once(": ").unwrap();
+    assert_eq!(
+        picker.items,
+        [
+            ngterm_proto::PickItem {
+                id: "agterm-not-live".to_owned(),
+                label: label.to_owned(),
+                subtitle: Some(subtitle.to_owned()),
+                ..ngterm_proto::PickItem::default()
+            },
+            new_session_row_on("agterm:studio"),
+        ]
+    );
+    assert_eq!(
+        attach.runner.lines().len(),
+        2,
+        "nothing else is asked, and nothing is changed there"
+    );
+
+    attach.resolve(&picker, picker.picked(0).unwrap());
+    attach.drive("the hint shows whole", |attach| attach.hud().is_some());
+    assert_eq!(
+        attach.hud(),
+        Some(HudSpec {
+            hide_after: Some(12.0),
+            ..HudSpec::new(format!("Attach Remote: {NOT_LIVE}"))
+        })
+    );
+    assert_eq!(
+        attach.runner.lines().len(),
+        2,
+        "choosing the hint attaches and creates nothing"
+    );
+}
+
+#[test]
+fn the_hint_row_chosen_after_its_session_closed_is_a_banner() {
+    let mut attach = Attach::new(Some("studio\n"));
+    let window = attach.fixture.window;
+    attach.core().attach_remote(window);
+    attach.wait_for_runs(1);
+    attach.runner.answer(0, agterm_listing(&[]));
+    attach.wait_for_runs(2);
+    attach.runner.answer(1, restore_mode("none"));
+    attach.drive("the session picker opens", |attach| attach.pending().is_some());
+    let picker = attach.pending().unwrap();
+    attach.banners();
+    let session = attach.session;
+    attach.fixture.store_mut().unwrap().close_session(session);
+
+    attach.resolve(&picker, picker.picked(0).unwrap());
+    attach.idle();
+
+    assert_eq!(attach.banners(), [format!("agterm-not-live|Attach Remote|{NOT_LIVE}")]);
+}
+
+#[test]
+fn an_agterm_listing_sessions_is_not_asked_its_mode() {
+    let mut attach = Attach::new(Some("studio\n"));
+    let window = attach.fixture.window;
+    attach.core().attach_remote(window);
+    attach.wait_for_runs(1);
+    attach.runner.answer(0, agterm_listing(&[agterm_build_session()]));
+    attach.drive("the session picker opens", |attach| attach.pending().is_some());
+    let picker = attach.pending().unwrap();
+    assert!(
+        picker.items.iter().all(|item| item.id != "agterm-not-live"),
+        "{:?}",
+        picker.items
+    );
+    assert_eq!(attach.runner.lines().len(), 1);
 }
 
 #[test]
@@ -2148,6 +2256,7 @@ fn initial_remote_panes_pair_their_capability_gated_commands_and_nonces() {
             presentation: None,
             beside: None,
             skipped: None,
+            restore: None,
         };
         let result = fixture
             .core

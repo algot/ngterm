@@ -65,12 +65,30 @@ pub(crate) fn run_tree_off_thread(
     host: &str,
     deadline: Duration,
 ) -> Option<Answer> {
+    read_off_thread(runner, host, deadline, super::tree::run_tree)
+}
+
+/// [`run_tree_off_thread`] for a place that shows `host`'s sessions ([`super::not_live::run_listing`]).
+pub(crate) fn run_listing_off_thread(
+    runner: &Arc<dyn RemoteCommandRunner>,
+    host: &str,
+    deadline: Duration,
+) -> Option<Answer> {
+    read_off_thread(runner, host, deadline, super::not_live::run_listing)
+}
+
+fn read_off_thread(
+    runner: &Arc<dyn RemoteCommandRunner>,
+    host: &str,
+    deadline: Duration,
+    read: fn(&dyn RemoteCommandRunner, &str, Duration) -> RemoteCommandResult,
+) -> Option<Answer> {
     let answer: Answer = Arc::new(Mutex::new(None));
     let (runner, slot, host) = (Arc::clone(runner), Arc::clone(&answer), host.to_owned());
     std::thread::Builder::new()
         .name("ngterm.remote-tree".to_owned())
         .spawn(move || {
-            let result = super::tree::run_tree(&*runner, &host, deadline);
+            let result = read(&*runner, &host, deadline);
             *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(result);
         })
         .ok()?;

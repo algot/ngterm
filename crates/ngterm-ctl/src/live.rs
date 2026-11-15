@@ -597,7 +597,7 @@ impl RequestCommand for Present {
 
 /// `live.tree`: one attachable session per line, carrying the id `live attach` takes (upstream's `formatRemoteTree`).
 /// An empty answer says so rather than printing nothing, which a caller cannot tell from a failed read, and a last
-/// line names an app the listing went on without.
+/// line names an app the listing went on without, or says why agterm there lists nothing.
 #[must_use]
 pub fn format_remote_tree(tree: &ngterm_proto::ControlRemoteTree) -> String {
     let skipped = tree.skipped.map(|app| {
@@ -611,6 +611,7 @@ pub fn format_remote_tree(tree: &ngterm_proto::ControlRemoteTree) -> String {
     tree.apps()
         .map(|app| format_app_tree(app, tree.beside.is_some() || tree.skipped.is_some()))
         .chain(skipped)
+        .chain(ngterm_core::remote::not_live::hint(tree))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -762,6 +763,29 @@ mod tests {
         );
         tree.endpoint.peer = None;
         assert_eq!(format_remote_tree(&tree), "  main/work/build  [S1]  /repo");
+    }
+
+    #[test]
+    fn an_empty_agterm_listing_outside_live_sessions_mode_says_how_to_turn_it_on() {
+        let mut tree: ngterm_proto::ControlRemoteTree = serde_json::from_value(serde_json::json!({
+            "host": "agterm:studio",
+            "endpoint": {"executable": "/zmx", "socketDirectory": "/tmp/z", "peer": "agterm"},
+            "sessions": [],
+            "restore": {"configured": "none", "requestedAtLaunch": "none", "active": "none", "restartRequired": false}
+        }))
+        .unwrap();
+        assert_eq!(
+            format_remote_tree(&tree),
+            "no attachable sessions on agterm:studio (agterm)
+agterm on studio is not in Live sessions mode: set \
+             Settings > General > Restore sessions to Live sessions and restart agterm; only sessions started after \
+             that can be attached"
+        );
+        tree.restore.as_mut().unwrap().active = "live".to_owned();
+        assert_eq!(
+            format_remote_tree(&tree),
+            "no attachable sessions on agterm:studio (agterm)"
+        );
     }
 
     #[test]

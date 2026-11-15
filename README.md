@@ -134,7 +134,8 @@ phone app: ngterm finds out which app answers, and the desktop marks those sessi
 lack what is ngterm's own: the agent chat view (the phone app says so when you open one), Kitty clipboard paste, renames
 made on that Mac and page companions it opens later. When a Mac runs both apps, you see the sessions of both, agterm's
 marked as such; write `agterm:HOST` or `ngterm:HOST` in `remotes.conf` to list one app only. A session keeps the app it
-was attached from, after a relaunch too. agterm lists only sessions started in its Live sessions mode.
+was attached from, after a relaunch too. agterm lists only sessions started in its Live sessions mode: when it is in
+another mode, the session picker, `ngtermctl live tree` and the phone apps say so and what to change on that Mac.
 
 ### A server without a display
 

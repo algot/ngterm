@@ -384,6 +384,10 @@ pub struct ControlRemoteTree {
     /// are not listed here and are not known to have ended. Absent from an origin's own answer.
     #[serde(default)]
     pub skipped: Option<RemotePeer>,
+    /// The restore mode of an agterm that listed no session, asked only then: outside Live sessions mode it has no
+    /// session a viewer can attach. Absent from an origin's own answer.
+    #[serde(default)]
+    pub restore: Option<ControlRestoreStatus>,
 }
 
 impl ControlRemoteTree {
@@ -910,6 +914,27 @@ mod tests {
                 .get("skipped")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn a_tree_carries_the_restore_mode_of_an_agterm_that_listed_nothing() {
+        let tree: ControlRemoteTree = serde_json::from_value(json!({
+            "endpoint": {"executable": "/zmx", "socketDirectory": "/t", "peer": "agterm"},
+            "sessions": [],
+        }))
+        .unwrap();
+        assert!(serde_json::to_value(&tree).unwrap().get("restore").is_none());
+        let restore: ControlRestoreStatus = serde_json::from_value(json!({
+            "configured": "none", "requestedAtLaunch": "none", "active": "none", "restartRequired": false
+        }))
+        .unwrap();
+        let unlisted = ControlRemoteTree {
+            restore: Some(restore),
+            ..tree
+        };
+        let wire = serde_json::to_value(&unlisted).unwrap();
+        assert_eq!(wire["restore"]["active"], "none");
+        assert_eq!(serde_json::from_value::<ControlRemoteTree>(wire).unwrap(), unlisted);
     }
 
     #[test]

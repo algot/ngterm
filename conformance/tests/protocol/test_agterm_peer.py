@@ -36,6 +36,11 @@ MISSING = (
     "available"
 )
 GONE = "ngterm: remote session is gone"
+# `not_live::hint` for an agterm in restore mode none
+NOT_LIVE = (
+    "agterm on studio is not in Live sessions mode: set Settings > General > Restore sessions to Live sessions and "
+    "restart agterm; only sessions started after that can be attached"
+)
 
 
 @pytest.fixture(scope="module")
@@ -128,6 +133,32 @@ def test_live_tree_json_stamps_the_agterm_peer_on_the_endpoint(vcli, fresh):
 def test_an_empty_agterm_listing_names_the_app(vcli, fresh):
     result = vcli("live", "tree", "studio")
     assert (result.returncode, result.stdout, result.stderr) == (0, "no attachable sessions on studio (agterm)\n", "")
+    # agterm listed nothing, so it was asked its restore mode: Live sessions, so nothing more is said
+    assert fresh.calls("agtermctl")[-1]["argv"] == ["restore", "mode", "--json"]
+
+
+def test_an_empty_agterm_outside_live_sessions_mode_says_how_to_turn_it_on(vcli, fresh):
+    fresh.update(lambda state: state.update(restore="none"))
+    try:
+        result = vcli("live", "tree", "studio")
+        assert (result.returncode, result.stderr) == (0, ""), result.stdout
+        assert result.stdout == f"no attachable sessions on studio (agterm)\n{NOT_LIVE}\n"
+        remote = vcli("live", "tree", "studio", "--json").json()["result"]["remote"]
+        assert remote["sessions"] == []
+        assert remote["restore"]["active"] == "none"
+        # the ask only reads the mode: nothing set it
+        asked = [call["argv"] for call in fresh.calls("agtermctl")]
+        assert ["restore", "mode", "--json"] in asked
+        assert all(argv[:2] != ["restore", "mode"] or argv == ["restore", "mode", "--json"] for argv in asked)
+        assert fresh.state()["restore"] == "none"
+        # an agterm with a session is not asked
+        fresh.add_session("build")
+        before = len(fresh.calls("agtermctl"))
+        listed = vcli("live", "tree", "studio")
+        assert NOT_LIVE not in listed.stdout
+        assert [call["argv"] for call in fresh.calls("agtermctl")[before:]] == [["zmx", "tree", "--json"]]
+    finally:
+        fresh.update(lambda state: state.update(restore="live"))
 
 
 def test_a_session_whose_daemons_are_gone_is_not_listed(vcli, fresh):
@@ -213,6 +244,23 @@ def test_a_host_running_both_apps_lists_the_sessions_of_both_and_a_pin_lists_one
 
     own = vcli("live", "tree", "ngterm:both", "--json").json()["result"]["remote"]
     assert {s["id"] for s in own["sessions"]} <= ngterm_ids and "beside" not in own, own
+
+
+def test_an_agterm_outside_live_sessions_mode_beside_an_ngterm_says_why_after_ngterms_sessions(vcli, both):
+    mac, _ = both
+    mac.remove_all()
+    mac.update(lambda state: state.update(restore="none"))
+    try:
+        result = vcli("live", "tree", "both")
+        assert (result.returncode, result.stderr) == (0, ""), result.stdout
+        lines = result.stdout.splitlines()
+        assert lines[-2:] == ["no attachable sessions on both (agterm)", NOT_LIVE.replace(" on studio ", " on both ")]
+        assert "agterm" not in "".join(lines[:-2]), result.stdout
+        remote = vcli("live", "tree", "both", "--json").json()["result"]["remote"]
+        assert "restore" not in remote, "the restore mode is agterm's, not ngterm's"
+        assert remote["beside"]["restore"]["active"] == "none"
+    finally:
+        mac.update(lambda state: state.update(restore="live"))
 
 
 def test_an_agterm_session_beside_an_ngterm_attaches_through_the_macs_own_zmx(viewer, vcli, both):

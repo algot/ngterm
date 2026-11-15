@@ -345,8 +345,14 @@ pub fn remote_error(stdout: &str) -> Option<String> {
 ///
 /// The output is not a response, the far side refused, or an older far side answered without a session list. An
 /// unreadable agterm answer beside a readable ngterm one is left out. An app left out, there or by the listing
-/// itself ([`super::peer::skipped_line`]), is named as skipped.
+/// itself ([`super::peer::skipped_line`]), is named as skipped. agterm's restore mode after the listing
+/// ([`super::not_live::with_restore`]) goes on its part of the answer.
 pub fn decode(stdout: &str) -> Result<ControlRemoteTree, MergeError> {
+    let (listing, restore) = super::not_live::split(stdout);
+    decode_listing(listing).map(|tree| super::not_live::keep(tree, restore))
+}
+
+fn decode_listing(stdout: &str) -> Result<ControlRemoteTree, MergeError> {
     use super::peer::RemotePeer;
 
     let answers = super::peer::split_answers(stdout);
@@ -371,6 +377,7 @@ fn decode_app(stdout: &str, peer: Option<super::peer::RemotePeer>) -> Result<Con
     tree.endpoint.peer = peer;
     tree.beside = None;
     tree.skipped = None;
+    tree.restore = None;
     Ok(tree)
 }
 
@@ -464,6 +471,7 @@ pub fn candidates(
         presentation: Some(frames::VERSION),
         beside: None,
         skipped: None,
+        restore: None,
     })
 }
 
@@ -998,6 +1006,7 @@ mod tests {
             presentation: Some(1),
             beside: None,
             skipped: None,
+            restore: None,
         };
         let stdout = serde_json::to_string(&json!({"ok": true, "result": {"remote": remote}})).unwrap();
         let decoded = decode(&stdout).unwrap();

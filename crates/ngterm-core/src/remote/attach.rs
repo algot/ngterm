@@ -24,7 +24,7 @@ use super::peer::RemotePeer;
 use super::remotes::{RemoteEntry, diagnostics_banner_body};
 use super::ssh::{PaneLabel, attach_pane_command};
 use super::tree::{self, RemoteCommandResult};
-use super::viewer::{Answer, run_tree_off_thread, take_answer};
+use super::viewer::{Answer, run_listing_off_thread, run_tree_off_thread, take_answer};
 use crate::Core;
 use crate::commands::Outcome;
 use crate::dispatch::Dispatched;
@@ -43,6 +43,10 @@ pub(super) const ERROR_SECONDS: f64 = 5.0;
 pub(super) const PROGRESS_SECONDS: f64 = 30.0;
 /// The id of the session picker's Attach All row, which a far session's upper-case UUID never equals.
 const ATTACH_ALL_ID: &str = "attach-all";
+/// The id of the session picker's row saying why agterm there lists nothing.
+const NOT_LIVE_ID: &str = "agterm-not-live";
+/// How long that row's panel stays up once chosen: its text is long.
+const HINT_SECONDS: f64 = 12.0;
 /// What the panels of an attach are headed by.
 const ATTACH_REMOTE: &str = "Attach Remote";
 
@@ -63,6 +67,18 @@ pub(crate) fn start_tree_read(core: &Core, host: &str) -> Result<Answer, Control
 pub(crate) fn start_tree_read_within(core: &Core, host: &str, deadline: Duration) -> Result<Answer, ControlError> {
     tree::validate(host).map_err(|_| ControlError::rejected("invalid host"))?;
     run_tree_off_thread(&core.remote.runner, host, deadline)
+        .ok_or_else(|| ControlError::rejected(format!("the remote command failed on {host}")))
+}
+
+/// [`start_tree_read`] for a place that shows `host`'s sessions: an agterm there that lists none is asked why
+/// ([`super::not_live`]).
+///
+/// # Errors
+///
+/// As [`start_tree_read`].
+pub(crate) fn start_listing_read(core: &Core, host: &str) -> Result<Answer, ControlError> {
+    tree::validate(host).map_err(|_| ControlError::rejected("invalid host"))?;
+    run_listing_off_thread(&core.remote.runner, host, tree::TREE_DEADLINE)
         .ok_or_else(|| ControlError::rejected(format!("the remote command failed on {host}")))
 }
 
@@ -342,13 +358,7 @@ pub(super) enum Step {
     /// The machine's sessions are being listed.
     Listing { host: String, answer: Answer },
     /// The window's picker asks which session.
-    ChoosingSession {
-        host: String,
-        /// The app that answered the listing, which a New Session is asked of.
-        peer: super::peer::RemotePeer,
-        pick: String,
-        parents: HashSet<String>,
-    },
+    ChoosingSession(ChoosingSession),
     /// The chosen session is being attached; its label names it in the progress panel.
     Attaching { request: AttachRequest, answer: Answer },
     /// A selected parent attaches its freshly discovered companion group.
@@ -357,6 +367,18 @@ pub(super) enum Step {
     AttachingAll { host: String, answer: Answer },
     /// The machine creates a session, which attaches here once it is attachable ([`super::origin_sessions`]).
     CreatingSession(CreateRun),
+}
+
+/// The session picker of one Attach Remote, open over the host's listing.
+#[derive(Debug)]
+pub(super) struct ChoosingSession {
+    host: String,
+    /// The app that answered the listing, which a New Session is asked of.
+    peer: super::peer::RemotePeer,
+    pick: String,
+    parents: HashSet<String>,
+    /// Why the host's agterm lists no session ([`super::not_live::hint`]), which its own row says.
+    hint: Option<String>,
 }
 
 /// Where an action's HUD goes: over `session` in `window`, its message headed by `action`.
@@ -447,6 +469,17 @@ fn pick_item(session: &ControlRemoteSession) -> PickItem {
 /// picker has no place for.
 fn pickable(app: &ControlRemoteTree) -> impl Iterator<Item = &ControlRemoteSession> {
     app.sessions.iter().filter(|session| is_pickable(session))
+}
+
+/// The picker's row saying `hint`: its first clause over the rest, as the rows truncate; choosing it shows it whole.
+fn hint_item(hint: &str) -> PickItem {
+    let (label, subtitle) = hint.split_once(": ").unwrap_or((hint, ""));
+    PickItem {
+        id: NOT_LIVE_ID.to_owned(),
+        label: label.to_owned(),
+        subtitle: (!subtitle.is_empty()).then(|| subtitle.to_owned()),
+        ..PickItem::default()
+    }
 }
 
 /// One app's sessions as picker rows, a companion under its parent's name, each naming `marked` when the host's other
@@ -567,7 +600,7 @@ impl Core {
     fn begin_listing(&mut self, window: Uuid, hud_session: Option<Uuid>, host: String) {
         let mut flow = AttachFlow::new(window, hud_session);
         self.attach_progress(&mut flow, &format!("listing sessions on {host}…"));
-        match start_tree_read(self, &host) {
+        match start_listing_read(self, &host) {
             Ok(answer) => {
                 flow.step = Step::Listing { host, answer };
                 self.remote.viewer.attach_flows.push(flow);
@@ -607,31 +640,7 @@ impl Core {
                 };
                 self.listed(flow, &host, &result)
             }
-            Step::ChoosingSession {
-                host,
-                peer,
-                pick,
-                parents,
-            } => match self.picked(flow.window, &pick) {
-                Picked::Waiting => {
-                    flow.step = Step::ChoosingSession {
-                        host,
-                        peer,
-                        pick,
-                        parents,
-                    };
-                    Some(flow)
-                }
-                Picked::Chosen(session, _) if session == ATTACH_ALL_ID => self.start_attach_all(flow, host),
-                Picked::Chosen(session, _) if session == NEW_SESSION_ID => {
-                    self.start_origin_session(flow, host, peer, None)
-                }
-                Picked::Chosen(session, label) => {
-                    let group = parents.contains(&session);
-                    self.start_picked_attach(flow, host, session, &label, group)
-                }
-                Picked::Ended => None,
-            },
+            Step::ChoosingSession(choosing) => self.choosing_session(flow, choosing),
             Step::Attaching { request, answer } => {
                 let Some(result) = take_answer(&answer) else {
                     flow.step = Step::Attaching { request, answer };
@@ -665,6 +674,29 @@ impl Core {
         }
     }
 
+    /// The session picker's answer, once it has one.
+    fn choosing_session(&mut self, mut flow: AttachFlow, choosing: ChoosingSession) -> Option<AttachFlow> {
+        match self.picked(flow.window, &choosing.pick) {
+            Picked::Waiting => {
+                flow.step = Step::ChoosingSession(choosing);
+                Some(flow)
+            }
+            Picked::Chosen(session, _) if session == NOT_LIVE_ID => {
+                self.attach_hint(&mut flow, choosing.hint.as_deref().unwrap_or_default());
+                None
+            }
+            Picked::Chosen(session, _) if session == ATTACH_ALL_ID => self.start_attach_all(flow, choosing.host),
+            Picked::Chosen(session, _) if session == NEW_SESSION_ID => {
+                self.start_origin_session(flow, choosing.host, choosing.peer, None)
+            }
+            Picked::Chosen(session, label) => {
+                let group = choosing.parents.contains(&session);
+                self.start_picked_attach(flow, choosing.host, session, &label, group)
+            }
+            Picked::Ended => None,
+        }
+    }
+
     /// The listing arrived: the window's picker asks which session to attach.
     fn listed(&mut self, mut flow: AttachFlow, host: &str, result: &RemoteCommandResult) -> Option<AttachFlow> {
         let remote = match read_remote_tree(result, host) {
@@ -684,9 +716,10 @@ impl Core {
         if !self.library().is_open(flow.window) {
             return None;
         }
-        let items = self.session_items(&remote, host);
+        let hint = super::not_live::hint(&remote);
+        let items = self.session_items(&remote, host, hint.as_deref());
         let pick = self.open_internal_pick(flow.window, items, &format!("Attach from {host}"))?;
-        flow.step = Step::ChoosingSession {
+        flow.step = Step::ChoosingSession(ChoosingSession {
             host: host.to_owned(),
             peer: remote.endpoint.peer(),
             pick,
@@ -696,15 +729,17 @@ impl Core {
                 .filter(|row| row.parent.is_none())
                 .map(|row| row.id.clone())
                 .collect(),
-        };
+            hint,
+        });
         Some(flow)
     }
 
-    /// The session picker's rows: each listed session, then an Attach All row when it would attach more than one and a
-    /// New Session row while the picker has room. Last, as the picker's selection goes to the first row on opening and on
-    /// every filter edit, and Enter takes it; with nothing to attach, New Session is the only row. On a host that runs
-    /// both apps the other app's sessions follow ngterm's, each naming its app.
-    fn session_items(&self, tree: &ControlRemoteTree, host: &str) -> Vec<PickItem> {
+    /// The session picker's rows: each listed session, then an Attach All row when it would attach more than one, a
+    /// row saying `hint`, why agterm there lists nothing, and a New Session row while the picker has room. Last, as the
+    /// picker's selection goes to the first row on opening and on every filter edit, and Enter takes it; with nothing
+    /// to attach, the hint or New Session is the first row. On a host that runs both apps the other app's sessions
+    /// follow ngterm's, each naming its app.
+    fn session_items(&self, tree: &ControlRemoteTree, host: &str, hint: Option<&str>) -> Vec<PickItem> {
         let mut missing = 0;
         let mut items: Vec<PickItem> = Vec::new();
         for app in tree.apps() {
@@ -720,6 +755,9 @@ impl Core {
                 subtitle: Some(format!("{missing} sessions not attached here")),
                 ..PickItem::default()
             });
+        }
+        if let Some(hint) = hint.filter(|_| items.len() < MAX_PICK_ITEMS) {
+            items.push(hint_item(hint));
         }
         if items.len() < MAX_PICK_ITEMS {
             items.push(PickItem {
@@ -1024,6 +1062,13 @@ impl Core {
             .map(|found| found.overlay.generation);
         if current == Some(owned) {
             store.close_hud(session);
+        }
+    }
+
+    /// The picker's hint row was chosen: its whole text in a panel over the flow's session, else a banner.
+    fn attach_hint(&mut self, flow: &mut AttachFlow, hint: &str) {
+        if !self.attach_open_hud(flow, hint, HINT_SECONDS, false) {
+            self.post_app_banner(NOT_LIVE_ID, flow.action, hint);
         }
     }
 
