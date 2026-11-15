@@ -205,10 +205,11 @@ def lock_workflows(directory):
 
 
 def reported_runs(directory):
-    """The `workflow_run` trigger of dependabot-lock-checks.yml: the workflows and the events it reports."""
+    """dependabot-lock-checks.yml: its `workflow_run` trigger (the workflows and events it reports) and its group."""
     import yaml
 
-    return triggers(yaml.safe_load((Path(directory) / "dependabot-lock-checks.yml").read_text()))["workflow_run"]
+    workflow = yaml.safe_load((Path(directory) / "dependabot-lock-checks.yml").read_text())
+    return triggers(workflow)["workflow_run"], workflow["concurrency"]["group"]
 
 
 LOCK_TEXT = 'version = 4\n\n[[package]]\nname = "app"\nversion = "0.1.0"\ndependencies = [\n "sys {}",\n]\n'
@@ -436,12 +437,15 @@ def self_test():
     found = lock_workflows(workflows)
     assert [file for file, _, _ in found] == WORKFLOWS, f"WORKFLOWS is not the workflows a Cargo.lock change starts: {found}"
     assert all(dispatch for _, _, dispatch in found), f"a workflow to dispatch has no workflow_dispatch trigger: {found}"
-    reported = reported_runs(workflows)
+    reported, group = reported_runs(workflows)
     names = [name for _, name, _ in found]
     assert reported["workflows"] == names, f"dependabot-lock-checks.yml reports {reported['workflows']}, not {found}"
     # a re-run has no `requested` event: without `in_progress` its commit keeps the result of the attempt before
     events = ["requested", "in_progress", "completed"]
     assert reported["types"] == events, f"dependabot-lock-checks.yml reports on {reported['types']}, not {events}"
+    # the group is joined before the job's `if`: a run that is not reported must not share a reported one's group
+    for part in ("workflow_id", "head_sha", "event"):
+        assert f"github.event.workflow_run.{part} " in group, f"dependabot-lock-checks.yml's group has no {part}: {group}"
     print("repair-dependabot-lock: self-test passed")
     return 0
 

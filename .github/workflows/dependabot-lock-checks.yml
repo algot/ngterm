@@ -26,9 +26,13 @@ on:
 
 permissions: {}
 
-# never cancels a running job; a waiting one gives way to a newer one, which posts the same status or a newer one
+# never cancels a running job; a waiting one gives way to a newer one, which posts the same status or a newer one.
+# The run's event is in the group: a run of this workflow joins its group before the job's `if` skips it, and one for
+# a run that was not dispatched (a reopened pull request's) posts nothing, so it must not replace a waiting job.
 concurrency:
-  group: dependabot-lock-checks-${{ github.event.workflow_run.workflow_id }}-${{ github.event.workflow_run.head_sha }}
+  group: >-
+    dependabot-lock-checks-${{ github.event.workflow_run.workflow_id }}-${{
+    github.event.workflow_run.head_sha }}-${{ github.event.workflow_run.event }}
   cancel-in-progress: false
 
 jobs:
