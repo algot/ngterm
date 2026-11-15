@@ -2,7 +2,7 @@
 
 use ngterm_proto::ControlAgentApproval;
 
-use crate::agent_chat::approvals::Approvals;
+use crate::agent_chat::approvals::{Approvals, prompt_id, prompt_since};
 use crate::agent_chat::{Approval, ChatEvent, EventBody, NoticeKind, Tool, ToolKind, ToolStatus};
 
 fn denied_txt(since: f64) -> ControlAgentApproval {
@@ -474,4 +474,15 @@ fn a_question_prompt_whose_answered_call_was_read_first_is_not_shown() {
         &[color_call("t1", 9, "Pick a color", ToolStatus::Ok), live(20)],
     );
     assert!(approvals.observe(Some(&color_question(1.0))).is_empty());
+}
+
+#[test]
+fn a_prompts_id_gives_back_when_its_hook_reported_it() {
+    for since in [7.5, 10.25, 1_794_705_930.56, 3.0] {
+        assert_eq!(prompt_since(&prompt_id(since)), Some(since));
+    }
+    // any other event's id, and an id with no time
+    for id in ["live", "toolu_01", "approval-", "approval-soon", "done-approval-7.5"] {
+        assert_eq!(prompt_since(id), None, "{id}");
+    }
 }

@@ -5,7 +5,7 @@
 //! no local sessions, so it builds `ngterm-term` without `local`, and with `screen-read`: the program's own screen and
 //! the keys sent only to the screen read, which the chat's actions answer an agent with (no desktop binary carries
 //! them). For a pane running Claude Code or Codex it also runs the origin's Rust-only `ngtermctl agent chat`,
-//! `agent commands` and `agent upload`.
+//! `agent commands`, `agent upload` and `agent answered`.
 //!
 //! The apps reach it through `UniFFI` (proc-macro form), each through its own bindings, which the crate's own
 //! `uniffi-bindgen` binary (feature `bindgen`) generates in library mode (`uniffi.toml` configures both):

@@ -51,7 +51,9 @@
 //!   the prompt back: Claude Code has no hook for an answered prompt, so the pane would stay `blocked`, and the
 //!   prompt open, until the approved call ends. Best effort: an origin without the command, or a link lost, leaves
 //!   the status to the agent's next hook. Two calls a dialog shows alike (the same command, two
-//!   edits of one file) can't be told apart on screen.
+//!   edits of one file) can't be told apart on screen, so the prompt told of is the one the chat held open for the
+//!   card when the answer began, by its id: the agent's next prompt, alike and up before the dialog is seen gone, is
+//!   never named, and the origin ignores the word once it has replaced the answered one.
 //! - **Question**: per question, its tab confirmed by its text and options (a picker taller than the screen by what
 //!   is left of its text, and only while no other question of the call lists the same options); a digit picks a
 //!   single-select option (the picker moves on), digits toggle a multi-select question's boxes to the answer and Tab moves on; free text goes

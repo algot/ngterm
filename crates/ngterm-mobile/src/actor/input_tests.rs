@@ -586,8 +586,28 @@ fn reading_the_chat_and_switching_it_with_the_terminal_never_claim_or_resize() {
     drop(agents.stream);
 }
 
+/// The chat event of the open prompt `id` showing `card`.
+fn prompt_line(id: &str, card: &crate::chat::ChatApproval) -> serde_json::Value {
+    serde_json::json!({
+        "id": id, "cursor": 10, "type": "approval", "tool": card.tool, "title": card.title, "detail": card.detail,
+    })
+}
+
+/// Waits until the chat delivered the event `id`.
+fn delivered(agents: &mut Agents, id: &str) {
+    agents.fixture.next(|event| match event {
+        MobileEvent::Chat { events, .. } => events.iter().any(|event| event.id == id).then_some(()),
+        _ => None,
+    });
+}
+
 /// The pane's chat, open, with `card` its open prompt `id`.
 fn chat_with_prompt(agents: &mut Agents, id: &str, card: &crate::chat::ChatApproval) -> Opened {
+    chat_with_prompts(agents, &[id], card)
+}
+
+/// The pane's chat, open, with `card` each of its open prompts `ids`, delivered in that order.
+fn chat_with_prompts(agents: &mut Agents, ids: &[&str], card: &crate::chat::ChatApproval) -> Opened {
     let posix = ngterm_core::remote::origin::OriginShell::Posix;
     block_on(
         agents
@@ -599,21 +619,18 @@ fn chat_with_prompt(agents: &mut Agents, id: &str, card: &crate::chat::ChatAppro
     let chat = agents
         .fixture
         .opened(|opened| opened.command == chat_tail(posix, SESSION, Side::Left, None));
-    let prompt = serde_json::json!({
-        "id": id, "cursor": 10, "type": "approval", "tool": card.tool, "title": card.title, "detail": card.detail,
-    });
+    let prompts = ids
+        .iter()
+        .fold(String::new(), |lines, id| format!("{lines}{}\n", prompt_line(id, card)));
     send(
         &chat.peer,
         format!(
-            "{prompt}\n{}\n",
+            "{prompts}{}\n",
             serde_json::json!({"id": "live", "cursor": 10, "type": "live"})
         )
         .as_bytes(),
     );
-    agents.fixture.next(|event| match event {
-        MobileEvent::Chat { events, .. } => events.iter().any(|event| event.id == id).then_some(()),
-        _ => None,
-    });
+    delivered(agents, ids.last().expect("a prompt"));
     chat
 }
 
@@ -649,6 +666,51 @@ fn an_answered_approval_tells_the_origin_what_the_agents_screen_showed_next() {
         assert_eq!(outcome(&answer), Ok(AgentInputOutcome::Sent));
         assert_eq!(told(&agents), [expected], "{label}");
     }
+}
+
+#[test]
+fn of_two_open_prompts_alike_the_origin_is_told_of_the_newest() {
+    let posix = ngterm_core::remote::origin::OriginShell::Posix;
+    // ids a comparison as text orders the other way, delivered in either order
+    for ids in [["approval-9.5", "approval-10.25"], ["approval-10.25", "approval-9.5"]] {
+        let mut agents = Agents::start("claude", "claude-44x36");
+        agents.first_is("leader");
+        agents.show(&agents.first.peer, "permission");
+        let card = asked("claude-44x36");
+        let _chat = chat_with_prompts(&mut agents, &ids, &card);
+        let expected = answered_tail(posix, SESSION, Side::Left, "approval-10.25", true);
+        agents.fixture.transport.script(&expected, Script::ok(""));
+        let answer = agents.act(move |pane| block_on(pane.answer_approval(card, "Yes".to_owned())));
+        inputs_until(&mut agents.first.peer, |bytes, _| {
+            without_escapes(bytes).contains(&b'1')
+        });
+        agents.show(&agents.first.peer, "working");
+        assert_eq!(outcome(&answer), Ok(AgentInputOutcome::Sent));
+        assert_eq!(told(&agents), [expected], "{ids:?}");
+    }
+}
+
+#[test]
+fn a_prompt_alike_raised_after_the_key_went_is_never_the_one_told_of() {
+    // two calls with one command: the agent asks about the second before the first one's dialog is seen gone
+    let posix = ngterm_core::remote::origin::OriginShell::Posix;
+    let mut agents = Agents::start("claude", "claude-44x36");
+    agents.first_is("leader");
+    agents.show(&agents.first.peer, "permission");
+    let card = asked("claude-44x36");
+    let chat = chat_with_prompt(&mut agents, "approval-7.5", &card);
+    let expected = answered_tail(posix, SESSION, Side::Left, "approval-7.5", true);
+    agents.fixture.transport.script(&expected, Script::ok(""));
+    let next = prompt_line("approval-8.5", &card);
+    let answer = agents.act(move |pane| block_on(pane.answer_approval(card, "Yes".to_owned())));
+    inputs_until(&mut agents.first.peer, |bytes, _| {
+        without_escapes(bytes).contains(&b'1')
+    });
+    send(&chat.peer, format!("{next}\n").as_bytes());
+    delivered(&mut agents, "approval-8.5");
+    agents.show(&agents.first.peer, "working");
+    assert_eq!(outcome(&answer), Ok(AgentInputOutcome::Sent));
+    assert_eq!(told(&agents), [expected]);
 }
 
 #[test]

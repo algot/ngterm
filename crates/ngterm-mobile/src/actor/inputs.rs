@@ -185,6 +185,11 @@ async fn act<T: Transport>(
     standing(state, &on).ok_or(PaneInputError::Closed)?;
     let agent = agent.ok_or_else(|| refused(NO_AGENT_TO_DRIVE))?;
     let _acting = Acting::take(state, &on.key)?;
+    // named before any key goes: once the dialog is gone the agent's next prompt may show the same card
+    let prompt = match &action {
+        Action::Approval(card, _) => state.chats.borrow().prompt(&on.key, card),
+        _ => None,
+    };
     let timing = state.wiring.timing;
     let Some(attach) = lead(state, &on, timing).await? else {
         return Ok(AgentInputOutcome::LeadRefused);
@@ -200,7 +205,7 @@ async fn act<T: Transport>(
         };
         match step {
             Ok(Looked::Done(outcome)) => {
-                tell_answered(state, &on, &plan).await;
+                tell_answered(state, &on, &plan, prompt.as_deref()).await;
                 return Ok(outcome);
             }
             Ok(Looked::Again) => busy = 0,
@@ -223,13 +228,13 @@ async fn act<T: Transport>(
     }
 }
 
-/// Tells the origin the approval `plan` answered is over, and what the agent's screen showed next
-/// ([`Plan::answered`]). Best effort: whatever comes of it, the keys went.
-async fn tell_answered<T: Transport>(state: &State<T>, on: &On, plan: &Plan) {
-    let Some((card, working)) = plan.answered() else {
+/// Tells the origin the approval `plan` answered, its chat's `prompt` when the answer began, is over, and what the
+/// agent's screen showed next ([`Plan::answered`]). Best effort: whatever comes of it, the keys went.
+async fn tell_answered<T: Transport>(state: &State<T>, on: &On, plan: &Plan, prompt: Option<&str>) {
+    let (Some((_, working)), Some(prompt)) = (plan.answered(), prompt) else {
         return;
     };
-    let Some((connection, command)) = state.chats.borrow().answered(&on.key, card, working) else {
+    let Some((connection, command)) = state.chats.borrow().answered(&on.key, prompt, working) else {
         return;
     };
     let _ = sessions::run(&*connection, &command, ANSWERED_DEADLINE).await;

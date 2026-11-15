@@ -72,6 +72,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use ngterm_core::agent_chat::approvals::prompt_since;
 use ngterm_core::agent_chat::catalog::SlashCommand;
 use ngterm_core::agent_chat::{self as wire, EventBody, NO_AGENT};
 use ngterm_core::command_restore::shell_quoted_line;
@@ -1020,20 +1021,25 @@ impl<C: Connection> Chats<C> {
         }))
     }
 
-    /// What tells `key`'s origin that the open prompt `card` shows was answered ([`answered_tail`]), and the
-    /// connection to run it on: `None` when the chat is not open or its link is down, or holds no open prompt for
-    /// the card. Of two open prompts alike, the newest.
-    pub(crate) fn answered(&self, key: &ChatKey, card: &ChatApproval, working: bool) -> Option<(Rc<C>, String)> {
-        let chat = &self.open[self.find(key)?];
-        let connection = chat.connection.clone()?;
-        let since = |id: &str| id.rsplit('-').next().and_then(|since| since.parse::<f64>().ok());
-        let id = chat
+    /// The id of `key`'s open prompt that `card` shows: `None` when the chat is not open or holds no open prompt for
+    /// the card. Of two open prompts alike, the newest. Read before an answer's first key goes: a prompt the agent
+    /// raises after it may show the same card.
+    pub(crate) fn prompt(&self, key: &ChatKey, card: &ChatApproval) -> Option<String> {
+        self.open[self.find(key)?]
             .prompts
             .iter()
             .filter(|(_, approval)| ChatApproval::from((*approval).clone()) == *card)
-            .map(|(id, _)| id)
-            .max_by(|a, b| since(a).partial_cmp(&since(b)).unwrap_or(std::cmp::Ordering::Equal))?;
-        let command = answered_tail(connection.origin_shell(), &key.session_id, chat.side, id, working);
+            .filter_map(|(id, _)| Some((prompt_since(id)?, id)))
+            .max_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, id)| id.clone())
+    }
+
+    /// What tells `key`'s origin that its prompt `approval` ([`Self::prompt`]) was answered ([`answered_tail`]), and
+    /// the connection to run it on: `None` when the chat is not open or its link is down.
+    pub(crate) fn answered(&self, key: &ChatKey, approval: &str, working: bool) -> Option<(Rc<C>, String)> {
+        let chat = &self.open[self.find(key)?];
+        let connection = chat.connection.clone()?;
+        let command = answered_tail(connection.origin_shell(), &key.session_id, chat.side, approval, working);
         Some((connection, command))
     }
 

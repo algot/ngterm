@@ -52,6 +52,13 @@ pub fn prompt_id(since: f64) -> String {
     format!("approval-{since}")
 }
 
+/// When the hook reported the prompt `id` names ([`prompt_id`]'s `since`): what orders two prompts. `None` for any
+/// other event's id.
+#[must_use]
+pub fn prompt_since(id: &str) -> Option<f64> {
+    id.strip_prefix("approval-")?.parse().ok()
+}
+
 /// The prompts shown so far in one chat stream.
 #[derive(Debug, Default)]
 pub struct Approvals {
