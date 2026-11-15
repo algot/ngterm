@@ -15,10 +15,12 @@
 # used but the job's own token.
 #
 # A push with that token starts no workflow, so `push` then dispatches the pull request's workflows on the branch
-# (the one event the token may start), and their runs are the repaired commit's checks; the runs of Dependabot's own
-# commit, which can no longer pass, are cancelled. The repair commit carries `[dependabot skip]`: Dependabot goes on
-# rebasing the pull request, force-pushing over the commit, and each such push is repaired again. A branch already
-# repaired has nothing to repair, and the repair's own push starts nothing, so it cannot loop.
+# (the one event the token may start). GitHub shows no dispatched run's checks on a pull request, so
+# dependabot-lock-checks.yml reports each of those runs as a commit status, and the statuses are the repaired commit's
+# checks. The runs of Dependabot's own commit, which can no longer pass, are cancelled once every dispatch is in. The
+# repair commit carries `[dependabot skip]`: Dependabot goes on rebasing the pull request, force-pushing over the
+# commit, and each such push is repaired again. A branch already repaired has nothing to repair, and the repair's own
+# push starts nothing, so it cannot loop. A rerun makes the same commit again, so it pushes nothing and dispatches.
 #
 # Every action is pinned by commit SHA, as release.yml's are.
 name: dependabot-lock-edges
@@ -99,6 +101,7 @@ jobs:
           auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
           git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
             push origin "$COMMIT:refs/heads/$BRANCH"
+      # every workflow is tried, and the old commit's runs go only when each has its replacement
       - name: run the pull request's checks on the repaired commit
         if: steps.commit.outputs.commit != ''
         shell: bash
@@ -106,8 +109,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
+          failed=()
+          while read -r workflow; do
+            for attempt in 1 2 3; do
+              if gh workflow run "$workflow" --ref "$BRANCH"; then continue 2; fi
+              ((attempt == 3)) || sleep 10
+            done
+            failed+=("$workflow")
+          done < <(scripts/repair-dependabot-lock.py workflows)
+          if ((${#failed[@]})); then
+            echo "::error::not dispatched on $BRANCH: ${failed[*]}"
+            exit 1
+          fi
           gh run list --commit "$HEAD_SHA" --event pull_request --json databaseId,status \
             --jq '.[] | select(.status != "completed") | .databaseId' |
             while read -r run; do gh run cancel "$run" || true; done
-          scripts/repair-dependabot-lock.py workflows |
-            while read -r workflow; do gh workflow run "$workflow" --ref "$BRANCH"; done

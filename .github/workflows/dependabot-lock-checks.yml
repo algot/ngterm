@@ -1,0 +1,53 @@
+# The checks of a Dependabot cargo pull request whose Cargo.lock dependabot-lock-edges.yml repaired. That workflow can
+# start the pull request's workflows on the repaired commit only by dispatching them, and GitHub neither shows a
+# dispatched run's checks on a pull request nor counts them as required checks. So this reports each such run on its
+# commit as a commit status named after its workflow, linking the run: pending when the run starts, its result when
+# it ends. A status is shown on the pull request, and is what a required check of that name is held to.
+#
+# `workflow_run`: this file and the script are the default branch's, the run's own data comes from the event, and
+# nothing of the branch is checked out or run. Only dispatched runs on a `dependabot/cargo/` branch of this repository
+# are reported: nobody without write access can dispatch one, and a pull request's own runs report themselves.
+#
+# `workflows` is the names of the workflows scripts/repair-dependabot-lock.py dispatches (its `WORKFLOWS`); its
+# self-test holds the two together.
+name: dependabot-lock-checks
+
+on:
+  workflow_run:
+    workflows: [android, conformance-gate, cross-platform, ios, linux, windows-installer]
+    types: [requested, completed]
+    branches: ["dependabot/cargo/**"]
+
+permissions: {}
+
+jobs:
+  status:
+    if: >-
+      github.event.workflow_run.event == 'workflow_dispatch' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      startsWith(github.event.workflow_run.head_branch, 'dependabot/cargo/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/repair-dependabot-lock.py
+          sparse-checkout-cone-mode: false
+      - name: report the run on its commit
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTION: ${{ github.event.action }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          WORKFLOW: ${{ github.event.workflow_run.name }}
+          COMMIT: ${{ github.event.workflow_run.head_sha }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+        run: |
+          state="$(scripts/repair-dependabot-lock.py status "$ACTION" "$CONCLUSION")"
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$COMMIT" \
+            -f state="$state" -f context="$WORKFLOW" -f target_url="$RUN_URL" \
+            -f description="${CONCLUSION:-running} (dispatched on the repaired Cargo.lock)"

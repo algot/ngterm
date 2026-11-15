@@ -276,19 +276,37 @@ def self_test():
         pass
     else:
         raise AssertionError("an edge no requirement allows went unreported")
+
+    other = Path(ROOT.anchor) / "elsewhere" / "Cargo.toml"
+    assert arguments([]) == (False, ROOT / "Cargo.toml") and arguments(["--fix"]) == (True, ROOT / "Cargo.toml")
+    assert arguments(["--manifest-path", str(other)]) == (False, other)
+    assert arguments(["--fix", "--manifest-path", str(other)]) == (True, other)
+    assert arguments(["--manifest-path", "Cargo.toml"]) == (False, Path.cwd() / "Cargo.toml")
+    for wrong in (["--manifest-path"], ["--manifest-path", "a", "b"], ["--fix", "--fix"], [str(other)], ["--manifest-path", str(other), "--fix"]):
+        assert arguments(wrong) is None, wrong
     print("check-lock-edges: self-test passed")
     return 0
+
+
+def arguments(argv):
+    """(whether to fix, the root manifest), or None for a command line this script does not take."""
+    fix = argv[:1] == ["--fix"]
+    rest = argv[1:] if fix else argv
+    if not rest:
+        return fix, ROOT / "Cargo.toml"
+    if len(rest) == 2 and rest[0] == "--manifest-path":
+        return fix, Path(rest[1]).resolve()
+    return None
 
 
 def main(argv):
     if argv == ["--self-test"]:
         return self_test()
-    fix = argv[:1] == ["--fix"]
-    rest = argv[1:] if fix else argv
-    if rest and not (len(rest) == 2 and rest[0] == "--manifest-path"):
+    parsed = arguments(argv)
+    if parsed is None:
         print(__doc__.strip().split("\n\n")[-1], file=sys.stderr)
         return 2
-    return check(fix, Path(rest[1]).resolve() if rest else ROOT / "Cargo.toml")
+    return check(*parsed)
 
 
 if __name__ == "__main__":

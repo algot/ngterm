@@ -1431,9 +1431,14 @@ already holds changes no file, so the path-filtered workflows don't start on it.
   than `Cargo.lock` and `Cargo.toml` files is left alone, and cargo only resolves it. A read-only job repairs the lock
   and a second one, which runs no cargo, commits it to the branch. A push with the workflow's token starts no
   workflow, so that job then dispatches the workflows a `Cargo.lock` change starts (the script's `WORKFLOWS`, which
-  its self-test holds to the workflows' triggers) on the branch: those runs are the repaired commit's checks, and the
-  runs of Dependabot's own commit are cancelled. The repair commit carries `[dependabot skip]`, so Dependabot still
-  rebases the pull request, and each rebase is repaired again.
+  its self-test holds to the workflows' triggers) on the branch, and cancels the runs of Dependabot's own commit once
+  every dispatch is in. The repair commit carries `[dependabot skip]`, so Dependabot still rebases the pull request,
+  and each rebase is repaired again.
+- `dependabot-lock-checks.yml` (the runs the workflow above dispatches): GitHub shows no dispatched run's checks on a
+  pull request, so this reports each of those runs on the repaired commit as a commit status named after its workflow
+  (`linux`, `android`, ...), pending and then the run's result, with a link to the run. Those statuses are the
+  repaired pull request's checks: there is one per workflow, not one per job, and a required check on such a pull
+  request has to name a workflow. A dispatched run builds the branch as pushed, not its merge with `main`.
 - `reference-macos.yml` (PRs that change `conformance/`, and by hand): the suite against upstream's macOS release.
 
 ### Sharded suite
