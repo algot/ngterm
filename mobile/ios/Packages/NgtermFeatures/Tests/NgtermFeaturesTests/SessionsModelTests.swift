@@ -72,7 +72,8 @@ internal struct SessionsModelTests {
 
     @Test("the hint reads as a banner's message over its note")
     internal func hintSplits() {
-        let (message, note) = SessionsBanners.split(hint: "agterm on mac is not in Live sessions mode: set it and restart")
+        let hint = "agterm on mac is not in Live sessions mode: set it and restart"
+        let (message, note) = SessionsBanners.split(hint: hint)
         #expect(message == "agterm on mac is not in Live sessions mode")
         #expect(note == "Set it and restart")
         let whole = SessionsBanners.split(hint: "agterm could not start")

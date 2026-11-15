@@ -17,6 +17,12 @@
         private static let paneId = "P1"
         nonisolated private static let columns = 40
         nonisolated private static let rows = 12
+        /// The id, and label, of a Mac whose agterm is not in Live sessions mode: it lists no session.
+        internal static let notLiveId = "studio-off"
+        /// What the core says of it, as its listing's hint.
+        internal static let notLiveHint =
+            "agterm on studio-off is not in Live sessions mode: set Settings > General > Restore sessions to Live "
+            + "sessions and restart agterm; only sessions started after that can be attached"
 
         private static var attachEvents: [MobileEvent] {
             let layout = RemoteLayout(panes: [paneId], primary: paneId, axis: nil, shown: true)
@@ -66,13 +72,6 @@
                 return FakePane(paneId: pane, frames: frames)
             }
         }
-
-        /// The id, and label, of a Mac whose agterm is not in Live sessions mode: it lists no session.
-        internal static let notLiveId = "studio-off"
-        /// What the core says of it, as its listing's hint.
-        internal static let notLiveHint =
-            "agterm on studio-off is not in Live sessions mode: set Settings > General > Restore sessions to Live "
-            + "sessions and restart agterm; only sessions started after that can be attached"
 
         /// Saves `studio-off` at `studio-off.lan` in `machines`, signing in with `keyId`: no session, and its listing
         /// says why.

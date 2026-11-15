@@ -109,7 +109,7 @@ public final class Connections {
             .hostKeyUnknown(let machineId, _),
             .hostKeyChanged(let machineId, _, _),
             .signInRequested(let machineId, _, _),
-            .tree(let machineId, _):
+            .tree(let machineId, _, _):
             machineId
 
         default:

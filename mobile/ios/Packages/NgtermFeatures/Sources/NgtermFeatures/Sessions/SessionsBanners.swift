@@ -14,15 +14,6 @@ internal struct SessionsBanners: View {
         isOffline || failure != nil || hint != nil
     }
 
-    /// The core's hint as a banner's message over its note: what is wrong, then what to change.
-    internal static func split(hint: String) -> (message: String, note: String?) {
-        guard let colon = hint.range(of: ": ") else {
-            return (hint, nil)
-        }
-        let rest = hint[colon.upperBound...]
-        return (String(hint[..<colon.lowerBound]), rest.prefix(1).uppercased() + rest.dropFirst())
-    }
-
     internal var body: some View {
         VStack(spacing: Spacing.small) {
             if isOffline {
@@ -45,5 +36,14 @@ internal struct SessionsBanners: View {
                 Banner(.attention, message: message, note: note)
             }
         }
+    }
+
+    /// The core's hint as a banner's message over its note: what is wrong, then what to change.
+    internal static func split(hint: String) -> (message: String, note: String?) {
+        guard let colon = hint.range(of: ": ") else {
+            return (hint, nil)
+        }
+        let rest = hint[colon.upperBound...]
+        return (String(hint[..<colon.lowerBound]), rest.prefix(1).uppercased() + rest.dropFirst())
     }
 }

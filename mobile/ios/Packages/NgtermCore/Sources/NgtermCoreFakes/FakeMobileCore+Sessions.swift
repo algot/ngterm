@@ -82,7 +82,7 @@
                     return (true, kept, state.hints[machineId])
                 }
                 if listed {
-                    emit(.tree(machineId: machineId, sessions: tree, hint: hint, hint: nil))
+                    emit(.tree(machineId: machineId, sessions: tree, hint: hint))
                 }
             }
         }
@@ -220,7 +220,7 @@
             let (listing, hint) = try state.withLock { state throws(MobileError) in
                 (try state.keepListing(machineId), state.hints[machineId])
             }
-            emit(.tree(machineId: machineId, sessions: listing, hint: hint, hint: nil))
+            emit(.tree(machineId: machineId, sessions: listing, hint: hint))
             return listing
         }
     }
