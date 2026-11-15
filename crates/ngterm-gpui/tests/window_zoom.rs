@@ -110,6 +110,17 @@ fn a_main_window_follows_back_to_back_zooms_on_weston() -> TestResult {
     request(&sandbox, "window.resize", &json!({ "width": 900, "height": 600 }))?;
     wait_rested(&sandbox, false, "a resize behind a zoom")?;
 
+    // a zoom right behind the resize of a maximized window: the window stays in the zoom and keeps the size for
+    // its restore, which this test cannot read back (a Wayland window reports no geometry): that the size waits and
+    // is given is the unit tests'
+    toggle_zoom(&sandbox)?;
+    wait_rested(&sandbox, true, "a zoom")?;
+    request(&sandbox, "window.resize", &json!({ "width": 700, "height": 500 }))?;
+    toggle_zoom(&sandbox)?;
+    wait_rested(&sandbox, true, "a zoom behind a resize")?;
+    toggle_zoom(&sandbox)?;
+    wait_rested(&sandbox, false, "the unzoom of a window with a size waiting")?;
+
     sandbox.terminate(primary)?;
     assert_eq!(sandbox.wait_exit(primary, Duration::from_secs(10))?.0.code(), Some(0));
     Ok(())

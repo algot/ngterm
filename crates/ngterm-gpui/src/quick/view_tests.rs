@@ -87,9 +87,9 @@ fn an_unzoom_of_a_window_already_restored_settles_without_a_request(cx: &mut Tes
     let (view, cx) = zoom_view(cx);
     view.update_in(cx, |view, window, cx| {
         view.zoom(false, window, cx);
-        assert!(view.zoom.is_some(), "nothing settles before the frames");
+        assert!(!view.zoom.is_settled(), "nothing settles before the frames");
         view.settle_zoom(false, window, cx);
-        assert_eq!(view.zoom, None);
+        assert!(view.zoom.is_settled());
     });
 }
 
@@ -100,6 +100,42 @@ fn a_zoom_whose_maximize_changed_since_the_frame_waits_for_the_next_one(cx: &mut
         view.zoom(true, window, cx);
         // the first frame read the window maximized, which reads restored now: a configure is acked, not committed
         view.settle_zoom(true, window, cx);
-        assert_eq!(view.zoom, Some(ZoomRequest::new(true)), "no request went out");
+        assert!(!view.zoom.is_settled());
+        assert_eq!(view.zoom.sends(), 0, "no request went out");
+    });
+}
+
+/// A request as it stands once sent from a window reading `from`.
+fn sent(from: bool) -> Pending {
+    let mut zoom = Pending::default();
+    zoom.want(!from);
+    assert_eq!(zoom.settle(from, from), Some(Settle::Request));
+    zoom
+}
+
+#[gpui_kit::test]
+fn a_request_the_window_manager_never_answers_is_forgotten_at_the_last_look(cx: &mut TestAppContext) {
+    let (view, cx) = zoom_view(cx);
+    view.update_in(cx, |view, window, cx| {
+        view.zoom = sent(false);
+        assert!(view.look_at_zoom(1, false, window, cx), "no answer yet: look again");
+        assert!(!view.zoom.is_settled());
+        assert!(!view.look_at_zoom(1, true, window, cx));
+        assert!(view.zoom.is_settled(), "the next zoom goes out as the first did");
+        assert!(!view.look_at_zoom(1, true, window, cx), "nothing left to look at");
+    });
+}
+
+#[gpui_kit::test]
+fn a_request_answered_is_kept_for_its_frames_past_the_last_look(cx: &mut TestAppContext) {
+    let (view, cx) = zoom_view(cx);
+    view.update_in(cx, |view, window, cx| {
+        // sent from a maximized window, which reads restored now
+        view.zoom = sent(true);
+        assert!(view.look_at_zoom(1, false, window, cx));
+        assert!(view.look_at_zoom(1, true, window, cx));
+        assert!(!view.zoom.is_settled(), "the frames settle it, not the look");
+        view.settle_zoom(false, window, cx);
+        assert!(view.zoom.is_settled());
     });
 }

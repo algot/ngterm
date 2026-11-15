@@ -16,17 +16,25 @@
 //! The quick terminal's window host settles every request over the two frames (`quick::view`). A main window
 //! ([`WindowZoom`]) keeps the maximize its last frame committed, so a request with nothing in its way goes out at
 //! once, as GPUI's own `zoom_window` does: a window no frame is drawn for (hidden, on another workspace) still takes
-//! it. A window manager may never answer (X11 without one, a tiling compositor that refuses a maximize): a request
-//! with no answer after [`UNANSWERED`] is forgotten at the next one, which then goes out as the first did.
+//! it.
+//!
+//! No platform answers within the call, and an answer need not change the window's bounds (a window already the
+//! size of its maximize), so a request sent is looked at ([`watch`]) every [`LOOK`]: an answer settles again. A
+//! window manager may never answer (X11 without one, a tiling compositor that refuses a maximize): a request the
+//! window's maximize still reads unchanged for after [`UNANSWERED`] is forgotten, and the next one goes out as the
+//! first did. A request answered whose frames are still to come is kept, however long they take.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use gpui_kit::{Pixels, Size, Window};
+use gpui_kit::{App, Pixels, Size, Window};
 
-/// How long a request's answer is waited for before the next request counts it as never coming.
+/// How long a request's answer is waited for before it counts as never coming.
 pub const UNANSWERED: Duration = Duration::from_secs(1);
+
+/// How often a request sent is looked at for its answer.
+const LOOK: Duration = Duration::from_millis(50);
 
 /// What the window does next for a zoom.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,11 +89,26 @@ impl ZoomRequest {
     }
 }
 
-/// A window's zoom requests: the one being settled and when it went out.
+/// What a look at a request sent finds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Watch {
+    /// The request is settled or another one went out since: nothing left to look at.
+    Over,
+    /// No answer yet.
+    Wait,
+    /// The window's maximize changed, seen for the first time: settle again.
+    Answered,
+    /// No answer came in time: the request is forgotten.
+    Unanswered,
+}
+
+/// A window's zoom requests: the one being settled and how many went out.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct Pending {
+pub(crate) struct Pending {
     request: Option<ZoomRequest>,
-    sent_at: Option<Instant>,
+    sends: u64,
+    /// The send whose answer a look reported.
+    answered: u64,
 }
 
 impl Pending {
@@ -94,59 +117,100 @@ impl Pending {
         self.request.is_none()
     }
 
+    /// How many requests went out: the last one's name for [`watch`](Self::watch).
+    #[must_use]
+    pub fn sends(&self) -> u64 {
+        self.sends
+    }
+
     /// The opposite of what the window is to be: of the request being settled, else of its `maximized`.
-    pub fn toggle(&mut self, maximized: bool, now: Instant) {
-        self.forget_unanswered(now);
+    pub fn toggle(&mut self, maximized: bool) {
         let wanted = !self.request.map_or(maximized, |request| request.wanted);
-        self.want(wanted, now);
+        self.want(wanted);
     }
 
     /// The window is to be `wanted`.
-    pub fn want(&mut self, wanted: bool, now: Instant) {
-        self.forget_unanswered(now);
+    pub fn want(&mut self, wanted: bool) {
         match &mut self.request {
             Some(request) => request.want(wanted),
             None => self.request = Some(ZoomRequest::new(wanted)),
         }
     }
 
-    /// [`ZoomRequest::settle`] for the request being settled, `None` with none; a request to send went out at `now`.
-    pub fn settle(&mut self, committed: bool, maximized: bool, now: Instant) -> Option<Settle> {
+    /// [`ZoomRequest::settle`] for the request being settled, `None` with none.
+    pub fn settle(&mut self, committed: bool, maximized: bool) -> Option<Settle> {
         let step = self.request.as_mut()?.settle(committed, maximized);
         match step {
-            Settle::Done => *self = Self::default(),
-            Settle::Request => self.sent_at = Some(now),
+            Settle::Done => self.request = None,
+            Settle::Request => self.sends += 1,
             Settle::Wait | Settle::Again => {}
         }
         Some(step)
     }
 
-    fn forget_unanswered(&mut self, now: Instant) {
-        let unanswered = self
-            .sent_at
-            .is_some_and(|sent| now.saturating_duration_since(sent) >= UNANSWERED);
-        if unanswered && self.request.is_some_and(|request| request.sent_from.is_some()) {
-            *self = Self::default();
+    /// A look at the request that went out as `send`, the window reading `maximized`; the `last` look forgets a
+    /// request with no answer.
+    pub fn watch(&mut self, send: u64, maximized: bool, last: bool) -> Watch {
+        let in_flight = self.request.and_then(|request| request.sent_from);
+        match in_flight {
+            Some(from) if send == self.sends => {
+                if from != maximized {
+                    if std::mem::replace(&mut self.answered, send) == send {
+                        Watch::Wait
+                    } else {
+                        Watch::Answered
+                    }
+                } else if last {
+                    self.request = None;
+                    Watch::Unanswered
+                } else {
+                    Watch::Wait
+                }
+            }
+            _ => Watch::Over,
         }
     }
 }
 
-/// A main window's zoom: its requests, the maximize its last drawn frame committed, and the size it takes once
-/// restored.
+/// Looks at a request just sent every [`LOOK`] while `look` asks for more; it is told which look is the last,
+/// [`UNANSWERED`] after the request.
+pub(crate) fn watch(window: &Window, cx: &App, mut look: impl FnMut(bool, &mut Window, &mut App) -> bool + 'static) {
+    window
+        .spawn(cx, async move |cx| {
+            let looks = UNANSWERED.as_millis() / LOOK.as_millis();
+            for nth in 1..=looks {
+                cx.background_executor().timer(LOOK).await;
+                if !cx.update(|window, cx| look(nth == looks, window, cx)).unwrap_or(false) {
+                    return;
+                }
+            }
+        })
+        .detach();
+}
+
+/// A main window's zoom: its requests, the maximize its last drawn frame committed, and the size it takes once it
+/// rests restored.
 #[derive(Debug)]
 pub struct WindowZoom {
     pending: RefCell<Pending>,
     committed: Cell<bool>,
     resize: Cell<Option<Size<Pixels>>>,
+    request: fn(&mut Window),
 }
 
 impl WindowZoom {
     #[must_use]
     pub fn new(window: &Window) -> Rc<Self> {
+        Self::requesting(window, |window| window.zoom_window())
+    }
+
+    /// A zoom that asks the window manager through `request`: the test window panics when asked to maximize.
+    fn requesting(window: &Window, request: fn(&mut Window)) -> Rc<Self> {
         Rc::new(Self {
             pending: RefCell::default(),
             committed: Cell::new(window.is_maximized()),
             resize: Cell::new(None),
+            request,
         })
     }
 
@@ -163,23 +227,25 @@ impl WindowZoom {
         self.committed.set(!self.committed.get());
     }
 
-    /// Maximizes the window, or restores it: the opposite of what it is, or is on its way to.
-    pub fn toggle(self: &Rc<Self>, window: &mut Window) {
-        self.resize.set(None);
-        self.pending.borrow_mut().toggle(window.is_maximized(), Instant::now());
-        self.settle(self.committed.get(), window);
+    /// Maximizes the window, or restores it: the opposite of what it is, or is on its way to. A size that waits for
+    /// the window's restore keeps waiting for it.
+    pub fn toggle(self: &Rc<Self>, window: &mut Window, cx: &mut App) {
+        self.pending.borrow_mut().toggle(window.is_maximized());
+        self.settle(self.committed.get(), window, cx);
     }
 
-    /// Restores a window that is maximized or on its way there, which takes `size` once it is restored: a size
-    /// committed on a window still configured maximized is a protocol error on Wayland, which ends the connection.
-    /// `false` for a window with nothing to restore, which the caller resizes itself.
-    pub fn restore_to(self: &Rc<Self>, size: Size<Pixels>, window: &mut Window) -> bool {
+    /// Restores a window that is maximized or on its way there, which takes `size` once it rests restored: a size
+    /// committed on a window still configured maximized is a protocol error on Wayland, which ends the connection,
+    /// and a size given on the way to another maximize is not the one GPUI's Wayland window restores to. `false` for
+    /// a window with nothing to restore, which the caller resizes itself.
+    pub fn restore_to(self: &Rc<Self>, size: Size<Pixels>, window: &mut Window, cx: &mut App) -> bool {
         if self.pending.borrow().is_settled() && !window.is_maximized() {
+            self.resize.set(None);
             return false;
         }
-        self.pending.borrow_mut().want(false, Instant::now());
+        self.pending.borrow_mut().want(false);
         self.resize.set(Some(size));
-        self.settle(self.committed.get(), window);
+        self.settle(self.committed.get(), window, cx);
         true
     }
 
@@ -197,7 +263,7 @@ impl WindowZoom {
         let zoom = Rc::clone(self);
         window.on_next_frame(move |window, _| {
             let committed = zoom.frame_started(window);
-            window.on_next_frame(move |window, _| zoom.settle(committed, window));
+            window.on_next_frame(move |window, cx| zoom.settle(committed, window, cx));
         });
     }
 
@@ -208,26 +274,52 @@ impl WindowZoom {
         committed
     }
 
-    fn settle(self: &Rc<Self>, committed: bool, window: &mut Window) {
+    fn settle(self: &Rc<Self>, committed: bool, window: &mut Window, cx: &mut App) {
         let maximized = window.is_maximized();
-        let step = self.pending.borrow_mut().settle(committed, maximized, Instant::now());
+        let step = self.pending.borrow_mut().settle(committed, maximized);
         tracing::debug!(?step, committed, maximized, "window: zoom step");
         match step {
-            None | Some(Settle::Wait) => {}
+            Some(Settle::Wait) => {}
+            None => self.rest(window),
             Some(Settle::Done) => {
                 tracing::info!(maximized, "window: zoom settled");
-                if let Some(size) = self.resize.take() {
-                    window.resize(size);
-                }
+                self.rest(window);
             }
             Some(Settle::Again) => self.settle_after_a_frame(window),
             Some(Settle::Request) => {
-                window.zoom_window();
-                // macOS zooms within the call, and a zoom to the frame the window has changes no bounds
-                if window.is_maximized() != maximized {
-                    self.settle(committed, window);
-                }
+                (self.request)(window);
+                let (zoom, send) = (Rc::clone(self), self.pending.borrow().sends());
+                watch(window, cx, move |last, window, _| zoom.look(send, last, window));
             }
+        }
+    }
+
+    /// A look at the request sent as `send`; whether it is to be looked at again.
+    fn look(self: &Rc<Self>, send: u64, last: bool, window: &mut Window) -> bool {
+        let maximized = window.is_maximized();
+        let watch = self.pending.borrow_mut().watch(send, maximized, last);
+        match watch {
+            Watch::Over => false,
+            Watch::Wait => true,
+            Watch::Answered => {
+                self.settle_after_a_frame(window);
+                true
+            }
+            Watch::Unanswered => {
+                tracing::info!(maximized, "window: zoom request unanswered");
+                self.rest(window);
+                false
+            }
+        }
+    }
+
+    /// No request is left: a window restored takes the size that waited for it. A window maximized keeps it for
+    /// its next restore, the window manager's own included.
+    fn rest(&self, window: &mut Window) {
+        if !window.is_maximized()
+            && let Some(size) = self.resize.take()
+        {
+            window.resize(size);
         }
     }
 }

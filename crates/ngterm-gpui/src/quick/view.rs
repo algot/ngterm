@@ -22,7 +22,7 @@ use crate::keymap_dispatch::{self, KeyOrigin};
 use crate::state::{AppState, Poster, post};
 use crate::terminal::{Terminal, TerminalView, ViewRole};
 
-use crate::window_zoom::{Settle, ZoomRequest};
+use crate::window_zoom::{self, Pending, Settle, Watch};
 
 /// The frame's corner radius and the edge's white opacity (upstream's `QuickTerminalPanelContent`).
 const RADIUS: f32 = 12.;
@@ -67,7 +67,7 @@ pub struct QuickView {
     /// The window's size, last logged.
     size: Option<Size<Pixels>>,
     /// The window host's zoom until the window's maximize matches it.
-    zoom: Option<ZoomRequest>,
+    zoom: Pending,
     #[cfg(target_os = "macos")]
     restore: super::zoom::Restore,
     poster: Poster,
@@ -123,7 +123,7 @@ impl QuickView {
             links,
             holds_key: false,
             size: Some(size),
-            zoom: None,
+            zoom: Pending::default(),
             #[cfg(target_os = "macos")]
             restore: super::zoom::Restore::default(),
             poster,
@@ -145,17 +145,14 @@ impl QuickView {
 
     /// Maximizes (`zoomed`) or restores the window host for the zoom ([`crate::window_zoom`]).
     pub fn zoom(&mut self, zoomed: bool, window: &mut Window, cx: &mut Context<Self>) {
-        match &mut self.zoom {
-            Some(request) => request.want(zoomed),
-            None => self.zoom = Some(ZoomRequest::new(zoomed)),
-        }
+        self.zoom.want(zoomed);
         self.settle_zoom_after_a_frame(window, cx);
     }
 
     /// Settles the zoom over two frames ([`crate::window_zoom`]): the callbacks run as a frame starts, so the first one
     /// reads the maximize that frame commits, and the second one settles after it.
     fn settle_zoom_after_a_frame(&self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.zoom.is_none() {
+        if self.zoom.is_settled() {
             return;
         }
         cx.on_next_frame(window, |view, window, cx| {
@@ -166,17 +163,35 @@ impl QuickView {
 
     fn settle_zoom(&mut self, committed: bool, window: &mut Window, cx: &mut Context<Self>) {
         let maximized = self.zoomed(window);
-        let Some(request) = &mut self.zoom else {
-            return;
-        };
-        match request.settle(committed, maximized) {
-            Settle::Done => {
-                self.zoom = None;
-                tracing::info!(maximized, "quick terminal: zoom settled");
+        match self.zoom.settle(committed, maximized) {
+            None | Some(Settle::Wait) => {}
+            Some(Settle::Done) => tracing::info!(maximized, "quick terminal: zoom settled"),
+            Some(Settle::Again) => self.settle_zoom_after_a_frame(window, cx),
+            Some(Settle::Request) => {
+                Self::request_zoom(window, cx);
+                let (view, send) = (cx.weak_entity(), self.zoom.sends());
+                window_zoom::watch(window, cx, move |last, window, cx| {
+                    view.update(cx, |view, cx| view.look_at_zoom(send, last, window, cx))
+                        .unwrap_or(false)
+                });
             }
-            Settle::Wait => {}
-            Settle::Again => self.settle_zoom_after_a_frame(window, cx),
-            Settle::Request => Self::request_zoom(window, cx),
+        }
+    }
+
+    /// A look at the request sent as `send` ([`crate::window_zoom`]); whether it is to be looked at again.
+    fn look_at_zoom(&mut self, send: u64, last: bool, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let maximized = self.zoomed(window);
+        match self.zoom.watch(send, maximized, last) {
+            Watch::Over => false,
+            Watch::Wait => true,
+            Watch::Answered => {
+                self.settle_zoom_after_a_frame(window, cx);
+                true
+            }
+            Watch::Unanswered => {
+                tracing::info!(maximized, "quick terminal: zoom request unanswered");
+                false
+            }
         }
     }
 
@@ -229,7 +244,7 @@ impl QuickView {
         let frame = on_screen.then(|| self.restore.target(current, visible));
         if frame.is_none() {
             tracing::debug!("quick terminal: the panel is on no screen for its zoom");
-            self.zoom = None;
+            self.zoom = Pending::default();
         }
         Some((native, frame?))
     }

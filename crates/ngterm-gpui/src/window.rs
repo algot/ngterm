@@ -332,7 +332,7 @@ impl WindowView {
                         .update(cx, |popovers, cx| popovers.toggle(kind, anchor, window, cx));
                     view.sync_popover_layer(cx);
                 }
-                TitlebarEvent::ToggleZoom => view.zoom.toggle(window),
+                TitlebarEvent::ToggleZoom => view.zoom.toggle(window, cx),
             },
         );
         let popped = cx.observe(&popovers, |view, _, cx| view.sync_popover_layer(cx));
@@ -1013,11 +1013,11 @@ impl WindowView {
                 let size = size(px(requested.width as f32), px(requested.height as f32));
                 // a maximized window leaves that state and then takes the size, as `setFrame` resizes a zoomed
                 // `NSWindow`
-                if window.is_fullscreen() || !self.zoom.restore_to(size, window) {
+                if window.is_fullscreen() || !self.zoom.restore_to(size, window, cx) {
                     window.resize(size);
                 }
             }
-            WindowRequest::ToggleZoom(_) => self.zoom.toggle(window),
+            WindowRequest::ToggleZoom(_) => self.zoom.toggle(window, cx),
             WindowRequest::ToggleFullscreen(_) => window.toggle_fullscreen(),
             WindowRequest::Minimize { minimized, .. } => {
                 if minimized {
