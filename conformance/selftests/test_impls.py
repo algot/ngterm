@@ -68,15 +68,37 @@ def daemons(tmp_path: Path) -> Iterator[list[subprocess.Popen[bytes]]]:
 
 def install_stdin_reader(program: Path) -> None:
     """Puts at `program` an executable that reads stdin until it closes and then exits 0 under any file name: `cat`, or
-    where that is a multicall binary that refuses a name it does not know (uutils coreutils), the next that does."""
-    for candidate in ("cat", "gnucat", "sh"):
-        source = shutil.which(candidate)
-        if source is None:
+    where that is a multicall binary that refuses a name it does not know (uutils coreutils, BusyBox), the next that
+    does, this interpreter last."""
+    for source in (shutil.which("cat"), shutil.which("gnucat"), shutil.which("sh"), sys.executable):
+        if not source:
             continue
         shutil.copy2(source, program)
         if subprocess.run([program], stdin=subprocess.DEVNULL, capture_output=True, check=False).returncode == 0:
             return
     raise RuntimeError(f"no program here reads stdin under the name {program.name}")
+
+
+def test_the_stdin_reader_falls_back_to_the_interpreter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    interpreter = tmp_path / "interpreter"
+    install_stdin_reader(interpreter)
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    monkeypatch.setattr(sys, "executable", str(interpreter))
+    program = tmp_path / "zmx"
+    install_stdin_reader(program)
+    assert subprocess.run([program], input=b"", capture_output=True, check=False).returncode == 0
+
+
+def test_the_stdin_reader_refuses_a_box_where_nothing_reads_stdin_under_its_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    refusing = tmp_path / "refusing"
+    refusing.write_text("#!/bin/sh\nexit 127\n")
+    refusing.chmod(0o755)
+    monkeypatch.setattr(shutil, "which", lambda name: str(refusing))
+    monkeypatch.setattr(sys, "executable", "")
+    with pytest.raises(RuntimeError, match="no program here reads stdin under the name zmx"):
+        install_stdin_reader(tmp_path / "zmx")
 
 
 def spawn_daemon(
