@@ -444,40 +444,57 @@ def privileged_test(workflows):
     assert privileged_faults(repair, True) == [], privileged_faults(repair, True)
     assert privileged_faults(checks, False) == [], privileged_faults(checks, False)
     pin = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
+    # each case breaks one rule and nothing else, and names the fault that rule reports: a case that another rule
+    # rejected would pass with its own rule gone
     unsafe = [
-        ("permissions: {}", "permissions: write-all"),
-        (pin, "actions/checkout@v7"),
-        ("persist-credentials: false", "persist-credentials: true"),
-        ("persist-credentials: false", "ref: ${{ github.event.pull_request.head.sha }}"),
-        ('fix "$HEAD_SHA"', "fix ${{ github.event.pull_request.head.ref }}"),
-        ("GH_TOKEN: ${{ github.token }}", "GH_TOKEN: ${{ secrets.PUSH_TOKEN }}"),
-        ("types: [opened, synchronize, reopened]", "types: [opened, synchronize, reopened, edited]"),
-        ("github.event.pull_request.user.login == 'dependabot[bot]'", "github.actor == 'dependabot[bot]'"),
-        ("github.event.pull_request.head.repo.full_name == github.repository &&", ""),
-        ("startsWith(github.event.pull_request.head.ref, 'dependabot/cargo/')", "true"),
-        ("      contents: read\n    outputs:", "      contents: write\n    outputs:"),
-        ("if: needs.fix.outputs.repaired == 'true'", "if: always()"),
-        ("    timeout-minutes: 10\n", "    timeout-minutes: 10\n    environment: release\n"),
-        ("      - uses: actions/download-artifact@", f"      - uses: actions/cache@{'a' * 40}\n      - uses: actions/download-artifact@"),
-        ("      - name: commit the repaired lock", "      - run: cargo metadata\n      - name: commit the repaired lock"),
+        ("permissions: {}", "permissions: write-all", "top-level permissions"),
+        (pin, "actions/checkout@v7", "not a commit"),
+        ("persist-credentials: false", "persist-credentials: true", "checks out another ref"),
+        ("          persist-credentials: false\n", "", "checks out another ref"),
+        ("persist-credentials: false", "persist-credentials: false\n          ref: ${{ github.event.pull_request.head.sha }}",
+         "checks out another ref"),
+        ("persist-credentials: false", "persist-credentials: false\n          repository: someone/fork", "checks out another ref"),
+        ('fix "$HEAD_SHA"', "fix ${{ github.event.pull_request.head.ref }}", "expression in a run step"),
+        ("GH_TOKEN: ${{ github.token }}", "GH_TOKEN: ${{ secrets.PUSH_TOKEN }}", "reads a secret"),
+        ("types: [opened, synchronize, reopened]", "types: [opened, synchronize, reopened, edited]", "starts on something else"),
+        ("github.event.pull_request.user.login == 'dependabot[bot]'", "github.actor == 'dependabot[bot]'", "fix does not hold"),
+        ("github.event.pull_request.head.repo.full_name == github.repository &&", "", "fix does not hold"),
+        ("startsWith(github.event.pull_request.head.ref, 'dependabot/cargo/')", "true", "fix does not hold"),
+        ("      contents: read\n    outputs:", "      contents: write\n    outputs:", "fix holds more"),
+        ("if: needs.fix.outputs.repaired == 'true'", "if: always()", "push runs without fix"),
+        ("    timeout-minutes: 10\n", "    timeout-minutes: 10\n    environment: release\n", "runs in an environment"),
+        ("      - uses: actions/download-artifact@", f"      - uses: actions/cache@{'a' * 40}\n      - uses: actions/download-artifact@",
+         "uses a cache"),
+        ("      - name: commit the repaired lock", "      - run: cargo metadata\n      - name: commit the repaired lock", "push runs cargo"),
     ]
-    for old, new in unsafe:
+    for old, new, fault in unsafe:
         assert old in repair, f"dependabot-lock-edges.yml no longer has {old!r}: the self-test's cases are stale"
-        assert privileged_faults(repair.replace(old, new), True), f"accepted: {old!r} as {new!r}"
-    assert privileged_faults(checks.replace("COMMIT: ${{", "COMMIT: ${{ secrets.X }} # ${{"), False)
-    assert privileged_faults(checks.replace('statuses/$COMMIT"', 'statuses/${{ github.event.workflow_run.head_sha }}"'), False)
+        only(privileged_faults(repair.replace(old, new), True), fault, f"{old!r} as {new!r}")
+    only(privileged_faults(checks.replace("COMMIT: ${{", "COMMIT: ${{ secrets.X }} # ${{"), False), "reads a secret", "a secret")
+    expression = checks.replace('statuses/$COMMIT"', 'statuses/${{ github.event.workflow_run.head_sha }}"')
+    assert expression != checks, "dependabot-lock-checks.yml no longer posts to statuses/$COMMIT: the self-test's case is stale"
+    only(privileged_faults(expression, False), "expression in a run step", "an expression in a script")
 
     for file in WORKFLOWS:
         text = (workflows / file).read_text()
         assert dispatched_faults(text) == [], f"{file}, which the repair dispatches on a Dependabot branch: {dispatched_faults(text)}"
     linux = (workflows / "linux.yml").read_text()
-    for old, new in [("permissions:\n  contents: read", "permissions:\n  contents: write"),
-                     ("permissions:\n  contents: read", "permissions: {}\nenv:\n  KEY: ${{ secrets.SIGNING_KEY }}"),
-                     ("    runs-on: ubuntu-26.04\n", "    runs-on: ubuntu-26.04\n    permissions:\n      id-token: write\n"),
-                     ("    runs-on: ubuntu-26.04\n", "    runs-on: ubuntu-26.04\n    permissions: write-all\n"),
-                     ("    runs-on: ubuntu-26.04\n", "    runs-on: ubuntu-26.04\n    environment: release\n")]:
+    job = "    runs-on: ubuntu-26.04\n"
+    for old, new, fault in [
+        ("permissions:\n  contents: read", "permissions:\n  contents: write", "top-level permissions"),
+        ("permissions:\n  contents: read", "permissions:\n  contents: read\nenv:\n  KEY: ${{ secrets.SIGNING_KEY }}", "reads a secret"),
+        (job, job + "    permissions:\n      id-token: write\n", "more than read access"),
+        (job, job + "    permissions: write-all\n", "more than read access"),
+        (job, job + "    environment: release\n", "runs in an environment"),
+    ]:
         assert old in linux, f"linux.yml no longer has {old!r}: the self-test's cases are stale"
-        assert dispatched_faults(linux.replace(old, new)), f"accepted in a dispatched workflow: {new!r}"
+        only(dispatched_faults(linux.replace(old, new)), fault, f"in a dispatched workflow: {new!r}")
+
+
+def only(faults, fault, case):
+    """A broken workflow was refused, and for `fault` alone: every fault reported is the one the case is about."""
+    assert faults, f"accepted: {case}"
+    assert all(fault in found for found in faults), f"{case}: refused for {faults}, not only for {fault!r}"
 
 
 def self_test():
