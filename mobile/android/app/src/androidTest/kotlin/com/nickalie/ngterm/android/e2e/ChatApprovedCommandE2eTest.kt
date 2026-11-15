@@ -110,7 +110,7 @@ class ChatApprovedCommandE2eTest {
         // Yes: Working and Stop at once, and for the whole run
         ask("yes")
         val answered = SystemClock.elapsedRealtime()
-        compose.onNode(option(YES)).performClick()
+        compose.onNode(option(YES)).performScrollTo().performClick()
         val shown = runCatching { compose.waitUntil(ANSWER_WAIT_MS) { working() } }.isSuccess
         val after = SystemClock.elapsedRealtime() - answered
         Log.i(TAG, "Working and Stop shown ${after}ms after Yes")
@@ -137,7 +137,7 @@ class ChatApprovedCommandE2eTest {
 
         // No: the session leaves Waiting and never shows Working
         ask("no")
-        compose.onNode(option(NO)).performClick()
+        compose.onNode(option(NO)).performScrollTo().performClick()
         val cleared =
             runCatching {
                 compose.waitUntil(ANSWER_WAIT_MS) { nodes(card()) == 0 && nodes(badge(R.string.agent_blocked)) == 0 }
@@ -241,7 +241,7 @@ class ChatApprovedCommandE2eTest {
     // the approval card, by its title
     private fun card(): SemanticsMatcher = hasText(text(R.string.chat_approval_title, TOOL))
 
-    // one of the card's options
+    // one of the card's options; with the keyboard up the card scrolls, and a later option lies under its fold
     private fun option(label: String): SemanticsMatcher = hasText(label) and hasClickAction()
 
     // the foot's Stop
