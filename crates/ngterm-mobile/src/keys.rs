@@ -41,6 +41,7 @@ const MAX_IMPORT_SCRYPT_PARALLELIZATION: u16 = 16;
 const MAX_IMPORT_ARGON2_PASSES: u32 = 256;
 
 const PPK_HEADER: &str = "PuTTY-User-Key-File-";
+const PPK_CIPHER: &str = "aes256-cbc";
 const OPENSSH_ARMOR: &str = "-----BEGIN OPENSSH PRIVATE KEY-----";
 const RSA_ARMOR: &str = "-----BEGIN RSA PRIVATE KEY-----";
 const ENCRYPTED_PKCS8_ARMOR: &str = "-----BEGIN ENCRYPTED PRIVATE KEY-----";
@@ -328,6 +329,14 @@ fn refuse_excessive_pbes(scheme: &EncryptionScheme) -> Result<(), KeyError> {
                     format_args!("a parallelization of {}", scrypt.parallelization),
                     MAX_IMPORT_SCRYPT_PARALLELIZATION,
                 ))
+            } else if scrypt.cost_parameter < 2 || !scrypt.cost_parameter.is_power_of_two() {
+                // pkcs5 panics on a cost of 0
+                Err(KeyError::Invalid {
+                    reason: format!(
+                        "the key's passphrase protection has a scrypt cost of {}, which is not a power of two above 1",
+                        scrypt.cost_parameter
+                    ),
+                })
             } else {
                 Ok(())
             }
@@ -373,8 +382,17 @@ fn excessive_memory(kib: u64) -> KeyError {
     )
 }
 
-/// Whether the PEM text holds an encrypted key: an OpenSSH key with a cipher, or an encrypted PKCS#8 one.
+/// Whether the text holds an encrypted key: an OpenSSH key with a cipher, an encrypted PKCS#8 one, or a PPK file
+/// under the cipher its reader decrypts.
 fn is_encrypted(text: &str) -> bool {
+    if text.starts_with(PPK_HEADER) {
+        // ssh-key's PPK reader keeps the last value of a repeated header
+        return text
+            .lines()
+            .filter_map(|line| line.strip_prefix("Encryption: "))
+            .next_back()
+            == Some(PPK_CIPHER);
+    }
     PrivateKey::from_openssh(text).is_ok_and(|key| key.is_encrypted()) || text.contains(ENCRYPTED_PKCS8_ARMOR)
 }
 
@@ -637,6 +655,15 @@ mod tests {
                 "the key's passphrase protection asks for 2305843009213693951 KiB of memory, more than the 131072 \
                  KiB this app works through"
             );
+            for cost in [0, 1, 3, (1 << 14) + 1] {
+                assert_eq!(
+                    refusal(&pkcs8_under(scrypt(cost, 8, 1), armor)),
+                    format!(
+                        "the key's passphrase protection has a scrypt cost of {cost}, which is not a power of two \
+                         above 1"
+                    )
+                );
+            }
             assert_eq!(
                 refusal(&pkcs8_under(scrypt(1 << 14, 8, 17), armor)),
                 "the key's passphrase protection asks for a parallelization of 17, more than the 16 this app works \
@@ -654,9 +681,9 @@ mod tests {
                 Err(KeyError::WrongPassphrase)
             );
         }
-        let at_the_memory_cap = pkcs8_under(scrypt((1 << 17) - 16, 8, 16), "ENCRYPTED PRIVATE KEY");
+        let at_the_memory_cap = pkcs8_under(scrypt(1 << 17, 8, 0), "ENCRYPTED PRIVATE KEY");
         assert_eq!(Pem::read(&at_the_memory_cap).unwrap().refuse_excessive_kdf(), Ok(()));
-        let over_it_by_parallelization = pkcs8_under(scrypt((1 << 17) - 15, 8, 16), "ENCRYPTED PRIVATE KEY");
+        let over_it_by_parallelization = pkcs8_under(scrypt(1 << 17, 8, 1), "ENCRYPTED PRIVATE KEY");
         assert!(refusal(&over_it_by_parallelization).contains("131073 KiB of memory"));
         let at_the_iteration_cap = pkcs8_under(pbkdf2(10_000_000), "ENCRYPTED PRIVATE KEY");
         assert_eq!(Pem::read(&at_the_iteration_cap).unwrap().refuse_excessive_kdf(), Ok(()));
@@ -724,10 +751,50 @@ mod tests {
     }
 
     #[test]
-    fn a_putty_key_within_the_caps_is_read() {
-        let reason = refusal(&ppk("Argon2-Memory: 64\nArgon2-Passes: 1\n"));
+    fn a_putty_key_within_the_caps_is_worked_through() {
+        // no key under the passphrase: the derivation runs and the key does not open, which is not a refusal
+        assert_eq!(
+            import(ppk("Argon2-Memory: 64\nArgon2-Passes: 1\n").as_bytes(), Some("secret")),
+            Err(KeyError::WrongPassphrase)
+        );
+    }
 
-        assert!(!reason.contains("passphrase protection"), "{reason}");
+    /// ssh-key's `tests/examples/id_ed25519_enc.ppk` (Apache-2.0 OR MIT): a throwaway key from puttygen, its
+    /// passphrase `123`.
+    const PUTTY_ED25519: &str = include_str!("../tests/fixtures/putty-ed25519-aes256.ppk");
+
+    #[test]
+    fn an_encrypted_putty_key_imports_with_its_passphrase() {
+        let imported = import(PUTTY_ED25519.as_bytes(), Some("123")).unwrap();
+
+        assert!(imported.authorized_key.starts_with("ssh-ed25519 "));
+        assert_eq!(
+            import(PUTTY_ED25519.as_bytes(), None),
+            Err(KeyError::PassphraseRequired)
+        );
+        assert_eq!(
+            import(PUTTY_ED25519.as_bytes(), Some("")),
+            Err(KeyError::PassphraseRequired)
+        );
+        assert_eq!(
+            import(PUTTY_ED25519.as_bytes(), Some("wrong")),
+            Err(KeyError::WrongPassphrase)
+        );
+    }
+
+    #[test]
+    fn a_putty_key_that_is_not_encrypted_never_asks_for_a_passphrase() {
+        let plain = PUTTY_ED25519.replacen("Encryption: aes256-cbc", "Encryption: none", 1);
+        let unknown = PUTTY_ED25519.replacen("Encryption: aes256-cbc", "Encryption: rot13", 1);
+
+        for text in [plain, unknown] {
+            for passphrase in [None, Some("123")] {
+                assert!(
+                    matches!(import(text.as_bytes(), passphrase), Err(KeyError::Invalid { .. })),
+                    "{text}"
+                );
+            }
+        }
     }
 
     #[test]

@@ -247,11 +247,11 @@ class ExportKeyViewModelTest {
         model.copy(locked)
         gate.countDown()
         val deadline = System.currentTimeMillis() + 10_000
-        while (test.maker.exports.isEmpty()) {
+        // wiped only after the copy was handed back
+        while (test.maker.exports.isEmpty() || test.maker.exports.any { export -> export.any { it != 0.toByte() } }) {
             check(System.currentTimeMillis() < deadline) { "the first export never ended" }
             Thread.sleep(10)
         }
-        Thread.sleep(100)
 
         assertTrue("the first copy belongs to a screen that is gone", exports.copied.isEmpty())
         assertTrue("the second export is still the screen's", model.work.value.busy)
