@@ -450,6 +450,68 @@ fn a_hook_under_a_second_agent_makes_no_call_at_all() {
     assert!(under("codex").is_none(), "a worker under another agent is silent");
 }
 
+/// The walk ends at the pane's origin, whichever process that is: the app (`ngterm`), a headless origin
+/// (`ngterm-headless`) or the session server that holds a live session's shell (`ngterm-session`). An agent above the
+/// origin started it (a coding agent's shell that ran `ngterm-headless`, a test harness under an agent) and is not in
+/// the pane, so the pane's agent still reports. An agent between the origin and the pane's agent is one in the pane:
+/// the hook under it is a worker's and stays silent. Bash copies named as each process stand in the chain.
+#[cfg(unix)]
+#[test]
+fn an_agent_above_the_panes_origin_does_not_silence_the_panes_agent() {
+    let bash = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+        .map(|dir| dir.join("bash"))
+        .find(|path| path.is_file())
+        .unwrap();
+    let names = tempfile::tempdir().unwrap();
+    for name in [
+        "claude",
+        "codex",
+        "shell",
+        "ngterm",
+        "ngterm-headless",
+        "ngterm-session",
+    ] {
+        std::os::unix::fs::symlink(&bash, names.path().join(name)).unwrap();
+    }
+    // nest.sh <name>... -- <adapter> <args>: each name runs the rest of the chain as its child, the last the adapter
+    let nest = names.path().join("nest.sh");
+    fs::write(
+        &nest,
+        "name=$1\nshift\nif [ \"$name\" = -- ]; then bash \"$@\" <\"$PAYLOAD\" >/dev/null 2>&1\n\
+         else \"$NAMES/$name\" \"$NEST\" \"$@\"; fi\n:\n",
+    )
+    .unwrap();
+    let launch = r#"(while kill -0 $$ 2>/dev/null; do :; done
+        "$NAMES/shell" "$NEST" $CHAIN -- "$0" "$@" >/dev/null 2>&1; : > "$DONE") &"#;
+    let under = |chain: &str| {
+        let stub = Stub::new();
+        let mut command = Command::new("sh");
+        command
+            .args(["-c", launch])
+            .env("NAMES", names.path())
+            .env("NEST", &nest)
+            .env("CHAIN", chain);
+        let prompt = fixture("claude/hooks/02-UserPromptSubmit.json");
+        claude_orphan(&stub, command, &["active", "--blink"], &prompt, &pane_vars(&[CLI]))
+    };
+    for origin in [
+        "ngterm",
+        "ngterm-headless",
+        "ngterm-session",
+        "ngterm-headless ngterm-session",
+        "ngterm ngterm-session",
+    ] {
+        let run = under(&format!("codex shell {origin} shell claude"))
+            .unwrap_or_else(|| panic!("{origin}: the pane's agent is silent under an agent above its origin"));
+        assert_eq!(run.forwarded, "active --blink", "{origin}");
+        assert!(run.agent.is_some(), "{origin}: and reports its agent record");
+        assert!(
+            under(&format!("{origin} shell codex shell claude")).is_none(),
+            "{origin}: a worker under another agent in the pane is silent"
+        );
+    }
+}
+
 /// The bash the Codex adapter runs under: `bash` on Unix, Git for Windows' where its installer puts it on Windows;
 /// `None` on a Windows machine without it.
 fn codex_bash() -> Option<PathBuf> {
@@ -799,7 +861,8 @@ fn other_states_and_events_forward_verbatim() {
 
 /// The ancestor walk on Windows, through the process table: copies of `cmd.exe` named as agents stand between a
 /// launcher and the adapter, each running the next with `/c`. One agent, or a run of one name, is the pane's agent and
-/// reports; a second, different agent above the first makes the hook a worker's, which stays silent. The launcher
+/// reports; a second, different agent above the first makes the hook a worker's, which stays silent, unless the
+/// pane's origin (the app, a headless origin, the session server) stands between the two. The launcher
 /// starts the first agent with `start /b` and exits, so the walk ends there, never reaching an agent that may be
 /// running these tests; the outermost agent touches a `done` file once the chain has finished. Each chain records to
 /// files of its own: a file a finished chain's agent still holds open cannot be deleted for the next one (its sharing
@@ -813,7 +876,7 @@ fn a_hook_under_a_second_agent_is_a_workers_and_stays_silent() {
 
     let dir = tempfile::tempdir().unwrap();
     let system = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_owned());
-    for agent in ["claude", "codex"] {
+    for agent in ["claude", "codex", "ngterm", "ngterm-headless", "ngterm-session"] {
         let copy = dir.path().join(format!("{agent}.exe"));
         fs::copy(Path::new(&system).join(r"System32\cmd.exe"), copy).unwrap();
     }
@@ -871,4 +934,17 @@ fn a_hook_under_a_second_agent_is_a_workers_and_stays_silent() {
         "a run of one name"
     );
     assert_eq!(under(&["claude", "codex"]), None, "a worker under another agent");
+    // the walk ends at the pane's origin: an agent above it started the origin and is not in the pane
+    for origin in ["ngterm", "ngterm-headless", "ngterm-session"] {
+        assert_eq!(
+            under(&["codex", origin, "claude"]).as_deref(),
+            Some("blocked"),
+            "{origin}: the pane's agent under an agent above its origin"
+        );
+        assert_eq!(
+            under(&[origin, "codex", "claude"]),
+            None,
+            "{origin}: a worker under another agent in the pane"
+        );
+    }
 }

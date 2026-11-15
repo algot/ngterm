@@ -117,7 +117,9 @@ function Test-Worker {
       $previous = ''
     }
     if ($agents -gt 1) { return $true } # a second agent above mine: I am a worker, not the pane's agent
-    if (@('login', 'ngterm') -contains $base) { break } # reached the pane boundary
+    # the pane boundary: the app, a headless origin, or the session server that holds a live session's shell.
+    # Whatever is above started the origin and is not in the pane.
+    if (@('login', 'ngterm', 'ngterm-headless', 'ngterm-session') -contains $base) { break }
     $child = $process
   }
   return $false

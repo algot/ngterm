@@ -105,7 +105,9 @@ for _ in 1 2 3 4 5 6 7 8; do
     prev_agent=
   fi
   [ "$agents" -gt 1 ] && exit 0        # a second agent above mine: I am a worker, not the pane's agent
-  case "$base" in login | ngterm) break ;; esac # reached the pane boundary
+  # the pane boundary: the app, a headless origin, or the session server that holds a live session's shell. Whatever
+  # is above started the origin (an agent's shell that ran ngterm-headless, say) and is not in the pane.
+  case "$base" in login | ngterm | ngterm-headless | ngterm-session) break ;; esac
   p=$ppid
 done
 
