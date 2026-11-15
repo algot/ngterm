@@ -40,6 +40,8 @@ on:
   push:
     branches: [main, "ci/**"]
     paths: ["**", "!**/*.md", "!mobile/ios/**", "resources/**", "vendor/**", "build/**"]
+  # scripts/repair-dependabot-lock.py: the run of a Dependabot branch whose Cargo.lock was repaired
+  workflow_dispatch:
 
 permissions:
   contents: read

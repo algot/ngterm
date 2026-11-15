@@ -12,7 +12,10 @@ Windows. No manifest setting stops it while the lock holds two versions inside o
 A resolve that starts from the manifests (a new or changed dependency) gives each such edge the highest locked
 version, so that is the state this check holds the lock to, and `--fix` restores it after an update.
 
-Usage: scripts/check-lock-edges.py [--fix]   check Cargo.lock; with --fix, re-point the edges and let cargo rewrite it
+Usage: scripts/check-lock-edges.py [--fix] [--manifest-path PATH]
+           check Cargo.lock; with --fix, re-point the edges and let cargo rewrite it. --manifest-path names the root
+           Cargo.toml of another checkout to check instead: cargo still runs from this one, so it takes this
+           checkout's cargo config and toolchain file, never the other's (scripts/repair-dependabot-lock.py)
        scripts/check-lock-edges.py --self-test
 Needs cargo and Python 3.11+.
 """
@@ -25,7 +28,6 @@ import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOCK = ROOT / "Cargo.lock"
 VERSION = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$")
 COMPARATOR = re.compile(r"^(=|>=|>|<=|<|~|\^)?\s*(\d+|[*xX])(?:\.(\d+|[*xX]))?(?:\.(\d+|[*xX]))?(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$")
 RELEASE = (1, ())
@@ -176,8 +178,9 @@ def repoint(text, drift):
     return "\n[[package]]\n".join(blocks)
 
 
-def manifest_requirements(locked):
-    command = ["cargo", "metadata", "--format-version", "1"] + (["--locked"] if locked else [])
+def manifest_requirements(locked, manifest):
+    command = ["cargo", "metadata", "--format-version", "1", "--manifest-path", str(manifest)]
+    command += ["--locked"] if locked else []
     metadata = json.loads(subprocess.run(command, cwd=ROOT, check=True, stdout=subprocess.PIPE).stdout)
     requirements = {}
     for package in metadata["packages"]:
@@ -194,9 +197,10 @@ def describe(drift):
     )
 
 
-def check(fix):
+def check(fix, manifest):
+    lock = manifest.parent / "Cargo.lock"
     for _ in range(5):
-        drift = drifted(tomllib.loads(LOCK.read_text()), manifest_requirements(locked=not fix))
+        drift = drifted(tomllib.loads(lock.read_text()), manifest_requirements(not fix, manifest))
         if not drift:
             print("Cargo.lock: every edge is at the highest locked version its requirement allows")
             return 0
@@ -209,7 +213,7 @@ def check(fix):
             print(describe(drift), file=sys.stderr)
             return 1
         print("re-pointing:\n" + describe(drift))
-        LOCK.write_text(repoint(LOCK.read_text(), drift))
+        lock.write_text(repoint(lock.read_text(), drift))
     print("Cargo.lock: edges still move after 5 passes", file=sys.stderr)
     return 1
 
@@ -279,10 +283,12 @@ def self_test():
 def main(argv):
     if argv == ["--self-test"]:
         return self_test()
-    if argv not in ([], ["--fix"]):
+    fix = argv[:1] == ["--fix"]
+    rest = argv[1:] if fix else argv
+    if rest and not (len(rest) == 2 and rest[0] == "--manifest-path"):
         print(__doc__.strip().split("\n\n")[-1], file=sys.stderr)
         return 2
-    return check(fix=bool(argv))
+    return check(fix, Path(rest[1]).resolve() if rest else ROOT / "Cargo.toml")
 
 
 if __name__ == "__main__":

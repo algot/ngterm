@@ -1,0 +1,113 @@
+# A Dependabot cargo pull request gets the Cargo.lock edges its `cargo update` moved put back, with no person
+# involved (scripts/check-lock-edges.py says why they move; linux.yml fails on one). Dependabot opens such a pull
+# request for a security update.
+#
+# `pull_request_target`: the workflow and every script it runs are the base branch's, never the pull request's. The
+# pull request's commit is data: scripts/repair-dependabot-lock.py refuses one that changes anything but Cargo.lock and
+# Cargo.toml files, and cargo only resolves it (`cargo metadata`: no build script, no proc macro), run from the base
+# checkout so the cargo config and the toolchain file are the base's too. Only a pull request Dependabot itself opened
+# from a `dependabot/cargo/` branch of this repository runs anything: a fork can name its branch so, and can have a
+# Dependabot of its own push to it, but can be neither the author nor the head repository.
+#
+# Two jobs, so that what reads the pull request's files and the crates they name holds no write access: `fix`
+# (read-only) hands the repaired Cargo.lock over as an artifact, and `push`, which runs no cargo and takes that file
+# as data, commits it on the branch. No checkout keeps its credentials, no cache is read or saved, and no secret is
+# used but the job's own token.
+#
+# A push with that token starts no workflow, so `push` then dispatches the pull request's workflows on the branch
+# (the one event the token may start), and their runs are the repaired commit's checks; the runs of Dependabot's own
+# commit, which can no longer pass, are cancelled. The repair commit carries `[dependabot skip]`: Dependabot goes on
+# rebasing the pull request, force-pushing over the commit, and each such push is repaired again. A branch already
+# repaired has nothing to repair, and the repair's own push starts nothing, so it cannot loop.
+#
+# Every action is pinned by commit SHA, as release.yml's are.
+name: dependabot-lock-edges
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions: {}
+
+concurrency:
+  group: dependabot-lock-edges-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+  BRANCH: ${{ github.event.pull_request.head.ref }}
+
+jobs:
+  fix:
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'dependabot/cargo/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      repaired: ${{ steps.fix.outputs.repaired }}
+    steps:
+      # the base branch, with every branch's commits: the pull request's is read from them, never checked out here
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: rust toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+      - name: repair the lock
+        id: fix
+        run: scripts/repair-dependabot-lock.py fix "$HEAD_SHA" "$BRANCH" "$RUNNER_TEMP/Cargo.lock"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.fix.outputs.repaired == 'true'
+        with:
+          name: repaired-lock
+          path: ${{ runner.temp }}/Cargo.lock
+          if-no-files-found: error
+          retention-days: 1
+
+  push:
+    needs: fix
+    if: needs.fix.outputs.repaired == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: repaired-lock
+          path: ${{ runner.temp }}/repaired
+      - name: commit the repaired lock
+        id: commit
+        run: scripts/repair-dependabot-lock.py commit "$HEAD_SHA" "$BRANCH" "$RUNNER_TEMP/repaired/Cargo.lock"
+      # not forced: a branch Dependabot has pushed to since refuses it, and that push's own run repairs it
+      - name: push it to the pull request's branch
+        if: steps.commit.outputs.commit != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT: ${{ steps.commit.outputs.commit }}
+        run: |
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
+            push origin "$COMMIT:refs/heads/$BRANCH"
+      - name: run the pull request's checks on the repaired commit
+        if: steps.commit.outputs.commit != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh run list --commit "$HEAD_SHA" --event pull_request --json databaseId,status \
+            --jq '.[] | select(.status != "completed") | .databaseId' |
+            while read -r run; do gh run cancel "$run" || true; done
+          scripts/repair-dependabot-lock.py workflows |
+            while read -r workflow; do gh workflow run "$workflow" --ref "$BRANCH"; done

@@ -493,14 +493,14 @@ or ghostty-vt patch change, `scripts/gen-ghostty-config-keys.sh` ngterm-core's g
 `LIBGHOSTTY_VT_REV` bump, `scripts/gen-wpe-bindings.sh` the gir crates `ngterm-wpe-sys`, `ngterm-wpe-platform-sys` and
 `ngterm-wpe-javascriptcore-sys` after a `WPE_*` or `GIR_*` bump.
 
-After any `cargo update` (a Dependabot cargo PR included), run `scripts/check-lock-edges.py --fix` before the
-commit. `cargo update -p CRATE` unlocks CRATE and its whole dependency subtree; a crate outside it whose requirement
-spans several versions (`windows-sys = ">=0.52, <0.62"`) and whose edge pointed into that subtree is then locked to
-the lowest other version of the dependency still in `Cargo.lock`. `--locked` accepts the result, but it is a
-different build: with gpu-allocator on an older `windows` than wgpu-hal's, the Windows dx12 code does not compile.
-No manifest setting prevents it while the lock holds two versions inside one such range, so the script holds every
-edge to the highest locked version its requirement allows (what a resolve from the manifests picks) and CI's Linux
-job fails on a lock that differs.
+After any `cargo update`, run `scripts/check-lock-edges.py --fix` before the commit (a Dependabot cargo PR gets it from
+`dependabot-lock-edges.yml`, [CI](#ci)). `cargo update -p CRATE` unlocks CRATE and its whole dependency subtree; a crate
+outside it whose requirement spans several versions (`windows-sys = ">=0.52, <0.62"`) and whose edge pointed into that
+subtree is then locked to the lowest other version of the dependency still in `Cargo.lock`. `--locked` accepts the
+result, but it is a different build: with gpu-allocator on an older `windows` than wgpu-hal's, the Windows dx12 code
+does not compile. No manifest setting prevents it while the lock holds two versions inside one such range, so the script
+holds every edge to the highest locked version its requirement allows (what a resolve from the manifests picks) and CI's
+Linux job fails on a lock that differs.
 
 The GPUI frontend's terminal embeds the fonts Ghostty embeds, from the package deps of the Ghostty at
 `LIBGHOSTTY_VT_REV` (`FONTS_*` in `build/pins.env`, each archive's sha256 pinned): JetBrains Mono 2.304 (its static
@@ -1425,6 +1425,15 @@ already holds changes no file, so the path-filtered workflows don't start on it.
   and shellcheck over `scripts/*.sh`, `scripts/lib/*.sh`, `.githooks/*` and every `run:` block, both pinned and
   checksum-verified, then the scripts' self-tests and the pre-commit hook's test. Run it locally the same way.
 - `conformance-gate.yml`: the suite's self-tests and catalog coverage gate.
+- `dependabot-lock-edges.yml` (Dependabot's cargo pull requests, which it opens for security updates): puts back the
+  `Cargo.lock` edges the update moved, with no person involved. It runs the base branch's
+  `scripts/repair-dependabot-lock.py`, never anything of the pull request, whose commit is data: one that changes more
+  than `Cargo.lock` and `Cargo.toml` files is left alone, and cargo only resolves it. A read-only job repairs the lock
+  and a second one, which runs no cargo, commits it to the branch. A push with the workflow's token starts no
+  workflow, so that job then dispatches the workflows a `Cargo.lock` change starts (the script's `WORKFLOWS`, which
+  its self-test holds to the workflows' triggers) on the branch: those runs are the repaired commit's checks, and the
+  runs of Dependabot's own commit are cancelled. The repair commit carries `[dependabot skip]`, so Dependabot still
+  rebases the pull request, and each rebase is repaired again.
 - `reference-macos.yml` (PRs that change `conformance/`, and by hand): the suite against upstream's macOS release.
 
 ### Sharded suite
