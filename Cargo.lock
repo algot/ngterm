@@ -5463,6 +5463,7 @@ dependencies = [
  "ngterm-core",
  "ngterm-proto",
  "ngterm-term",
+ "pkcs8",
  "russh",
  "serde_json",
  "tempfile",

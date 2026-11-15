@@ -171,6 +171,7 @@ class OnboardingFailureTest {
 
     private class FailingKeyMaker : KeyMaker {
         val delegate = FakeKeyMaker()
+        override val exportRule = delegate.exportRule
 
         @Volatile var failure: Exception? = null
 

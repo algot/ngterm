@@ -212,6 +212,9 @@ uniffi = "0.32"
 # in place of the default aws-lc-rs (no C build system to cross-compile for Android, lighter on Windows CI); `flate2`
 # and `rsa` as the defaults carry them.
 russh = { version = "0.65", default-features = false, features = ["ring", "flate2", "rsa"] }
+# ngterm-mobile reads an encrypted PKCS#8 key's key-derivation parameters before russh works through them. The version
+# russh links.
+pkcs8 = { version = "0.11", default-features = false, features = ["encryption"] }
 # ngterm-mobile's actor: a current-thread runtime and a `LocalSet` per core (russh's runtime), its command and channel
 # queues. The version the lock already carries.
 tokio = "1.53"

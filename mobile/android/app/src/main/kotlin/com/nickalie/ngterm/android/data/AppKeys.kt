@@ -8,6 +8,8 @@ import com.nickalie.ngterm.android.platform.KeystoreKeyVault
 import com.nickalie.ngterm.core.ffi.ExportProtection
 import com.nickalie.ngterm.core.ffi.KeyPair
 import com.nickalie.ngterm.core.ffi.exportKey
+import com.nickalie.ngterm.core.ffi.exportPassphraseMinChars
+import com.nickalie.ngterm.core.ffi.exportPassphraseTooShort
 import com.nickalie.ngterm.core.ffi.generateKey
 import com.nickalie.ngterm.core.ffi.importKey
 import kotlinx.coroutines.Dispatchers
@@ -31,10 +33,32 @@ data class AppKey(
 )
 
 /**
+ * What an export's passphrase must meet, as the one that refuses it counts its characters: a screen asks this
+ * rather than counting them itself, so the two never disagree.
+ */
+interface PassphraseRule {
+    /** The fewest characters a passphrase may have. */
+    val minimum: Int
+
+    /** Whether [passphrase] has fewer. */
+    fun tooShort(passphrase: String): Boolean
+}
+
+/** The mobile core's rule: [exportKey] refuses what it calls too short. */
+object NativePassphraseRule : PassphraseRule {
+    override val minimum: Int get() = exportPassphraseMinChars().toInt()
+
+    override fun tooShort(passphrase: String): Boolean = exportPassphraseTooShort(passphrase)
+}
+
+/**
  * Makes, reads and writes out ssh keys: the mobile core's [generateKey], [importKey] and [exportKey] in the app, a
  * fake in its tests.
  */
 interface KeyMaker {
+    /** What [export] asks of a passphrase. */
+    val exportRule: PassphraseRule
+
     /** A new ed25519 key, its public half commented [comment]. */
     fun generate(comment: String): KeyPair
 
@@ -53,6 +77,8 @@ interface KeyMaker {
 
 /** The mobile core's key functions. */
 object NativeKeyMaker : KeyMaker {
+    override val exportRule: PassphraseRule = NativePassphraseRule
+
     override fun generate(comment: String): KeyPair = generateKey(comment)
 
     override fun import(
@@ -80,6 +106,9 @@ class AppKeys(
 ) {
     /** The keys, oldest first, on every change. */
     val keys: Flow<List<AppKey>> = store.data.map { decode(it[KEYS]) }
+
+    /** What [export] asks of a passphrase. */
+    val exportRule: PassphraseRule get() = maker.exportRule
 
     /** The key [id], if the app has it. */
     suspend fun get(id: String): AppKey? = keys.first().firstOrNull { it.id == id }

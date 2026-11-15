@@ -22,6 +22,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import com.nickalie.ngterm.android.R
+import com.nickalie.ngterm.android.data.PassphraseRule
 import com.nickalie.ngterm.android.ui.components.Banner
 import com.nickalie.ngterm.android.ui.components.ConfirmDialog
 import com.nickalie.ngterm.android.ui.components.KeyPlate
@@ -33,27 +34,14 @@ import com.nickalie.ngterm.android.ui.onboarding.SecureWindow
 import com.nickalie.ngterm.android.ui.theme.NgtermTheme
 import com.nickalie.ngterm.android.ui.theme.StatusTone
 import com.nickalie.ngterm.core.ffi.ExportProtection
-import java.text.BreakIterator
-
-/** The fewest characters of an export's passphrase: the mobile core's rule, which refuses a shorter one itself. */
-internal const val EXPORT_PASSPHRASE_MIN = 8
-
-/** How many characters [text] has as a person counts them: an accented letter or an emoji is one. */
-internal fun characters(text: String): Int {
-    val breaks = BreakIterator.getCharacterInstance()
-    breaks.setText(text)
-    var count = 0
-    while (breaks.next() != BreakIterator.DONE) count++
-    return count
-}
 
 /** Where an export goes, as the screen's two actions name it. */
 private enum class Target { File, Clipboard }
 
 /**
  * Exporting the private key [fingerprint] names, after the device's owner confirmed it is them: what the exported
- * key is, the passphrase that encrypts it (typed twice, [EXPORT_PASSPHRASE_MIN] characters or more), or the explicit
- * choice of none, which is confirmed again;
+ * key is, the passphrase that encrypts it (typed twice, long enough for [rule], the exporter's own count of its
+ * characters), or the explicit choice of none, which is confirmed again;
  * then Save to a file ([onSave]) or Copy to the clipboard ([onCopy]) with the protection chosen. [work] says how the
  * last one went. The passphrase lives only in this screen's memory, never in saved state; the window is secure
  * while it is up.
@@ -62,6 +50,7 @@ private enum class Target { File, Clipboard }
 fun ExportKeyScreen(
     fingerprint: String,
     work: ExportWork,
+    rule: PassphraseRule,
     onSave: (ExportProtection) -> Unit,
     onCopy: (ExportProtection) -> Unit,
     onBack: () -> Unit,
@@ -80,7 +69,7 @@ fun ExportKeyScreen(
     val start = { target: Target ->
         when {
             unprotected -> asking = target
-            characters(passphrase) < EXPORT_PASSPHRASE_MIN || passphrase != again -> checked = true
+            rule.tooShort(passphrase) || passphrase != again -> checked = true
             else -> send(target, ExportProtection.Passphrase(passphrase))
         }
     }
@@ -99,6 +88,7 @@ fun ExportKeyScreen(
             Passphrases(
                 passphrase = passphrase,
                 again = again,
+                rule = rule,
                 checked = checked,
                 enabled = !work.busy,
                 onPassphrase = { passphrase = it },
@@ -145,13 +135,14 @@ private fun ConfirmUnprotected(
 private fun Passphrases(
     passphrase: String,
     again: String,
+    rule: PassphraseRule,
     checked: Boolean,
     enabled: Boolean,
     onPassphrase: (String) -> Unit,
     onAgain: (String) -> Unit,
 ) {
     var shown by remember { mutableStateOf(false) }
-    val short = checked && characters(passphrase) < EXPORT_PASSPHRASE_MIN
+    val short = checked && rule.tooShort(passphrase)
     val differ = checked && !short && passphrase != again
     Column(verticalArrangement = Arrangement.spacedBy(NgtermTheme.spacing.sm)) {
         SecretField(
@@ -161,8 +152,8 @@ private fun Passphrases(
             note =
                 pluralStringResource(
                     if (short) R.plurals.export_passphrase_short else R.plurals.export_passphrase_note,
-                    EXPORT_PASSPHRASE_MIN,
-                    EXPORT_PASSPHRASE_MIN,
+                    rule.minimum,
+                    rule.minimum,
                 ),
             isError = short,
             shown = shown,

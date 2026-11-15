@@ -18,6 +18,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import com.nickalie.ngterm.android.R
 import com.nickalie.ngterm.android.data.AppKey
+import com.nickalie.ngterm.android.data.PassphraseRule
 import com.nickalie.ngterm.android.platform.AuthResult
 import com.nickalie.ngterm.android.platform.DeviceAuth
 import com.nickalie.ngterm.android.ui.components.ConfirmDialog
@@ -109,14 +110,15 @@ internal fun rememberExportStart(
 }
 
 /**
- * The export screen of [key]: Save to a file opens the system's screen for making a document and hands [onSave] the
- * one the user makes, with the protection chosen (none when it was lost: it waits here, in memory only, while the
- * system's screen is up); Copy hands [onCopy] the protection.
+ * The export screen of [key], its passphrase held to [rule]: Save to a file opens the system's screen for making a
+ * document and hands [onSave] the one the user makes, with the protection chosen (none when it was lost: it waits
+ * here, in memory only, while the system's screen is up); Copy hands [onCopy] the protection.
  */
 @Composable
 internal fun ExportKeyPage(
     key: AppKey,
     work: ExportWork,
+    rule: PassphraseRule,
     onSave: (Uri, ExportProtection?) -> Unit,
     onCopy: (ExportProtection) -> Unit,
     onBack: () -> Unit,
@@ -133,6 +135,7 @@ internal fun ExportKeyPage(
     ExportKeyScreen(
         fingerprint = key.fingerprint,
         work = work,
+        rule = rule,
         onSave = {
             chosen = it
             create.launch(name)

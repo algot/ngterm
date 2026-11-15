@@ -15,6 +15,7 @@ import com.nickalie.ngterm.android.data.MachineStore
 import com.nickalie.ngterm.android.data.MemoryClipboard
 import com.nickalie.ngterm.android.data.NotificationPrefs
 import com.nickalie.ngterm.android.data.OpenRequests
+import com.nickalie.ngterm.android.data.PassphraseRule
 import com.nickalie.ngterm.android.data.SessionChatViews
 import com.nickalie.ngterm.android.data.SettingsStore
 import com.nickalie.ngterm.android.data.StoredMachine
@@ -73,11 +74,24 @@ fun fakeExport(
     }
 
 /**
+ * The core's rule for an export's passphrase, faked: [short] says which ones are too short, by default those under
+ * [minimum] UTF-16 units, which is never how the core counts.
+ */
+class FakePassphraseRule(
+    override val minimum: Int = 8,
+    private val short: (String) -> Boolean = { it.length < minimum },
+) : PassphraseRule {
+    override fun tooShort(passphrase: String): Boolean = short(passphrase)
+}
+
+/**
  * The core's key functions, faked: [generate] hands out [FAKE_PUBLIC_KEY]; [import] takes text starting with
  * `-----BEGIN`, wants [FAKE_PASSPHRASE] when it says ENCRYPTED, and refuses anything else as the core would;
  * [export] hands out [fakeExport] of what it is given.
  */
 class FakeKeyMaker : KeyMaker {
+    override val exportRule: PassphraseRule = FakePassphraseRule()
+
     var generated = 0
         private set
 

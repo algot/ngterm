@@ -997,10 +997,12 @@ with both fingerprints shown.
 Settings ▸ Keys ▸ Export private key writes a key out for another install of the app (a reinstall deletes the app's
 data, and the Keystore's key with it; the app is in no backup): after the screen lock (a device without one exports
 nothing), as an OpenSSH private key file encrypted with a passphrase of at least eight characters (aes256-ctr under
-bcrypt-pbkdf, what `ssh-keygen` writes and reads; the mobile core's `export_key`, which enforces the length), or
-unencrypted only on an explicit, confirmed choice, into a file the user makes with the system's document screen or
-onto the clipboard, which the app clears of its own copy when the export screen is closed. Import a key reads it
-back with the passphrase, of any length.
+bcrypt-pbkdf, what `ssh-keygen` writes and reads; the mobile core's `export_key`, which enforces the length, counted
+as its `export_passphrase_too_short` counts it for the screen), or unencrypted only on an explicit, confirmed choice,
+into a file the user makes with the system's document screen or onto the clipboard, which the app clears of its own
+copy when the export screen is closed. Import a key reads it back with the passphrase, of any length; it refuses any
+key (OpenSSH, PKCS#8, PuTTY) whose passphrase protection asks for more work or memory than the core's `keys` module
+caps, before doing any of it.
 
 Not in v1: HTML pages and program overlays (refused, as a viewer that can't show them refuses them), Kitty images
 (the pane reports no support), passwords and jump hosts (public-key auth to the machine itself only), Nerd Font

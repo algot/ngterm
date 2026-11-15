@@ -11,6 +11,11 @@
 use ::russh::keys::ssh_key::rand_core::TryCryptoRng;
 use ::russh::keys::ssh_key::{Cipher, Kdf, KdfAlg, LineEnding};
 use ::russh::keys::{Algorithm, HashAlg, PrivateKey, decode_secret_key};
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
+use pkcs8::EncryptedPrivateKeyInfoRef;
+use pkcs8::der::Decode as _;
+use pkcs8::pkcs5::{EncryptionScheme, pbes2};
 use unicode_segmentation::UnicodeSegmentation;
 use zeroize::Zeroizing;
 
@@ -22,6 +27,33 @@ const EXPORT_KDF_ROUNDS: u32 = 24;
 
 /// The most bcrypt-pbkdf rounds an imported key may ask for: a file can name any count, and each is real work.
 const MAX_IMPORT_KDF_ROUNDS: u32 = 1024;
+
+/// The most PBKDF2 iterations an imported PKCS#8 key may ask for: RFC 8018's count for especially critical keys.
+const MAX_IMPORT_PBKDF2_ITERATIONS: u32 = 10_000_000;
+
+/// The most memory an imported key's scrypt or Argon2 may ask for, in KiB: what a phone can spare.
+const MAX_IMPORT_KDF_MEMORY_KIB: u64 = 128 * 1024;
+
+/// The most scrypt parallelization an imported PKCS#8 key may ask for: each unit is one more pass over the memory.
+const MAX_IMPORT_SCRYPT_PARALLELIZATION: u16 = 16;
+
+/// The most Argon2 passes an imported PPK key may ask for.
+const MAX_IMPORT_ARGON2_PASSES: u32 = 256;
+
+const PPK_HEADER: &str = "PuTTY-User-Key-File-";
+const OPENSSH_ARMOR: &str = "-----BEGIN OPENSSH PRIVATE KEY-----";
+const RSA_ARMOR: &str = "-----BEGIN RSA PRIVATE KEY-----";
+const ENCRYPTED_PKCS8_ARMOR: &str = "-----BEGIN ENCRYPTED PRIVATE KEY-----";
+const ARMORS: [&str; 5] = [
+    OPENSSH_ARMOR,
+    RSA_ARMOR,
+    ENCRYPTED_PKCS8_ARMOR,
+    "-----BEGIN PRIVATE KEY-----",
+    "-----BEGIN EC PRIVATE KEY-----",
+];
+const PKCS5_IV: &str = "DEK-Info: AES-128-CBC,";
+const PKCS5_ENCRYPTED: &str = "Proc-Type: 4,ENCRYPTED";
+const PEM_WIDTH: usize = 70;
 
 /// A private key as the app stores it, with what it shows of it.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -82,22 +114,24 @@ pub fn generate(comment: &str) -> Result<KeyPair, KeyError> {
     pair(&key)
 }
 
-/// The key in `bytes` (OpenSSH, PKCS#1 or PKCS#8 PEM), opened with `passphrase` when it is encrypted, re-encoded as
-/// the unencrypted OpenSSH key the app stores.
+/// The key in `bytes` (OpenSSH, PKCS#1 or PKCS#8 PEM, or a PPK file), opened with `passphrase` when it is encrypted,
+/// re-encoded as the unencrypted OpenSSH key the app stores. A key whose passphrase protection asks for more work or
+/// memory than the caps above is refused before any of it is done.
 ///
 /// # Errors
 ///
 /// [`KeyError::PassphraseRequired`] for an encrypted key with no passphrase, [`KeyError::WrongPassphrase`] when the
-/// passphrase doesn't open it, [`KeyError::Invalid`] for anything that isn't a usable private key.
+/// passphrase doesn't open it, [`KeyError::Invalid`] for anything that isn't a usable private key or asks for
+/// excessive key derivation.
 pub fn import(bytes: &[u8], passphrase: Option<&str>) -> Result<KeyPair, KeyError> {
     let text = std::str::from_utf8(bytes).map_err(|_| KeyError::Invalid {
         reason: "the key is not text".to_owned(),
     })?;
     let passphrase = passphrase.filter(|passphrase| !passphrase.is_empty());
-    refuse_excessive_kdf(text)?;
-    let key = decode_secret_key(text, passphrase).map_err(|error| match error {
+    let vetted = vetted(text)?;
+    let key = decode_secret_key(&vetted, passphrase).map_err(|error| match error {
         ::russh::keys::Error::KeyIsEncrypted => KeyError::PassphraseRequired,
-        _ if is_encrypted(text) => {
+        _ if is_encrypted(&vetted) || text.contains(PKCS5_ENCRYPTED) => {
             if passphrase.is_some() {
                 KeyError::WrongPassphrase
             } else {
@@ -147,7 +181,10 @@ pub fn export(bytes: &[u8], protection: ExportProtection) -> Result<Zeroizing<St
         ExportProtection::Passphrase { passphrase } => Some(Zeroizing::new(passphrase)),
         ExportProtection::Unprotected => None,
     };
-    if passphrase.as_ref().is_some_and(|passphrase| too_short(passphrase)) {
+    if passphrase
+        .as_ref()
+        .is_some_and(|passphrase| export_passphrase_too_short(passphrase))
+    {
         return Err(KeyError::PassphraseTooShort {
             minimum: EXPORT_PASSPHRASE_MIN_CHARS,
         });
@@ -160,7 +197,10 @@ pub fn export(bytes: &[u8], protection: ExportProtection) -> Result<Zeroizing<St
     key.to_openssh(LineEnding::LF).map_err(invalid)
 }
 
-fn too_short(passphrase: &str) -> bool {
+/// Whether [`export`] refuses `passphrase` as under [`EXPORT_PASSPHRASE_MIN_CHARS`] characters: the one count of
+/// them, for an app to check with before it asks for the export.
+#[must_use]
+pub fn export_passphrase_too_short(passphrase: &str) -> bool {
     passphrase
         .graphemes(true)
         .take(EXPORT_PASSPHRASE_MIN_CHARS as usize)
@@ -178,27 +218,164 @@ fn encrypt<R: TryCryptoRng>(key: &PrivateKey, rng: &mut R, passphrase: &[u8]) ->
         .map_err(invalid)
 }
 
-fn refuse_excessive_kdf(text: &str) -> Result<(), KeyError> {
-    let rounds = PrivateKey::from_openssh(text).ok().and_then(|key| match key.kdf() {
-        Kdf::Bcrypt { rounds, .. } => Some(*rounds),
-        _ => None,
-    });
-    match rounds {
-        Some(rounds) if rounds > MAX_IMPORT_KDF_ROUNDS => Err(KeyError::Invalid {
-            reason: format!(
-                "the key's passphrase protection asks for {rounds} rounds, more than the {MAX_IMPORT_KDF_ROUNDS} \
-                 this app works through"
-            ),
-        }),
+/// `text` as [`decode_secret_key`] is to read it, once what it asks of a passphrase's key derivation is within the
+/// caps. A PEM is rewritten from the bytes that were checked, so the lenient reader there decodes exactly those.
+fn vetted(text: &str) -> Result<Zeroizing<String>, KeyError> {
+    if text.trim().starts_with(PPK_HEADER) {
+        refuse_excessive_argon2(text)?;
+        return Ok(Zeroizing::new(text.to_owned()));
+    }
+    let pem = Pem::read(text)?;
+    pem.refuse_excessive_kdf()?;
+    Ok(pem.canonical())
+}
+
+/// A PEM private key as russh's `decode_secret_key` reads one: the last armor named, the legacy cipher line under
+/// it, and the bytes of every base64 line up to the first END.
+struct Pem<'a> {
+    armor: &'a str,
+    legacy_iv: Option<&'a str>,
+    der: Zeroizing<Vec<u8>>,
+}
+
+impl<'a> Pem<'a> {
+    fn read(text: &'a str) -> Result<Self, KeyError> {
+        let mut armor = None;
+        let mut legacy_iv = None;
+        let mut body = Zeroizing::new(String::with_capacity(text.len()));
+        for line in text.lines() {
+            if armor.is_some() {
+                if line.starts_with("-----END ") {
+                    break;
+                }
+                if line.bytes().all(is_base64) {
+                    body.push_str(line);
+                } else if line.starts_with(PKCS5_IV) {
+                    legacy_iv = Some(line);
+                }
+            }
+            if ARMORS.contains(&line) {
+                armor = Some(line);
+                legacy_iv = None;
+            }
+        }
+        let armor = armor.ok_or_else(|| invalid(::russh::keys::Error::CouldNotReadKey))?;
+        let der = Zeroizing::new(STANDARD.decode(body.as_bytes()).map_err(invalid)?);
+        Ok(Self { armor, legacy_iv, der })
+    }
+
+    fn refuse_excessive_kdf(&self) -> Result<(), KeyError> {
+        match self.armor {
+            RSA_ARMOR => Ok(()),
+            OPENSSH_ARMOR => match PrivateKey::from_bytes(&self.der).as_ref().map(PrivateKey::kdf) {
+                Ok(Kdf::Bcrypt { rounds, .. }) if *rounds > MAX_IMPORT_KDF_ROUNDS => {
+                    Err(excessive(format_args!("{rounds} rounds"), MAX_IMPORT_KDF_ROUNDS))
+                }
+                _ => Ok(()),
+            },
+            // russh opens any of the PKCS#8 armors as an encrypted key once a passphrase is given
+            _ => match EncryptedPrivateKeyInfoRef::from_der(&self.der) {
+                Ok(encrypted) => refuse_excessive_pbes(&encrypted.encryption_algorithm),
+                Err(_) => Ok(()),
+            },
+        }
+    }
+
+    fn canonical(&self) -> Zeroizing<String> {
+        let body = Zeroizing::new(STANDARD.encode(&self.der));
+        let mut text = Zeroizing::new(String::with_capacity(body.len() + body.len() / PEM_WIDTH + 256));
+        text.push_str(self.armor);
+        text.push('\n');
+        if let Some(iv) = self.legacy_iv {
+            text.push_str(iv);
+            text.push('\n');
+        }
+        let mut rest = body.as_str();
+        while !rest.is_empty() {
+            let (line, tail) = rest.split_at(rest.len().min(PEM_WIDTH));
+            text.push_str(line);
+            text.push('\n');
+            rest = tail;
+        }
+        text.push_str(&self.armor.replacen("BEGIN", "END", 1));
+        text.push('\n');
+        text
+    }
+}
+
+const fn is_base64(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'+' | b'=')
+}
+
+fn refuse_excessive_pbes(scheme: &EncryptionScheme) -> Result<(), KeyError> {
+    // PBES1 is never decrypted: pkcs5 refuses it
+    let EncryptionScheme::Pbes2(parameters) = scheme else {
+        return Ok(());
+    };
+    match &parameters.kdf {
+        pbes2::Kdf::Pbkdf2(pbkdf2) if pbkdf2.iteration_count > MAX_IMPORT_PBKDF2_ITERATIONS => Err(excessive(
+            format_args!("{} iterations", pbkdf2.iteration_count),
+            MAX_IMPORT_PBKDF2_ITERATIONS,
+        )),
+        pbes2::Kdf::Scrypt(scrypt) => {
+            // scrypt holds 128 bytes per unit of (N + p)·r
+            let blocks = scrypt.cost_parameter.saturating_add(u64::from(scrypt.parallelization));
+            let memory_kib = blocks.saturating_mul(u64::from(scrypt.block_size)) / 8;
+            if memory_kib > MAX_IMPORT_KDF_MEMORY_KIB {
+                Err(excessive_memory(memory_kib))
+            } else if scrypt.parallelization > MAX_IMPORT_SCRYPT_PARALLELIZATION {
+                Err(excessive(
+                    format_args!("a parallelization of {}", scrypt.parallelization),
+                    MAX_IMPORT_SCRYPT_PARALLELIZATION,
+                ))
+            } else {
+                Ok(())
+            }
+        }
         _ => Ok(()),
     }
 }
 
-/// Whether the PEM text holds an encrypted key: an OpenSSH key with a cipher, or an encrypted PKCS#8 or PKCS#5 one.
+/// ssh-key's PPK reader keeps the last value of a repeated header, so every line that names one is held to the cap.
+fn refuse_excessive_argon2(text: &str) -> Result<(), KeyError> {
+    for line in text.lines() {
+        let Some((name, value)) = line.split_once(": ") else {
+            continue;
+        };
+        let Ok(value) = value.parse::<u32>() else {
+            continue;
+        };
+        match name {
+            "Argon2-Memory" if u64::from(value) > MAX_IMPORT_KDF_MEMORY_KIB => {
+                return Err(excessive_memory(u64::from(value)));
+            }
+            "Argon2-Passes" if value > MAX_IMPORT_ARGON2_PASSES => {
+                return Err(excessive(format_args!("{value} passes"), MAX_IMPORT_ARGON2_PASSES));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn excessive(asked: impl std::fmt::Display, most: impl std::fmt::Display) -> KeyError {
+    KeyError::Invalid {
+        reason: format!(
+            "the key's passphrase protection asks for {asked}, more than the {most} this app works through"
+        ),
+    }
+}
+
+fn excessive_memory(kib: u64) -> KeyError {
+    excessive(
+        format_args!("{kib} KiB of memory"),
+        format_args!("{MAX_IMPORT_KDF_MEMORY_KIB} KiB"),
+    )
+}
+
+/// Whether the PEM text holds an encrypted key: an OpenSSH key with a cipher, or an encrypted PKCS#8 one.
 fn is_encrypted(text: &str) -> bool {
-    PrivateKey::from_openssh(text).is_ok_and(|key| key.is_encrypted())
-        || text.contains("-----BEGIN ENCRYPTED PRIVATE KEY-----")
-        || text.contains("Proc-Type: 4,ENCRYPTED")
+    PrivateKey::from_openssh(text).is_ok_and(|key| key.is_encrypted()) || text.contains(ENCRYPTED_PKCS8_ARMOR)
 }
 
 fn pair(key: &PrivateKey) -> Result<KeyPair, KeyError> {
@@ -338,6 +515,221 @@ mod tests {
         );
     }
 
+    fn with_excessive_rounds() -> String {
+        let key = load(&generate("phone").unwrap().private_key).unwrap();
+        let salt = vec![7; 16];
+        let within = key
+            .encrypt_with(Cipher::Aes256Ctr, Kdf::Bcrypt { salt, rounds: 2 }, 1, "secret")
+            .unwrap();
+        let mut bytes = within.to_bytes().unwrap().to_vec();
+        let rounds = bytes.windows(4).position(|window| window == [0, 0, 0, 2]).unwrap();
+        bytes[rounds..rounds + 4].copy_from_slice(&u32::MAX.to_be_bytes());
+        let hostile = PrivateKey::from_bytes(&bytes).unwrap();
+        hostile.to_openssh(LineEnding::LF).unwrap().to_string()
+    }
+
+    fn rewrapped(pem: &str, width: usize) -> String {
+        let lines: Vec<&str> = pem.lines().collect();
+        let body = lines[1..lines.len() - 1].concat();
+        let mut text = format!("{}\n", lines[0]);
+        for line in body.as_bytes().chunks(width) {
+            text.push_str(std::str::from_utf8(line).unwrap());
+            text.push('\n');
+        }
+        format!("{text}{}\n", lines[lines.len() - 1])
+    }
+
+    /// The ways a PEM can differ from what a strict reader takes while russh still reads the key in it.
+    fn loosened(pem: &str) -> [String; 4] {
+        let (first, rest) = pem.split_once('\n').unwrap();
+        [
+            format!("{pem}trailing words\n"),
+            format!("{first}\nx y\n{rest}"),
+            rewrapped(pem, 33),
+            format!("a note before the key\n{pem}"),
+        ]
+    }
+
+    #[test]
+    fn an_import_refuses_excessive_kdf_work_however_loosely_the_key_is_written() {
+        let hostile = with_excessive_rounds();
+
+        for text in loosened(&hostile) {
+            assert_eq!(
+                import(text.as_bytes(), Some("secret")),
+                Err(KeyError::Invalid {
+                    reason: "the key's passphrase protection asks for 4294967295 rounds, more than the 1024 this \
+                             app works through"
+                        .to_owned()
+                }),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_loosely_written_key_imports_and_says_when_its_passphrase_is_wrong() {
+        let pair = generate("laptop").unwrap();
+        let locked = String::from_utf8(encrypted(&load(&pair.private_key).unwrap(), "secret")).unwrap();
+
+        for text in loosened(&locked) {
+            assert_eq!(
+                import(text.as_bytes(), Some("secret")).unwrap().fingerprint,
+                pair.fingerprint,
+                "{text}"
+            );
+            assert_eq!(import(text.as_bytes(), Some("wrong")), Err(KeyError::WrongPassphrase));
+            assert_eq!(import(text.as_bytes(), None), Err(KeyError::PassphraseRequired));
+        }
+    }
+
+    fn pkcs8_under(kdf: pbes2::Kdf, armor: &str) -> String {
+        use pkcs8::der::Encode as _;
+        use pkcs8::der::asn1::OctetString;
+
+        let encrypted = pkcs8::EncryptedPrivateKeyInfoOwned {
+            encryption_algorithm: EncryptionScheme::Pbes2(pbes2::Parameters {
+                kdf,
+                encryption: pbes2::EncryptionScheme::Aes256Cbc { iv: [3; 16] },
+            }),
+            encrypted_data: OctetString::new(vec![5; 48]).unwrap(),
+        };
+        let body = STANDARD.encode(encrypted.to_der().unwrap());
+        format!("-----BEGIN {armor}-----\n{body}\n-----END {armor}-----\n")
+    }
+
+    fn pbkdf2(iterations: u32) -> pbes2::Kdf {
+        pbes2::Pbkdf2Params::hmac_sha256(iterations, &[7; 16]).unwrap().into()
+    }
+
+    fn scrypt(cost: u64, block_size: u16, parallelization: u16) -> pbes2::Kdf {
+        pbes2::Kdf::Scrypt(pbes2::ScryptParams {
+            salt: pbes2::Salt::new([7; 16]).unwrap(),
+            cost_parameter: cost,
+            block_size,
+            parallelization,
+            key_length: None,
+        })
+    }
+
+    fn refusal(text: &str) -> String {
+        match import(text.as_bytes(), Some("secret")) {
+            Err(KeyError::Invalid { reason }) => reason,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_import_refuses_a_pkcs8_key_that_asks_for_excessive_kdf_work_under_either_armor() {
+        for armor in ["ENCRYPTED PRIVATE KEY", "PRIVATE KEY"] {
+            assert_eq!(
+                refusal(&pkcs8_under(pbkdf2(10_000_001), armor)),
+                "the key's passphrase protection asks for 10000001 iterations, more than the 10000000 this app \
+                 works through"
+            );
+            assert_eq!(
+                refusal(&pkcs8_under(scrypt(1 << 40, 1, 1), armor)),
+                "the key's passphrase protection asks for 137438953472 KiB of memory, more than the 131072 KiB this \
+                 app works through"
+            );
+            assert_eq!(
+                refusal(&pkcs8_under(scrypt(u64::MAX, u16::MAX, 1), armor)),
+                "the key's passphrase protection asks for 2305843009213693951 KiB of memory, more than the 131072 \
+                 KiB this app works through"
+            );
+            assert_eq!(
+                refusal(&pkcs8_under(scrypt(1 << 14, 8, 17), armor)),
+                "the key's passphrase protection asks for a parallelization of 17, more than the 16 this app works \
+                 through"
+            );
+        }
+    }
+
+    #[test]
+    fn a_pkcs8_key_at_the_caps_is_worked_through() {
+        // garbage under a passphrase: the derivation runs and the decryption fails, which is not a refusal
+        for kdf in [pbkdf2(2), scrypt(1 << 4, 8, 16)] {
+            assert_eq!(
+                import(pkcs8_under(kdf, "ENCRYPTED PRIVATE KEY").as_bytes(), Some("secret")),
+                Err(KeyError::WrongPassphrase)
+            );
+        }
+        let at_the_memory_cap = pkcs8_under(scrypt((1 << 17) - 16, 8, 16), "ENCRYPTED PRIVATE KEY");
+        assert_eq!(Pem::read(&at_the_memory_cap).unwrap().refuse_excessive_kdf(), Ok(()));
+        let over_it_by_parallelization = pkcs8_under(scrypt((1 << 17) - 15, 8, 16), "ENCRYPTED PRIVATE KEY");
+        assert!(refusal(&over_it_by_parallelization).contains("131073 KiB of memory"));
+        let at_the_iteration_cap = pkcs8_under(pbkdf2(10_000_000), "ENCRYPTED PRIVATE KEY");
+        assert_eq!(Pem::read(&at_the_iteration_cap).unwrap().refuse_excessive_kdf(), Ok(()));
+    }
+
+    #[test]
+    fn an_encrypted_pkcs8_key_imports_with_its_passphrase() {
+        let pair = generate("laptop").unwrap();
+        let mut pem = Vec::new();
+        ::russh::keys::encode_pkcs8_pem_encrypted(&load(&pair.private_key).unwrap(), b"secret", 64, &mut pem).unwrap();
+
+        assert_eq!(import(&pem, Some("secret")).unwrap().fingerprint, pair.fingerprint);
+        assert_eq!(import(&pem, Some("wrong")), Err(KeyError::WrongPassphrase));
+        assert_eq!(import(&pem, None), Err(KeyError::PassphraseRequired));
+    }
+
+    /// A throwaway key from `openssl genrsa -traditional -aes-128-cbc`, its passphrase `secret`.
+    const LEGACY_RSA: &str = include_str!("../tests/fixtures/legacy-rsa-aes128.pem");
+
+    #[test]
+    fn a_legacy_encrypted_rsa_key_imports_with_its_passphrase() {
+        let imported = import(LEGACY_RSA.as_bytes(), Some("secret")).unwrap();
+
+        assert!(imported.authorized_key.starts_with("ssh-rsa "));
+        assert_eq!(import(LEGACY_RSA.as_bytes(), None), Err(KeyError::PassphraseRequired));
+        assert_eq!(
+            import(LEGACY_RSA.as_bytes(), Some("wrong")),
+            Err(KeyError::WrongPassphrase)
+        );
+    }
+
+    fn ppk(headers: &str) -> String {
+        format!(
+            "PuTTY-User-Key-File-3: ssh-ed25519\nEncryption: aes256-cbc\nComment: phone\nPublic-Lines: 0\n\
+             Key-Derivation: Argon2id\n{headers}Argon2-Parallelism: 1\nArgon2-Salt: 07070707070707070707070707070707\n\
+             Private-Lines: 0\nPrivate-MAC: 00\n"
+        )
+    }
+
+    #[test]
+    fn an_import_refuses_a_putty_key_that_asks_for_excessive_kdf_work() {
+        let memory = "the key's passphrase protection asks for 4294967295 KiB of memory, more than the 131072 KiB \
+                      this app works through";
+        let passes = "the key's passphrase protection asks for 257 passes, more than the 256 this app works through";
+
+        assert_eq!(refusal(&ppk("Argon2-Memory: 4294967295\nArgon2-Passes: 8\n")), memory);
+        assert_eq!(refusal(&ppk("Argon2-Memory: 8192\nArgon2-Passes: 257\n")), passes);
+        // a repeated header, whichever of its values the reader keeps
+        assert_eq!(
+            refusal(&ppk(
+                "Argon2-Memory: 8192\nArgon2-Memory: 4294967295\nArgon2-Passes: 8\n"
+            )),
+            memory
+        );
+        assert_eq!(
+            refusal(&ppk(
+                "Argon2-Memory: 4294967295\nArgon2-Memory: 8192\nArgon2-Passes: 8\n"
+            )),
+            memory
+        );
+        assert_eq!(
+            refusal(&format!(" \n{}", ppk("Argon2-Memory: 8192\nArgon2-Passes: 257\n"))),
+            passes
+        );
+    }
+
+    #[test]
+    fn a_putty_key_within_the_caps_is_read() {
+        let reason = refusal(&ppk("Argon2-Memory: 64\nArgon2-Passes: 1\n"));
+
+        assert!(!reason.contains("passphrase protection"), "{reason}");
+    }
+
     #[test]
     fn an_export_opens_only_with_its_passphrase() {
         let pair = generate("phone").unwrap();
@@ -398,16 +790,38 @@ mod tests {
         assert_eq!(export(&pair.private_key, locked("1234567")), short);
         assert_eq!(export(&pair.private_key, locked(&families)), short);
         assert_eq!(export(&pair.private_key, locked("e\u{301}".repeat(7).as_str())), short);
+        // seven Devanagari conjuncts: 7 characters by Unicode 15.1's rule, 14 by the older one
+        assert_eq!(export(&pair.private_key, locked("क्ष".repeat(7).as_str())), short);
         assert_eq!(
             short.clone().unwrap_err().to_string(),
             "the passphrase needs at least 8 characters"
         );
 
         for enough in ["12345678", "пароль12", &format!("{families}👨‍👩‍👧‍👦")] {
+            assert!(!export_passphrase_too_short(enough));
             let exported = export(&pair.private_key, locked(enough)).unwrap();
             assert_eq!(
                 import(exported.as_bytes(), Some(enough)).unwrap().fingerprint,
                 pair.fingerprint
+            );
+        }
+    }
+
+    #[test]
+    fn the_too_short_check_is_the_exports_own() {
+        let pair = generate("phone").unwrap();
+
+        for passphrase in [
+            "",
+            "1234567",
+            "12345678",
+            "क्ष".repeat(7).as_str(),
+            "क्ष".repeat(8).as_str(),
+        ] {
+            assert_eq!(
+                export_passphrase_too_short(passphrase),
+                export(&pair.private_key, locked(passphrase)).is_err(),
+                "{passphrase}"
             );
         }
     }

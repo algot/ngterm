@@ -6,6 +6,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performScrollTo
 import com.github.takahirom.roborazzi.captureRoboImage
+import com.nickalie.ngterm.android.FakePassphraseRule
 import com.nickalie.ngterm.android.R
 import com.nickalie.ngterm.android.data.AlertKind
 import com.nickalie.ngterm.android.data.AppSettings
@@ -117,6 +118,7 @@ class SettingsScreenshotTest(
             ExportKeyScreen(
                 fingerprint = SampleKey.fingerprint,
                 work = ExportWork(keyId = SampleKey.id, done = ExportDone.Saved),
+                rule = FakePassphraseRule(),
                 onSave = {},
                 onCopy = {},
                 onBack = {},
@@ -132,6 +134,7 @@ class SettingsScreenshotTest(
             ExportKeyScreen(
                 fingerprint = SampleKey.fingerprint,
                 work = ExportWork(keyId = SampleKey.id),
+                rule = FakePassphraseRule(),
                 onSave = {},
                 onCopy = {},
                 onBack = {},

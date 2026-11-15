@@ -19,6 +19,8 @@ import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.text.TextLayoutResult
 import com.nickalie.ngterm.android.FAKE_FINGERPRINT
+import com.nickalie.ngterm.android.FakePassphraseRule
+import com.nickalie.ngterm.android.data.PassphraseRule
 import com.nickalie.ngterm.android.ui.theme.NgtermTheme
 import com.nickalie.ngterm.core.ffi.ExportProtection
 import org.junit.Assert.assertEquals
@@ -41,10 +43,21 @@ class ExportKeyScreenTest {
     private val copied = mutableListOf<ExportProtection>()
     private var back = 0
 
-    private fun show(draft: ExportDraft = ExportDraft()) {
+    private fun show(
+        draft: ExportDraft = ExportDraft(),
+        rule: PassphraseRule = FakePassphraseRule(),
+    ) {
         compose.setContent {
             NgtermTheme {
-                ExportKeyScreen(FAKE_FINGERPRINT, work, { saved += it }, { copied += it }, { back++ }, draft = draft)
+                ExportKeyScreen(
+                    fingerprint = FAKE_FINGERPRINT,
+                    work = work,
+                    rule = rule,
+                    onSave = { saved += it },
+                    onCopy = { copied += it },
+                    onBack = { back++ },
+                    draft = draft,
+                )
             }
         }
     }
@@ -85,34 +98,26 @@ class ExportKeyScreenTest {
     }
 
     @Test
-    fun aPassphraseUnderEightCharactersAsAPersonCountsThemSendsNothing() {
-        // seven accented letters: 14 chars to the JVM, 7 to a person
-        val seven = "e\u0301".repeat(7)
-        show()
-        field("Passphrase").performTextReplacement(seven)
-        field("Passphrase again").performTextReplacement(seven)
+    fun whetherAPassphraseIsLongEnoughIsTheExportersCallNotTheScreens() {
+        // a rule no count of characters gives: twelve are asked for, and only a passphrase saying "long" has them
+        show(rule = FakePassphraseRule(minimum = 12) { "long" !in it })
+        compose.onNodeWithText("At least 12 characters.", substring = true).assertIsDisplayed()
+        field("Passphrase").performTextReplacement("correct horse battery")
+        field("Passphrase again").performTextReplacement("correct horse battery")
 
         tap("Save to a file")
         tap("Copy to the clipboard")
 
-        compose.onNodeWithText("Use at least 8 characters.").assertIsDisplayed()
+        compose.onNodeWithText("Use at least 12 characters.").assertIsDisplayed()
         assertTrue(saved.isEmpty() && copied.isEmpty())
 
-        field("Passphrase").performTextReplacement(seven + "x")
-        compose.onNodeWithText("Use at least 8 characters.").assertDoesNotExist()
+        field("Passphrase").performTextReplacement("long")
+        compose.onNodeWithText("Use at least 12 characters.").assertDoesNotExist()
         compose.onNodeWithText("The two passphrases differ.").assertIsDisplayed()
-        field("Passphrase again").performTextReplacement(seven + "x")
+        field("Passphrase again").performTextReplacement("long")
         tap("Copy to the clipboard")
 
-        assertEquals(listOf<ExportProtection>(ExportProtection.Passphrase(seven + "x")), copied)
-    }
-
-    @Test
-    fun charactersAreCountedAsAPersonCountsThem() {
-        assertEquals(0, characters(""))
-        assertEquals(8, characters("12345678"))
-        assertEquals(8, characters("пароль12"))
-        assertEquals(1, characters("e\u0301"))
+        assertEquals(listOf<ExportProtection>(ExportProtection.Passphrase("long")), copied)
     }
 
     @Test

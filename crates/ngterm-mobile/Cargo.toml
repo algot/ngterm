@@ -43,6 +43,10 @@ russh.workspace = true
 # wipes private key bytes once a connection has used them
 zeroize.workspace = true
 thiserror.workspace = true
+# an imported key's armor, decoded here so its key derivation is capped on the very bytes russh then reads
+base64.workspace = true
+# an encrypted PKCS#8 key's PBKDF2 or scrypt parameters, read before russh derives a key from them
+pkcs8.workspace = true
 # counts an export passphrase's characters as a person does (grapheme clusters)
 unicode-segmentation.workspace = true
 uniffi.workspace = true
@@ -52,8 +56,6 @@ minisign-verify.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
-# the Kitty clipboard protocol's base64 packets the pane tests send and read back
-base64.workspace = true
 # block on the facade's async calls in tests
 futures-lite.workspace = true
 # New Session's waits on a paused clock

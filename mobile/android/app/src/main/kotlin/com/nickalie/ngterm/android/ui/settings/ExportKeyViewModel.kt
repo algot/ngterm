@@ -5,6 +5,7 @@ import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nickalie.ngterm.android.data.AppKeys
+import com.nickalie.ngterm.android.data.PassphraseRule
 import com.nickalie.ngterm.android.platform.KeyExports
 import com.nickalie.ngterm.android.ui.onboarding.describe
 import com.nickalie.ngterm.core.ffi.ExportProtection
@@ -74,11 +75,18 @@ class ExportKeyViewModel(
     private val state = MutableStateFlow(ExportWork())
     private var unlockedAt = 0L
 
+    // which showing of the screen this is: an export begun under an earlier one delivers and says nothing
+    private var showing = 0
+
     /** Where the export stands. */
     val work: StateFlow<ExportWork> = state.asStateFlow()
 
+    /** What an export's passphrase must meet, as the exporter counts it. */
+    val rule: PassphraseRule get() = keys.exportRule
+
     /** The owner confirmed it is them: [keyId] can be exported. */
     fun unlock(keyId: String) {
+        showing++
         unlockedAt = now()
         state.value = ExportWork(keyId = keyId)
     }
@@ -88,6 +96,7 @@ class ExportKeyViewModel(
      * leaves the clipboard.
      */
     fun close() {
+        showing++
         state.value = ExportWork()
         try {
             exports.clearCopied()
@@ -115,8 +124,9 @@ class ExportKeyViewModel(
 
     /** Copies the key under [protection] to the clipboard. */
     fun copy(protection: ExportProtection) {
+        val begun = showing
         // a copy that is ready only after the screen was left would stay on the clipboard: it isn't made
-        if (ready()) export(protection, ExportDone.Copied) { if (state.value.busy) exports.copy(it) }
+        if (ready()) export(protection, ExportDone.Copied) { if (showing == begun) exports.copy(it) }
     }
 
     // whether an export may start: a key is unlocked, recently enough, and none is under way
@@ -136,6 +146,7 @@ class ExportKeyViewModel(
         deliver: suspend (ByteArray) -> Unit,
     ) {
         val keyId = state.value.keyId ?: return
+        val begun = showing
         state.value = state.value.copy(busy = true, done = null, problem = null)
         viewModelScope.launch {
             var exported: ByteArray? = null
@@ -162,8 +173,8 @@ class ExportKeyViewModel(
                 } finally {
                     if (exported != null) exported.fill(0) else unmade()
                 }
-            // an export that ends after the screen was left says nothing
-            if (state.value.keyId == keyId) {
+            // an export that ends after the screen was left says nothing, to that screen or to one opened since
+            if (showing == begun) {
                 state.value = state.value.copy(busy = false, done = done.takeIf { problem == null }, problem = problem)
             }
         }

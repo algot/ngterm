@@ -224,6 +224,44 @@ class ExportKeyViewModelTest {
     }
 
     @Test
+    fun aCopyStillUnderWayWhenTheScreenIsOpenedAgainLeavesTheClipboardToTheNewOne() {
+        val key = test.seedKey()
+        val model = model()
+        model.unlock(key.id)
+        val reached = CountDownLatch(1)
+        val gate =
+            object : CountDownLatch(1) {
+                override fun await() {
+                    reached.countDown()
+                    super.await()
+                }
+            }
+        test.maker.exportGate = gate
+        model.copy(ExportProtection.Passphrase("the first one"))
+        reached.await()
+        model.close()
+        model.unlock(key.id)
+        val again = CountDownLatch(1)
+        test.maker.exportGate = again
+
+        model.copy(locked)
+        gate.countDown()
+        val deadline = System.currentTimeMillis() + 10_000
+        while (test.maker.exports.isEmpty()) {
+            check(System.currentTimeMillis() < deadline) { "the first export never ended" }
+            Thread.sleep(10)
+        }
+        Thread.sleep(100)
+
+        assertTrue("the first copy belongs to a screen that is gone", exports.copied.isEmpty())
+        assertTrue("the second export is still the screen's", model.work.value.busy)
+        again.countDown()
+
+        assertEquals(ExportWork(keyId = key.id, done = ExportDone.Copied), model.settled())
+        assertEquals(listOf(fakeExport(stored, "correct horse")), exports.copied)
+    }
+
+    @Test
     fun leavingTheScreenClearsTheCopiedKeyFromTheClipboardAndNothingElse() {
         val key = test.seedKey()
         val model = model()

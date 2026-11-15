@@ -904,6 +904,14 @@ pub fn export_passphrase_min_chars() -> u32 {
     keys::EXPORT_PASSPHRASE_MIN_CHARS
 }
 
+/// Whether [`export_key`] refuses `passphrase` as too short, by its own count of the characters: what the app asks
+/// before it starts an export, so its screen and the core never disagree. The passphrase is wiped once read.
+#[uniffi::export]
+#[must_use]
+pub fn export_passphrase_too_short(passphrase: String) -> bool {
+    keys::export_passphrase_too_short(&zeroize::Zeroizing::new(passphrase))
+}
+
 #[cfg(test)]
 mod tests {
     //! The facade over the scripted fake transport, its actor on its own thread as in the app: each call reaches the
@@ -1056,6 +1064,8 @@ mod tests {
         };
 
         assert_eq!(minimum, 8);
+        assert!(super::export_passphrase_too_short("é".repeat(7)));
+        assert!(!super::export_passphrase_too_short("é".repeat(8)));
         assert_eq!(
             export_key(pair.private_key.clone(), passphrase(minimum - 1)),
             Err(KeyError::PassphraseTooShort { minimum })

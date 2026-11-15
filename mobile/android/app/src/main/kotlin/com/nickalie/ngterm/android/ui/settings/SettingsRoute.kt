@@ -85,7 +85,7 @@ fun SettingsRoute(
     when {
         exported != null -> {
             EndUnlockOnLeave(exports::close)
-            ExportKeyPage(exported.key, export, exports::save, exports::copy, exports::close, modifier)
+            ExportKeyPage(exported.key, export, exports.rule, exports::save, exports::copy, exports::close, modifier)
         }
 
         page == IMPORT -> {
