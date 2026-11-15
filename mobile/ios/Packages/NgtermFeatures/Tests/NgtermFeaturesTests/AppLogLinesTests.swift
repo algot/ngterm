@@ -85,12 +85,13 @@ internal struct AppLogLinesTests {
         navigation.path.append(.importKey)
         navigation.path = [.publicKey("k-secret-id")]
         navigation.path = [.publicKey("k-secret-id")]
+        navigation.path.append(.exportKey("k-secret-id"))
         navigation.path = []
         navigation.path.append(.logs)
         #expect(
             test.logged("nav") == [
                 "nav: settings page=home", "nav: settings page=import", "nav: settings page=key",
-                "nav: settings page=home", "nav: settings page=logs",
+                "nav: settings page=export", "nav: settings page=home", "nav: settings page=logs",
             ]
         )
         navigation.shown()

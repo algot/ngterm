@@ -1,12 +1,15 @@
 import NgtermDesign
 import SwiftUI
 
-/// The app's keys, each with its fingerprint, the machines that use it, Show public key and Copy; then Rotate key (a
-/// spinner and "Making a key" while it runs, and why it failed) and Import a key, with what rotating means.
+/// The app's keys, each with its fingerprint, the machines that use it, Show public key, Copy and Export private key;
+/// then Rotate key (a spinner and "Making a key" while it runs, and why it failed) and Import a key, with what
+/// rotating means.
 internal struct KeysSection: View {
     internal let model: SettingsModel
     /// Shows the public half of the key with the id given.
     internal let onShow: @MainActor (String) -> Void
+    /// Asks to export the private half of the key with the id given.
+    internal let onExport: @MainActor (String) -> Void
     /// Opens the import.
     internal let onImport: @MainActor () -> Void
 
@@ -16,6 +19,8 @@ internal struct KeysSection: View {
             ForEach(model.keys) { item in
                 KeyRow(item: item) {
                     onShow(item.id)
+                } onExport: {
+                    onExport(item.id)
                 }
             }
             Button {

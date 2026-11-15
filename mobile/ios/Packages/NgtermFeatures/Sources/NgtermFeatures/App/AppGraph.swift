@@ -35,6 +35,8 @@ public final class AppGraph {
     public let chats: PaneChats
     /// Keeps the screen awake while a session shows, when Settings asks for it.
     public let screenAwake = ScreenAwake()
+    /// What exporting a key needs of the platform.
+    public let exports: KeyExportServices
     /// The device's clipboard, which programs write and read.
     public let clipboard: any TerminalClipboard
     /// The programs' clipboard reads waiting for the user.
@@ -68,8 +70,9 @@ public final class AppGraph {
     /// The graph over its parts: `core` connects, `stores` keep the small state, and `notices` (the system's unless a
     /// test gives its own) takes the notifications; `pathSource` (the system's unless a test gives its own) tells the
     /// network; programs write and read `clipboard` (the system's unless a test gives its own); a background refresh
-    /// runs on a core `refreshCore` makes (none: it refreshes nothing); a reconnect counts down by `clock`; and the
-    /// app's own lines go to the diagnostic `log` (none: nowhere), whose shared files are written under `logExports`.
+    /// runs on a core `refreshCore` makes (none: it refreshes nothing); a key is exported through `exports` (the
+    /// system's unless a test gives its own); a reconnect counts down by `clock`; and the app's own lines go to the
+    /// diagnostic `log` (none: nowhere), whose shared files are written under `logExports`.
     @preconcurrency
     public init(
         machines: MachineStore,
@@ -82,6 +85,7 @@ public final class AppGraph {
         pathSource: (any PathSource)? = nil,
         clipboard: (any TerminalClipboard)? = nil,
         refreshCore: (@MainActor () throws -> any MobileCoreClient)? = nil,
+        exports: KeyExportServices? = nil,
         clock: @escaping @Sendable () -> Date = { Date() },
         log: (any AppLogProtocol)? = nil,
         logExports: URL = FileManager.default.temporaryDirectory.appending(path: "logs-export")
@@ -93,6 +97,7 @@ public final class AppGraph {
         self.settings = settings
         self.keys = keys
         self.pins = pins
+        self.exports = exports ?? KeyExportServices()
         let made = Connections(core: core, clock: clock)
         let board = clipboard ?? SystemClipboard()
         connections = made

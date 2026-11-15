@@ -23,6 +23,8 @@ public final class SettingsModel {
     public private(set) var failure: String?
     /// Whether the app may notify, as last read (``readPermission()``); `nil` until then.
     public private(set) var permission: NoticePermission?
+    /// The export of a private key, which Settings starts and its export screen works through.
+    @ObservationIgnored public let export: ExportKeyModel
     @ObservationIgnored private let graph: AppGraph
 
     /// The app's settings.
@@ -60,6 +62,7 @@ public final class SettingsModel {
     /// Settings over `graph`.
     public init(graph: AppGraph) {
         self.graph = graph
+        export = ExportKeyModel(keys: graph.keys, services: graph.exports)
     }
 
     /// The Logs page's model over the app's log, its exports in the graph's directory for them; none without a log.

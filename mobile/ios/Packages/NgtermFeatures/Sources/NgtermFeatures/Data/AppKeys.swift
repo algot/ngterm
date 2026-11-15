@@ -8,6 +8,7 @@ import Observation
 /// ``generate()``, ``importKey(privateKey:passphrase:)`` and ``rotate()`` put a new key in both, wiping the private
 /// bytes once kept; they run the ``KeyMaker`` off the main actor and throw what it throws (``KeyError``), or why the
 /// key could not be kept (``StoreError``, the vault's error), in which case nothing of it is kept.
+/// ``export(id:protection:)`` hands a kept key out as a file's bytes, the one way a private half leaves.
 @preconcurrency
 @MainActor
 @Observable
@@ -16,6 +17,11 @@ public final class AppKeys {
     @ObservationIgnored private let vault: any PrivateKeys
     @ObservationIgnored private let maker: any KeyMaker
     @ObservationIgnored private let comment: String
+
+    /// How many characters an export's passphrase needs at least.
+    public var exportPassphraseMinimum: Int {
+        maker.exportPassphraseMinimum
+    }
 
     /// The keys, oldest first.
     public var keys: [AppKey] {
@@ -49,6 +55,15 @@ public final class AppKeys {
         with maker: any KeyMaker
     ) async throws -> KeyPair {
         try maker.importKey(privateKey: privateKey, passphrase: passphrase)
+    }
+
+    @concurrent
+    nonisolated private static func write(
+        _ privateKey: Data,
+        under protection: ExportProtection,
+        with maker: any KeyMaker
+    ) async throws -> Data {
+        try maker.exportKey(privateKey: privateKey, protection: protection)
     }
 
     /// Reads the keys' file again if the store couldn't read it before (``KeyStore/readIfUnread()``).
@@ -87,6 +102,25 @@ public final class AppKeys {
             with: maker
         )
         return try add(&pair, isImported: true)
+    }
+
+    /// The private key `id` as an OpenSSH private key file under `protection`, which an import reads back.
+    ///
+    /// The stored key is read from the vault and zeroed once the exporter has it; the caller zeroes what it gets.
+    ///
+    /// - Throws: the vault's error (``VaultError``) when the key isn't kept or can't be read, the exporter's
+    ///   (``KeyError``) for a passphrase too short.
+    public func export(id: String, protection: ExportProtection) async throws -> Data {
+        var stored = try vault.load(keyId: id)
+        defer {
+            stored.resetBytes(in: stored.startIndex..<stored.endIndex)
+        }
+        return try await Self.write(stored, under: protection, with: maker)
+    }
+
+    /// Whether an export refuses `passphrase` as too short, as the exporter counts it.
+    public func isExportPassphraseTooShort(_ passphrase: String) -> Bool {
+        maker.isExportPassphraseTooShort(passphrase)
     }
 
     // keeps the private half in the vault (which wipes it in place: `pair` is the one holder of its bytes) and the rest

@@ -1098,7 +1098,13 @@ as before, with no error. A Windows origin can't be reached at all yet, as above
   backups, and Share hands the system's share sheet a file of its own each time. An Objective-C exception is logged
   as it ends the process; any other crash (a Swift trap, a signal) is logged at the next start, from the report the
   system delivers then (MetricKit): its exception type, signal and top frame, never its reason.
-- Its key is kept in the Keychain; its design system is `mobile/ios/DESIGN.md`; it ships through TestFlight to the
+- Its key is kept in the Keychain. Settings ▸ Keys ▸ Export private key writes it out for another install, as
+  Android's does and in the same file format ([Android](#android)): after the owner unlocks (LocalAuthentication:
+  Face ID or Touch ID, or the passcode; a device without a passcode exports nothing), under a passphrase or, on an
+  explicit, confirmed choice, unencrypted, into a file the system's file screen places or onto the clipboard, as a
+  local-only pasteboard item that expires and that the app clears when the export screen is left. Import a key
+  reads it back.
+- Its design system is `mobile/ios/DESIGN.md`; it ships through TestFlight to the
   App Store ([docs/ios-release.md](ios-release.md)).
 
 ```sh

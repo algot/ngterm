@@ -7,8 +7,9 @@ import NgtermPlatform
 /// The app's graph over fakes, as mobile/android's `TestGraph`: the core a ``FakeMobileCore`` pinning in memory, the
 /// stores real ones in a directory of the test's own, the keys made by a ``FakeKeyMaker`` and kept in memory, the
 /// network a ``TestPathSource``, the clock a ``TestClock``, the clipboard a ``MemoryClipboard``, the notifications a
-/// ``RecordingNotices``, the diagnostic log a ``MemoryAppLog`` (``log``), and the background refresh's core another
-/// ``FakeMobileCore`` (``refreshCore``), which keeps the sessions of ``core``. ``remove()`` deletes the directory.
+/// ``RecordingNotices``, the diagnostic log a ``MemoryAppLog`` (``log``), the device's owner a ``FakeDeviceAuth``, an
+/// exported key's clipboard a ``MemoryKeyClipboard``, and the background refresh's core another ``FakeMobileCore``
+/// (``refreshCore``), which keeps the sessions of ``core``. ``remove()`` deletes the directory.
 ///
 /// A graph made over another's `directory` reads the files that one wrote, as a process started afresh does.
 @MainActor
@@ -22,6 +23,8 @@ internal final class TestGraph {
     internal let clipboard = MemoryClipboard(nil)
     internal let notices = RecordingNotices()
     internal let log = MemoryAppLog()
+    internal let auth = FakeDeviceAuth()
+    internal let keyClipboard = MemoryKeyClipboard()
     internal let core: FakeMobileCore
     internal let refreshCore: FakeMobileCore
     internal let graph: AppGraph
@@ -58,10 +61,20 @@ internal final class TestGraph {
                 refreshing.sessions = main.sessions
                 return refreshing
             },
+            exports: KeyExportServices(
+                auth: auth,
+                clipboard: keyClipboard,
+                files: KeyExportFiles(directory: Self.staging(in: directory))
+            ),
             clock: clock.read,
             log: log,
             logExports: directory.appending(path: "export")
         )
+    }
+
+    /// Where the graph over `directory` stages an exported key for the system's file screen.
+    internal static func staging(in directory: URL) -> URL {
+        directory.appending(path: "key-export", directoryHint: .isDirectory)
     }
 
     /// The tests' machine `m1`, build-01, signing in with `keyId`.

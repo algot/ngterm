@@ -5,7 +5,8 @@ import Synchronization
 
 /// The core's key functions, faked as mobile/android's `FakeKeyMaker`: ``generate(comment:)`` hands out
 /// ``publicKey``; ``importKey(privateKey:passphrase:)`` takes text starting with `-----BEGIN`, wants ``passphrase``
-/// when it says ENCRYPTED, and refuses anything else as the core would.
+/// when it says ENCRYPTED, and refuses anything else as the core would; ``exportKey(privateKey:protection:)`` hands
+/// out ``encryptedKey`` under a passphrase and ``openKey`` without one, whatever key it is given.
 internal final class FakeKeyMaker: KeyMaker {
     /// The public key line it hands out: a made-up key, never a real one.
     internal static let publicKey =
@@ -18,7 +19,15 @@ internal final class FakeKeyMaker: KeyMaker {
     internal static let encryptedKey =
         "-----BEGIN OPENSSH PRIVATE KEY-----\nENCRYPTED fake\n-----END OPENSSH PRIVATE KEY-----"
 
+    /// A "private key" it reads without a passphrase.
+    internal static let openKey = "-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n-----END OPENSSH PRIVATE KEY-----"
+    /// How many characters it wants of an export's passphrase.
+    internal static let exportMinimum = 8
+
     private let made = Mutex(0)
+    private let exportRefusal = Mutex<KeyError?>(nil)
+    private let exportGate = Mutex<DispatchSemaphore?>(nil)
+    private let protections = Mutex<[ExportProtection]>([])
     private let comments = Mutex<[String]>([])
     private let refusal = Mutex<KeyError?>(nil)
     private let gate = Mutex<DispatchSemaphore?>(nil)
@@ -27,6 +36,21 @@ internal final class FakeKeyMaker: KeyMaker {
     internal var generateFailure: KeyError? {
         get { refusal.withLock { $0 } }
         set { refusal.withLock { $0 = newValue } }
+    }
+
+    /// What ``exportKey(privateKey:protection:)`` throws instead of exporting, while set.
+    internal var exportFailure: KeyError? {
+        get { exportRefusal.withLock { $0 } }
+        set { exportRefusal.withLock { $0 = newValue } }
+    }
+
+    /// How each export it made was protected, in order.
+    internal var exportedUnder: [ExportProtection] {
+        protections.withLock { $0 }
+    }
+
+    internal var exportPassphraseMinimum: Int {
+        Self.exportMinimum
     }
 
     /// How many keys it has made.
@@ -44,6 +68,33 @@ internal final class FakeKeyMaker: KeyMaker {
         let held = DispatchSemaphore(value: 0)
         gate.withLock { $0 = held }
         return held
+    }
+
+    /// Holds every export until the semaphore it returns is signalled once per export.
+    internal func holdExports() -> DispatchSemaphore {
+        let held = DispatchSemaphore(value: 0)
+        exportGate.withLock { $0 = held }
+        return held
+    }
+
+    internal func exportKey(privateKey _: Data, protection: ExportProtection) throws -> Data {
+        // runs off the main actor (AppKeys hands it over), so a held export blocks only its own thread
+        exportGate.withLock { $0 }?.wait()
+        if let failure = exportFailure {
+            throw failure
+        }
+        protections.withLock { $0.append(protection) }
+        switch protection {
+        case .passphrase:
+            return Data(Self.encryptedKey.utf8)
+
+        case .unprotected:
+            return Data(Self.openKey.utf8)
+        }
+    }
+
+    internal func isExportPassphraseTooShort(_ passphrase: String) -> Bool {
+        passphrase.count < Self.exportMinimum
     }
 
     internal func generate(comment: String) throws -> KeyPair {

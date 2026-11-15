@@ -1,11 +1,13 @@
 import NgtermDesign
 import SwiftUI
 
-/// A key as Settings lists it: where it came from, its fingerprint, the machines that use it, and its public half's
-/// actions, Show public key and Copy public key, side by side or one over the other when they don't fit.
+/// A key as Settings lists it: where it came from, its fingerprint, the machines that use it, its public half's
+/// actions, Show public key and Copy public key, side by side or one over the other when they don't fit, and under
+/// them, on a line of its own, Export private key.
 internal struct KeyRow: View {
     internal let item: KeyItem
     internal let onShow: @MainActor () -> Void
+    internal let onExport: @MainActor () -> Void
 
     internal var body: some View {
         VStack(alignment: .leading, spacing: Spacing.xSmall) {
@@ -32,6 +34,7 @@ internal struct KeyRow: View {
                     actions
                 }
             }
+            exportAction
         }
         .padding(.vertical, Spacing.xSmall)
     }
@@ -54,5 +57,19 @@ internal struct KeyRow: View {
         .buttonStyle(.borderless)
         .accessibilityIdentifier("show-key-\(item.key.id)")
         CopyButton(item.key.authorizedKey, title: String(localized: "Copy public key"))
+    }
+
+    // on a line of its own: beside the public half's two actions, its label wrapped on an iPad's sheet
+    private var exportAction: some View {
+        Button {
+            onExport()
+        } label: {
+            Label(String(localized: "Export private key"), systemImage: "arrow.up.doc")
+                .font(Typography.detail.weight(.semibold))
+                .frame(minHeight: Spacing.hitTarget)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .accessibilityIdentifier("export-key-\(item.key.id)")
     }
 }

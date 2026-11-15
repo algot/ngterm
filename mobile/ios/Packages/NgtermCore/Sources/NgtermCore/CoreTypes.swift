@@ -51,7 +51,9 @@ public typealias ClipboardReadFacts = NgtermCoreBindings.ClipboardReadFacts
 public typealias ClipboardReply = NgtermCoreBindings.ClipboardReply
 /// How the app's write of a program's clipboard value ended.
 public typealias ClipboardWriteStatus = NgtermCoreBindings.ClipboardWriteStatus
-/// Why a key could not be made or imported.
+/// How an exported key is protected: under a passphrase, or not at all.
+public typealias ExportProtection = NgtermCoreBindings.ExportProtection
+/// Why a key could not be made, imported or exported.
 public typealias KeyError = NgtermCoreBindings.KeyError
 /// A private key in OpenSSH form, with the line for the machine's `authorized_keys` and its fingerprint.
 public typealias KeyPair = NgtermCoreBindings.KeyPair

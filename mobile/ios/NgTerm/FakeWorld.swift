@@ -25,6 +25,9 @@
     ///
     /// The network is always online (``FakeNetwork``), whatever the simulator's is.
     ///
+    /// The device's owner confirms a key's export at once (``FakeDeviceAuth``), unless the launch leaves the device
+    /// without a passcode; the exported file is offered under the name the launch gives.
+    ///
     /// Notifications go to memory (``FakeNotices``), and the question about notifying counts as asked unless the
     /// launch asks for it. The diagnostic log is the core's own, in the launch's directory or the one it names.
     internal enum FakeWorld {
@@ -114,6 +117,7 @@
                 notices: FakeNotices(),
                 pathSource: FakeNetwork(),
                 clipboard: clipboard(arguments: arguments),
+                exports: exports(arguments: arguments),
                 log: AppLogs.open(in: logs.appending(path: "log", directoryHint: .isDirectory)),
                 logExports: logs.appending(path: "export", directoryHint: .isDirectory)
             )
@@ -154,6 +158,19 @@
                     gate = core.hold("duplicateSession")
                 }
             }
+        }
+
+        // a device whose owner confirms at once (or one with no passcode, when asked), the general pasteboard, and
+        // the exported file under the name the launch gives, if it gives one
+        @MainActor
+        private static func exports(arguments: [String]) -> KeyExportServices {
+            let named = arguments.firstIndex(of: CoreChoice.fakeExportNameArgument).map { $0 + 1 }
+            let name = named.flatMap { arguments.indices.contains($0) ? arguments[$0] : nil }
+            return KeyExportServices(
+                auth: FakeDeviceAuth(isSecured: !arguments.contains(CoreChoice.fakeNoPasscodeArgument)),
+                clipboard: SystemKeyClipboard(),
+                files: KeyExportFiles(name: name ?? KeyExportFiles.defaultName)
+            )
         }
 
         // a pasteboard of the launch's own holding a command, when programs ask to read the clipboard; else none

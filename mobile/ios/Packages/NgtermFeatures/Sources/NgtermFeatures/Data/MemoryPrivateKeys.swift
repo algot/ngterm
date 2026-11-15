@@ -1,4 +1,5 @@
 import Foundation
+import NgtermCore
 import Synchronization
 
 /// Private keys kept in memory for as long as the process: the tests' ``PrivateKeys``, and the app's on the fake core,
@@ -27,6 +28,16 @@ public final class MemoryPrivateKeys: PrivateKeys {
         let copy = Data([UInt8](privateKey))
         kept.withLock { $0[keyId] = copy }
         privateKey.resetBytes(in: privateKey.startIndex..<privateKey.endIndex)
+    }
+
+    /// A copy of the private key `keyId`.
+    ///
+    /// - Throws: ``VaultError/Missing(keyId:)`` when it isn't kept.
+    public func load(keyId: String) throws -> Data {
+        guard let key = privateKey(keyId: keyId) else {
+            throw VaultError.Missing(keyId: keyId)
+        }
+        return Data([UInt8](key))
     }
 
     /// Forgets `keyId`.

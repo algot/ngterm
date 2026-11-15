@@ -744,12 +744,59 @@ inline `Picker`); a switch is the system's `Toggle`, tinted copper.
 - **Clipboard:** each machine trusted to read it unasked, its name over its mono address, with **Ask again** (read as
   "Ask again before nas reads the clipboard"); with none, that every machine asks.
 - **Keys:** each key ("Created on this device" or "Imported", a heading) with its mono fingerprint, "Used by build-01
-  and nas" or "No machine uses it", and **Show public key** and **Copy public key** (side by side, or stacked when they
-  don't fit). Then **Rotate key** (a spinner and "Making a key" while it runs; why it failed, under it) and **Import a
+  and nas" or "No machine uses it", **Show public key** and **Copy public key** (side by side, or stacked when
+  they don't fit), and under them, on a line of its own, **Export private key**. Then **Rotate key** (a spinner and "Making a key" while it runs; why it failed, under it) and **Import a
   key** (the first run's import screen, pushed), with what rotating means. Neither confirms: nothing is lost.
 - **A key just made or brought** opens its public half (the first run's screen, pushed) with, under it, "Then switch
   your machines", what to do first, and **Use for every machine** (prominent); once every machine uses it, "Every
   machine signs in with this key." The machines connected keep their connections and sign in with it next time.
+- **Export private key** (`ExportKeyView`, pushed), for carrying the key to another install, which the first run's
+  import reads back. The system asks the owner to unlock first (Face ID or Touch ID, or the passcode); backing out
+  does nothing, a device with no passcode exports nothing and is told to set one in the system's alert ("Set a
+  passcode first"), and one that couldn't confirm says why with **Try again**. Then a page of the import's shape (a
+  scroll view of grouped fields), top to bottom:
+
+  ```
+  +----------------------------------------+
+  | <  Export private key                  |
+  | [◆ This is the key your machines trust |
+  |    Whoever has the exported key and …] |
+  | [ Key to export                        |
+  |   SHA256:q0Gm4d1Xb7pKc2yT9wVZ5eRj…   ] |
+  |  Passphrase                            |
+  | [ ••••••••••••                  Show ] |
+  |  At least 8 characters. It encrypts …  |
+  |  Passphrase again                      |
+  | [ ••••••••••••                       ] |
+  | [ Export without a passphrase     ( )  |
+  |   Not recommended                    ] |
+  | [          Save to a file            ] |
+  |  ⧉ Copy to the clipboard               |
+  |  A file is safer: other apps can …     |
+  | [● Saved                               |
+  |    Delete the file once you've …     ] |
+  +----------------------------------------+
+  ```
+
+  - The warning is the page's one loud part: an attention `Banner` saying what the key is and who can use it. The
+    key's fingerprint is on a `ValuePlate`.
+  - The passphrase and "Passphrase again" are hidden, one **Show** for both. The rule (the core's minimum, eight
+    characters) always reads under the passphrase; what is wrong takes its place, under the field it is about, once
+    an export was tried, and goes as soon as it is put right (`InlineProblem`).
+  - **Export without a passphrase** is a switch on the raised ground, "Not recommended" under its name. On, the
+    fields go and a failed `Banner` says the key won't be encrypted; Save and Copy then ask once more
+    (`confirmingDestructive`, its button repeating the switch's words).
+  - **Save to a file** is the prominent action ("Exporting the key" with a spinner while it works): the system's file
+    screen places the file, named `ngterm-private-key`. **Copy to the clipboard** is the quiet one, with the line
+    that a file is safer; the copy never leaves the device (no Universal Clipboard), is marked concealed so a program's
+    clipboard read asks first, the system drops it after ten minutes, and the app clears it when the page is left, if it is still what the clipboard holds.
+  - How it went shows under them, and only for the last tap: a healthy `Banner` (Saved, Copied, each with what to do
+    next) or the problem in words. A tap on Save or Copy takes back what the one before said, so a save left without
+    a place never says Saved.
+  - The unlock lasts five minutes and ends when the page is left (Back, another page, Settings closed); leaving the
+    app to paste the key is not leaving the page. The key is written nowhere but the file the system places and the
+    clipboard: it waits for the file screen in a file of its own in the app's temporary directory, removed however
+    that screen ends.
 - **Diagnostics:** **Logs** (`doc.text.magnifyingglass`), pushing the Logs page (below), with what the log is for
   under it.
 - **About:** "ngterm for iOS" and the core's version in mono.

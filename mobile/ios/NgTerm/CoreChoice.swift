@@ -50,6 +50,11 @@ internal struct CoreChoice {
     /// With the fake core, the launch argument whose next argument is the directory the diagnostic log and its
     /// shared files go to (`log/` and `export/` in it), for a UI test to read them; else the launch's own.
     internal static let fakeLogArgument = "-ngterm-fake-log"
+    /// With the fake core, the launch argument that leaves the device without a passcode, so no key is exported.
+    internal static let fakeNoPasscodeArgument = "-ngterm-fake-no-passcode"
+    /// With the fake core, the launch argument whose next one names the file an exported key is offered under, so a
+    /// test saves a file of its own run.
+    internal static let fakeExportNameArgument = "-ngterm-fake-export-name"
 
     // the public key's comment, which shows in a machine's authorized_keys: whose key it is ("ngterm@iPhone")
     @MainActor private static var keyComment: String {
