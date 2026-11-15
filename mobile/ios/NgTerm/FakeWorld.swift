@@ -164,7 +164,15 @@
             else {
                 return nil
             }
-            pasteboard.string = "npm run deploy -- --prod"
+            if arguments.contains(CoreChoice.fakeClipboardSensitiveArgument) {
+                let marked: [String: Any] = [
+                    "public.utf8-plain-text": "npm run deploy -- --prod",
+                    SystemClipboard.concealedType: Data(),
+                ]
+                pasteboard.setItems([marked])
+            } else {
+                pasteboard.string = "npm run deploy -- --prod"
+            }
             return SystemClipboard(pasteboard)
         }
 

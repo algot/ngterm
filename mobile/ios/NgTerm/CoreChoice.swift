@@ -18,6 +18,8 @@ internal struct CoreChoice {
     internal static let fakeKeyArgument = "-ngterm-fake-key"
     /// With the fake core, the launch argument that has two programs ask to read the clipboard at once.
     internal static let fakeClipboardReadArgument = "-ngterm-fake-clipboard-read"
+    /// With ``fakeClipboardReadArgument``, the launch argument that marks what the clipboard holds sensitive.
+    internal static let fakeClipboardSensitiveArgument = "-ngterm-fake-clipboard-sensitive"
     /// With the fake core, the launch argument that shows a terminal on a fake pane alone (``TerminalBench``), for the
     /// keyboard's UI tests.
     internal static let fakeTerminalArgument = "-ngterm-fake-terminal"

@@ -8,6 +8,11 @@ import UniformTypeIdentifiers
 /// menu's Paste, ⌘V): ``text()`` and ``read(_:)`` from anywhere else may show that question. ``hasText`` and
 /// ``types()`` read no data, so they never do.
 ///
+/// iOS has no mark of its own for a sensitive copy: what an app asks of the pasteboard when it writes (local only, an
+/// expiry) can't be read back. ``isSensitive`` is the one sign an app can leave for others, the type
+/// `org.nspasteboard.ConcealedType` (nspasteboard.org's convention, which password managers follow on macOS and some
+/// on iOS) beside its data; a copy without it reads as any other, whatever it holds.
+///
 /// A program's write keeps its text (`public.utf8-plain-text`), its HTML (`public.html`) and its images (the type of
 /// each image's MIME type), one pasteboard item with each as a representation; other types aren't kept. iOS adds RTF
 /// beside HTML on its own, so a listing names `text/rtf` too.
@@ -17,11 +22,24 @@ public final class SystemClipboard: TerminalClipboard {
     private static let textType = UTType.utf8PlainText.identifier
     private static let htmlType = UTType.html.identifier
 
+    /// The pasteboard type that marks its item's data confidential (nspasteboard.org).
+    public static let concealedType = "org.nspasteboard.ConcealedType"
+
     private let pasteboard: UIPasteboard
 
     /// Whether the pasteboard holds text.
     public var hasText: Bool {
         pasteboard.hasStrings
+    }
+
+    /// Whether the pasteboard's first item carries ``concealedType``.
+    public var isSensitive: Bool {
+        pasteboard.types.contains(Self.concealedType)
+    }
+
+    /// The pasteboard's change count.
+    public var changeCount: Int {
+        pasteboard.changeCount
     }
 
     /// The general pasteboard, or `pasteboard`.

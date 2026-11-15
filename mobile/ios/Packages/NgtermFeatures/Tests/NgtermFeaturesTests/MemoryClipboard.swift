@@ -25,6 +25,12 @@ internal final class MemoryClipboard: TerminalClipboard {
         held != nil
     }
 
+    /// Whether what it holds is marked sensitive.
+    internal var isSensitive = false
+
+    /// Its change count; a test moves it to stand for a clipboard changing under a read.
+    internal var changeCount = 0
+
     /// Every program's write, in order (none: emptied).
     internal private(set) var partWrites: [[ClipboardPart]] = []
 

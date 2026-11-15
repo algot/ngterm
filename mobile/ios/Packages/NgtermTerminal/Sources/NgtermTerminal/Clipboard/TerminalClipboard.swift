@@ -11,6 +11,12 @@ public protocol TerminalClipboard: AnyObject {
     /// Whether it holds text, asked without reading it (so iOS doesn't ask the user to allow a paste).
     var hasText: Bool { get }
 
+    /// Whether the app that copied what it holds marked it sensitive, asked without reading its data.
+    var isSensitive: Bool { get }
+
+    /// A count that changes whenever what it holds changes.
+    var changeCount: Int { get }
+
     /// The text it holds; `nil` when it holds none.
     func text() -> String?
 

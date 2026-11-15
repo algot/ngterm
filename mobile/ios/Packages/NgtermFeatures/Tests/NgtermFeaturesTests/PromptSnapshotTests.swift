@@ -60,6 +60,22 @@ internal struct PromptSnapshotTests {
         ScreenSnapshot.check(question, named: "clipboard-read", variant: variant)
     }
 
+    @Test("a program asks to read a clip marked sensitive", arguments: ScreenVariant.allCases)
+    internal func clipboardSensitive(variant: ScreenVariant) {
+        let question = ClipboardReadQuestion(
+            canRemember: true,
+            machine: "build-01",
+            session: "docs-site",
+            preview: [ClipboardPart(mime: "text/plain", data: Data("correct horse battery staple".utf8))],
+            listed: false,
+            once: true,
+            onAllow: ScreenSnapshot.ignoreChoice,
+            onAlways: ScreenSnapshot.ignoreChoice,
+            onDeny: ScreenSnapshot.ignore
+        )
+        ScreenSnapshot.check(question, named: "clipboard-sensitive", variant: variant)
+    }
+
     @Test("a program asks for kinds of content the clipboard doesn't hold")
     internal func clipboardNone() {
         let question = ClipboardReadQuestion(

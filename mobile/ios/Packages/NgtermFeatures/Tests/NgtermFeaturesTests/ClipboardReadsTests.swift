@@ -158,6 +158,80 @@ internal struct ClipboardReadsTests {
         #expect(reads.pending.count == 2)
     }
 
+    @Test("a sensitive clip asks on an always-allowed machine, and its Allow is for that one read")
+    internal func sensitiveOnATrustedMachine() async {
+        defer { test.remove() }
+        test.clipboard.held = "copied text"
+        await request(1)
+        reads.allowAlways(reads.pending[0])
+        test.clipboard.isSensitive = true
+        await request(2)
+        #expect(answers() == [answer(1, allowed([Self.copied]))], "nothing is handed over unasked")
+        #expect(reads.pending.map(\.readId) == [2])
+        #expect(reads.asksOnce(reads.pending[0]))
+        test.clipboard.held = "copied later"
+        reads.allow(reads.pending[0])
+        #expect(answers().last == answer(2, allowed([Self.copied])), "the Allow hands over what was taken")
+        await request(3)
+        #expect(reads.pending.map(\.readId) == [3], "the next read asks again")
+        reads.deny(reads.pending[0])
+        test.clipboard.isSensitive = false
+        await request(4)
+        #expect(reads.pending.isEmpty)
+        let later = ClipboardPart(mime: "text/plain", data: Data("copied later".utf8))
+        #expect(answers().last == answer(4, allowed([later])))
+        #expect(reads.alwaysAllowed == ["m1"])
+    }
+
+    @Test("a sensitive clip asks a program holding a grant, and keeps no grant")
+    internal func sensitiveWithAGrant() async {
+        defer { test.remove() }
+        test.clipboard.held = "copied text"
+        test.clipboard.isSensitive = true
+        await request(1, granted: true, canRemember: true)
+        #expect(answers().isEmpty)
+        #expect(reads.pending.map(\.readId) == [1])
+        reads.allow(reads.pending[0], remember: true)
+        #expect(answers() == [answer(1, allowed([Self.copied]))])
+    }
+
+    @Test("Always allow over a sensitive clip trusts no machine, and leaves a waiting read asking")
+    internal func sensitiveAlways() async {
+        defer { test.remove() }
+        test.clipboard.held = "copied text"
+        test.clipboard.isSensitive = true
+        await request(1, canRemember: true)
+        reads.allowAlways(reads.pending[0], remember: true)
+        #expect(answers() == [answer(1, allowed([Self.copied]))])
+        #expect(reads.alwaysAllowed.isEmpty)
+
+        test.clipboard.isSensitive = false
+        let sibling = PaneRef(machineId: "m1", sessionId: "s2", paneId: "P2")
+        await request(2)
+        await request(3, pane: sibling)
+        #expect(!reads.asksOnce(reads.pending[0]))
+        test.clipboard.isSensitive = true
+        reads.allowAlways(reads.pending[0])
+        #expect(answers().last == answer(2, allowed([Self.copied])), "only the read the user saw is answered")
+        #expect(reads.pending.map(\.readId) == [3])
+        #expect(reads.asksOnce(reads.pending[0]))
+    }
+
+    @Test("a sensitive clip the read gets none of is answered unasked")
+    internal func sensitiveButNotDisclosed() async {
+        defer { test.remove() }
+        test.clipboard.held = "copied text"
+        test.clipboard.isSensitive = true
+        await request(1, mimes: ["image/png"], list: true, granted: true)
+        await request(2, listOnly: true)
+        #expect(reads.pending.isEmpty)
+        #expect(
+            answers() == [
+                answer(1, allowed(available: ["text/plain"])), answer(2, allowed(available: ["text/plain"])),
+            ]
+        )
+    }
+
     @Test("an Ask again the store can't write still asks until the app ends")
     internal func revokeUnwritable() async throws {
         defer {

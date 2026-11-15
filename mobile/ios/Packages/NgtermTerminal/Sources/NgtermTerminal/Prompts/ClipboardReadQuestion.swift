@@ -8,6 +8,9 @@ import UIKit
 /// text or what kinds of content and how much, and the first image, on a plate: Ghostty's macOS form), the "don't ask
 /// again" toggle when the read can be remembered, then **Allow** (prominent), and **Always allow on build-01** and
 /// **Deny**, quieter (the tint on the ground).
+///
+/// Asked for the one read (the clip is marked sensitive), it says so, hides what was copied behind its kinds and sizes
+/// until the user asks to see it, and offers **Allow once** and **Deny** alone.
 public struct ClipboardReadQuestion: View {
     private static let width: Double = 520
     // the tallest the copied text shows before it scrolls, and an image (Ghostty's dialog: 200 points)
@@ -19,10 +22,12 @@ public struct ClipboardReadQuestion: View {
     private let session: String
     private let preview: [ClipboardPart]
     private let listed: Bool
+    private let once: Bool
     private let onAllow: @MainActor (Bool) -> Void
     private let onAlways: @MainActor (Bool) -> Void
     private let onDeny: @MainActor () -> Void
     @State private var remember = false
+    @State private var revealed = false
 
     /// The page.
     public var body: some View {
@@ -40,7 +45,15 @@ public struct ClipboardReadQuestion: View {
                     .foregroundStyle(Palette.secondaryText.color)
                     .fixedSize(horizontal: false, vertical: true)
                 plate
-                if canRemember {
+                if conceals {
+                    quiet(
+                        revealed ? "Hide what you copied" : "Show what you copied",
+                        identifier: "clipboard-reveal"
+                    ) {
+                        revealed.toggle()
+                    }
+                }
+                if canRemember, !once {
                     Toggle("Don't ask again for this program in this terminal", isOn: $remember)
                         .accessibilityIdentifier("clipboard-remember")
                 }
@@ -55,12 +68,27 @@ public struct ClipboardReadQuestion: View {
         .background(Color(uiColor: .systemGroupedBackground))
     }
 
+    // a clip marked sensitive stays off the screen until the user asks for it
+    private var conceals: Bool {
+        once && !preview.isEmpty
+    }
+
     private var explanation: String {
-        String(
-            localized: """
-                A program in \(session) on \(machine) asks for what you copied. It sees this only if you allow it.
-                """
-        )
+        if once {
+            String(
+                localized: """
+                    What you copied is marked sensitive, like a password or a key. A program in \(session) on \
+                    \(machine) asks for it and sees it only if you allow it. A clip like this is asked about every \
+                    time.
+                    """
+            )
+        } else {
+            String(
+                localized: """
+                    A program in \(session) on \(machine) asks for what you copied. It sees this only if you allow it.
+                    """
+            )
+        }
     }
 
     // what the read would hand over, on the grouped ground's raised surface
@@ -79,6 +107,20 @@ public struct ClipboardReadQuestion: View {
     }
 
     @ViewBuilder private var plateContent: some View {
+        if conceals, !revealed {
+            Text("Hidden")
+                .foregroundStyle(Palette.secondaryText.color)
+            ForEach(Array(preview.enumerated()), id: \.offset) { _, part in
+                Text(verbatim: "\(part.mime), \(ClipboardSummary.byteCount(part.data.count))")
+                    .font(.footnote)
+                    .foregroundStyle(Palette.secondaryText.color)
+            }
+        } else {
+            shownContent
+        }
+    }
+
+    @ViewBuilder private var shownContent: some View {
         let summary = ClipboardSummary(preview)
         if let text = summary.text {
             ScrollView {
@@ -122,13 +164,15 @@ public struct ClipboardReadQuestion: View {
             Button {
                 onAllow(remember)
             } label: {
-                Text("Allow")
+                Text(once ? "Allow once" : "Allow")
                     .frame(maxWidth: .infinity)
             }
             .prominentAction()
             .accessibilityIdentifier("clipboard-allow")
-            quiet("Always allow on \(machine)", identifier: "clipboard-always") {
-                onAlways(remember)
+            if !once {
+                quiet("Always allow on \(machine)", identifier: "clipboard-always") {
+                    onAlways(remember)
+                }
             }
             quiet("Deny", identifier: "clipboard-deny", action: onDeny)
         }
@@ -136,7 +180,8 @@ public struct ClipboardReadQuestion: View {
 
     /// The question of a read from `session` on `machine` (by their names) that would hand over `preview` (`listed`:
     /// the read also learns which types the clipboard holds), offering the "don't ask again" toggle when it
-    /// `canRemember`; each answer runs its closure, Allow and Always with the toggle's state.
+    /// `canRemember`; each answer runs its closure, Allow and Always with the toggle's state. `once`: the clip is
+    /// marked sensitive, so the question is for this one read.
     @preconcurrency
     public init(
         canRemember: Bool,
@@ -144,6 +189,7 @@ public struct ClipboardReadQuestion: View {
         session: String,
         preview: [ClipboardPart],
         listed: Bool,
+        once: Bool = false,
         onAllow: @escaping @MainActor (Bool) -> Void,
         onAlways: @escaping @MainActor (Bool) -> Void,
         onDeny: @escaping @MainActor () -> Void
@@ -153,6 +199,7 @@ public struct ClipboardReadQuestion: View {
         self.session = session
         self.preview = preview
         self.listed = listed
+        self.once = once
         self.onAllow = onAllow
         self.onAlways = onAlways
         self.onDeny = onDeny

@@ -74,6 +74,37 @@ internal struct SystemClipboardTests {
         }
     }
 
+    @Test("a copy its app marked concealed reads as sensitive with its data; another doesn't")
+    internal func concealed() {
+        withPasteboard { clipboard, pasteboard in
+            pasteboard.setItems([["public.utf8-plain-text": "hunter2", SystemClipboard.concealedType: Data()]])
+            #expect(clipboard.isSensitive)
+            let taken = clipboard.take(["text/plain"], list: true)
+            #expect(taken.sensitive)
+            #expect(taken.contents == [ClipboardPart(mime: "text/plain", data: Data("hunter2".utf8))])
+            #expect(taken.types == ["text/plain"])
+
+            pasteboard.string = "ls -la"
+            #expect(!clipboard.isSensitive)
+            let plain = clipboard.take(["text/plain"], list: false)
+            let listing = ClipboardPart(mime: "text/plain", data: Data("ls -la".utf8))
+            #expect(plain == ClipboardTake(contents: [listing], types: [], sensitive: false))
+            #expect(!clipboard.take([], list: false).sensitive)
+        }
+    }
+
+    @Test("a clipboard that changes under a read is read again, and one that keeps changing reads as sensitive")
+    internal func changing() {
+        let once = ChangingClipboard(changes: 1)
+        #expect(once.take(["text/plain"], list: false).sensitive == false)
+        #expect(once.reads == 2)
+        let always = ChangingClipboard(changes: .max)
+        let taken = always.take(["text/plain"], list: false)
+        #expect(taken.sensitive)
+        #expect(taken.contents == [ClipboardPart(mime: "text/plain", data: Data("clip".utf8))])
+        #expect(always.reads == 3)
+    }
+
     @Test("another app's HTML is listed and read under its MIME type")
     internal func foreignHTML() {
         withPasteboard { clipboard, pasteboard in

@@ -309,6 +309,15 @@ recognizers; what is new to iOS is the system's: the edit menu, the text beam, t
   read asking for no type, never asks; neither does a read whose program holds a grant. Every read gets an answer: a
   read whose session is detached, whose pane's program ends, whose machine drops, or that is waiting when the app
   suspends is denied. A machine allowed always is answered unasked until Settings asks again.
+- **A clip marked sensitive** is never handed over unasked: the sheet comes up also on a machine allowed always and
+  for a program holding a grant, and its answer is for that one read. It says why in place of the usual line ("What
+  you copied is marked sensitive, like a password or a key. A program in docs-site on build-01 asks for it and sees it
+  only if you allow it. A clip like this is asked about every time."), keeps what was copied off the screen (the plate
+  says "Hidden" over each part's type and size, with **Show what you copied** under it, which turns to **Hide what you
+  copied**), and offers **Allow once** (prominent) and **Deny** alone: no Always, no toggle. The rule is the core's
+  (`clipboard_read_consent`), the same on Android. iOS has no mark of its own to read: a copy's local-only and expiry
+  options can't be read back, so the one sign is the pasteboard type `org.nspasteboard.ConcealedType`, which an app
+  has to add itself. A password copied by an app that doesn't add it reads as an ordinary clip.
 - **A program writing the clipboard** isn't asked about (Ghostty's `clipboard-write = allow`): its text, HTML and
   images land on the general pasteboard as one item, and the program learns the outcome once the pasteboard took it. A
   write of none of those types is refused as unsupported, only a write with nothing in it clears, and a write to the

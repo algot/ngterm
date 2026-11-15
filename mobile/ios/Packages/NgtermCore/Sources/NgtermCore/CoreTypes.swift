@@ -43,6 +43,10 @@ public typealias ChatToolStatus = NgtermCoreBindings.ChatToolStatus
 public typealias ChatUsage = NgtermCoreBindings.ChatUsage
 /// One representation of a clipboard value: its MIME type and bytes.
 public typealias ClipboardPart = NgtermCoreBindings.ClipboardPart
+/// How a program's clipboard read is answered: unasked, asked, or asked for the one read.
+public typealias ClipboardReadConsent = NgtermCoreBindings.ClipboardReadConsent
+/// What the app knows of a clipboard read when it decides how to answer it.
+public typealias ClipboardReadFacts = NgtermCoreBindings.ClipboardReadFacts
 /// The app's answer to a pane's clipboard read.
 public typealias ClipboardReply = NgtermCoreBindings.ClipboardReply
 /// How the app's write of a program's clipboard value ended.

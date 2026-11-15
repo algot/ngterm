@@ -7,11 +7,15 @@ import Observation
 ///
 /// Each waits in ``pending`` for the user's Allow, Always or Deny, unless its machine is trusted (``alwaysAllowed``) or
 /// the program holds a grant in its terminal, which answer it at once; a read that discloses no data (a listing of the
-/// types, or one asking for no type) is answered at once too. The prompt shows what the read would hand over
-/// (``preview(_:)``), and its Allow hands over exactly that (Ghostty's macOS form). Every read gets an answer: a read
-/// the core dismisses (its pane hidden, its link lost, its program ended: the core denied it) leaves ``pending``, and
-/// the app denies the reads of a session it detaches, of a machine whose connection drops, of a pane whose program
-/// ends, and all of them before it suspends the core (``denyAll()``).
+/// types, or one asking for no type) is answered at once too. A read that would hand over a clip marked sensitive
+/// always asks, showing the snapshot that was taken, and its answer is for that one read (``asksOnce(_:)``): it keeps
+/// no grant and trusts no machine. The rule is the core's (`clipboardReadConsent(facts:)`).
+///
+/// The prompt shows what the read would hand over (``preview(_:)``), and its Allow hands over exactly that (Ghostty's
+/// macOS form). Every read gets an answer: a read the core dismisses (its pane hidden, its link lost, its program
+/// ended: the core denied it) leaves ``pending``, and the app denies the reads of a session it detaches, of a machine
+/// whose connection drops, of a pane whose program ends, and all of them before it suspends the core
+/// (``denyAll()``).
 @preconcurrency
 @MainActor
 @Observable
@@ -62,17 +66,32 @@ public final class ClipboardReads {
         return snapshot
     }
 
+    /// Whether an Allow of `read` is for that one read: what it would hand over is marked sensitive, so it keeps no
+    /// grant, trusts no machine, and the prompt offers neither.
+    public func asksOnce(_ read: ClipboardRead) -> Bool {
+        consent(for: read, preview(read)) == .askOnce
+    }
+
     /// Hands the program of `read` what its prompt showed (what the clipboard holds now, if it showed nothing), this
-    /// once; `remember` keeps a grant for the program in its terminal, where the read can keep one.
+    /// once; `remember` keeps a grant for the program in its terminal, where the read can keep one and the Allow is
+    /// not for the one read (``asksOnce(_:)``).
     public func allow(_ read: ClipboardRead, remember: Bool = false) {
-        answer(read, allowed(taken(read), remember: remember && read.canRemember))
+        let taken = taken(read)
+        let keeps = remember && read.canRemember && consent(for: read, taken) != .askOnce
+        answer(read, allowed(taken, remember: keeps))
     }
 
     /// Allows `read` as ``allow(_:remember:)`` does, and lets its machine's programs read the clipboard from now on
     /// unasked.
     ///
-    /// The machine's other reads already waiting are answered too.
+    /// The machine's other reads already waiting are answered too, as unasked reads are. An Allow for the one read
+    /// (``asksOnce(_:)``) stays that.
     public func allowAlways(_ read: ClipboardRead, remember: Bool = false) {
+        let taken = taken(read)
+        guard consent(for: read, taken) != .askOnce else {
+            answer(read, allowed(taken, remember: false))
+            return
+        }
         let machine = read.pane.machineId
         trustedNow.insert(machine)
         revokedNow.remove(machine)
@@ -80,9 +99,9 @@ public final class ClipboardReads {
         try? trust.allow(machine)
         let same = pending.filter { $0.pane.machineId == machine }
         pending.removeAll { $0.pane.machineId == machine }
-        reply(read, allowed(taken(read), remember: remember && read.canRemember))
+        reply(read, allowed(taken, remember: remember && read.canRemember))
         for each in same where each != read {
-            reply(each, allowed(taken(each), remember: false))
+            answerUnasked(each, taken: self.taken(each))
         }
     }
 
@@ -125,11 +144,12 @@ public final class ClipboardReads {
                 listOnly: listOnly,
                 mimes: mimes,
                 list: list,
-                canRemember: canRemember
+                canRemember: canRemember,
+                granted: granted
             )
-            let discloses = !listOnly && !mimes.isEmpty
-            if !discloses || granted || alwaysAllowed.contains(pane.machineId) {
-                reply(read, allowed(snapshot(of: read), remember: false))
+            let asksData = !listOnly && !mimes.isEmpty
+            if consent(for: read, discloses: asksData, sensitive: false) == .unasked {
+                answerUnasked(read, taken: snapshot(of: read))
             } else {
                 pending.append(read)
             }
@@ -165,11 +185,37 @@ public final class ClipboardReads {
         }
     }
 
+    // answers `read` with what was `taken`, or asks about it after all, showing that: a clip marked sensitive
+    private func answerUnasked(_ read: ClipboardRead, taken: ClipboardSnapshot) {
+        if consent(for: read, taken) == .unasked {
+            reply(read, allowed(taken, remember: false))
+        } else {
+            shown[read] = taken
+            pending.append(read)
+        }
+    }
+
+    private func consent(for read: ClipboardRead, _ taken: ClipboardSnapshot) -> ClipboardReadConsent {
+        consent(for: read, discloses: !taken.contents.isEmpty, sensitive: taken.sensitive)
+    }
+
+    private func consent(for read: ClipboardRead, discloses: Bool, sensitive: Bool) -> ClipboardReadConsent {
+        clipboardReadConsent(
+            facts: ClipboardReadFacts(
+                discloses: discloses,
+                granted: read.granted,
+                trusted: alwaysAllowed.contains(read.pane.machineId),
+                sensitive: sensitive
+            )
+        )
+    }
+
     private func snapshot(of read: ClipboardRead) -> ClipboardSnapshot {
-        let asks = !read.listOnly && !read.mimes.isEmpty
+        let taken = clipboard.take(read.listOnly ? [] : read.mimes, list: read.list)
         return ClipboardSnapshot(
-            contents: asks ? clipboard.read(read.mimes) : [],
-            available: read.list ? Array(clipboard.types().prefix(Self.maxListed)) : []
+            contents: taken.contents,
+            available: Array(taken.types.prefix(Self.maxListed)),
+            sensitive: taken.sensitive
         )
     }
 

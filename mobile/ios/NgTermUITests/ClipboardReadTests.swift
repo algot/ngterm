@@ -27,6 +27,26 @@ internal final class ClipboardReadTests: XCTestCase {
     }
 
     @MainActor
+    internal func testASensitiveClipIsHiddenAndAskedForTheOneRead() throws {
+        let arguments = ["-ngterm-fake-clipboard-read", "-ngterm-fake-clipboard-sensitive"]
+        let app = FakeApp.launch(withKey: true, arguments: arguments, for: self)
+        FakeApp.expect(app.staticTexts["Let docs-site read your clipboard?"], "clipboard question")
+        XCTAssertTrue(FakeApp.element(containing: "What you copied is marked sensitive", in: app).exists)
+        XCTAssertEqual(app.buttons["clipboard-allow"].label, "Allow once")
+        XCTAssertFalse(app.buttons["clipboard-always"].exists, "no standing permission over a sensitive clip")
+        XCTAssertFalse(app.switches["clipboard-remember"].exists)
+        XCTAssertTrue(app.staticTexts["Hidden"].exists)
+        XCTAssertFalse(app.staticTexts["npm run deploy -- --prod"].exists)
+        try FakeApp.auditSheet(app)
+        app.buttons["clipboard-reveal"].tap()
+        FakeApp.expect(app.staticTexts["npm run deploy -- --prod"], "what the read would hand over, once asked for")
+        app.buttons["clipboard-allow"].tap()
+        XCTAssertTrue(app.staticTexts["Let docs-site read your clipboard?"].waitForNonExistence(timeout: 10))
+        FakeApp.expect(app.staticTexts["Let notes read your clipboard?"], "the next read's question")
+        XCTAssertEqual(app.buttons["clipboard-allow"].label, "Allow once", "the next read asks again")
+    }
+
+    @MainActor
     internal func testSwipingTheSheetAwayDenies() {
         let app = launch()
         // the sheet pulled down from its heading to the screen's foot

@@ -3,8 +3,8 @@ import NgtermCore
 /// A program's read of the clipboard waiting for the user's answer (mobile/android's `ClipboardRead`).
 ///
 /// It asks for `mimes` (text as `text/plain`) and, with `list`, the types the clipboard holds; `canRemember` when an
-/// Allow may keep a grant for the program in its terminal (the Kitty protocol's password). A `listOnly` read asks only
-/// which types it holds.
+/// Allow may keep a grant for the program in its terminal (the Kitty protocol's password), `granted` when the program
+/// holds one. A `listOnly` read asks only which types it holds.
 public struct ClipboardRead: Hashable, Identifiable, Sendable {
     /// The pane whose program reads.
     public let pane: PaneRef
@@ -18,6 +18,8 @@ public struct ClipboardRead: Hashable, Identifiable, Sendable {
     public let list: Bool
     /// Whether an Allow may keep a grant for the program in its terminal.
     public let canRemember: Bool
+    /// Whether the program holds a grant in its terminal.
+    public let granted: Bool
 
     /// The read, as its pane and id name it.
     public var id: Self {
@@ -31,7 +33,8 @@ public struct ClipboardRead: Hashable, Identifiable, Sendable {
         listOnly: Bool,
         mimes: [String] = ["text/plain"],
         list: Bool = false,
-        canRemember: Bool = false
+        canRemember: Bool = false,
+        granted: Bool = false
     ) {
         self.pane = pane
         self.readId = readId
@@ -39,5 +42,6 @@ public struct ClipboardRead: Hashable, Identifiable, Sendable {
         self.mimes = mimes
         self.list = list
         self.canRemember = canRemember
+        self.granted = granted
     }
 }
