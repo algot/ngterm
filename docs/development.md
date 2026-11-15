@@ -1083,6 +1083,12 @@ CARGO_TARGET_AARCH64_APPLE_IOS_SIM_RUNNER="$PWD/scripts/ios-sim-runner.sh" \
   have a process ID", "Timed out while evaluating UI query"). A test that passed on its retry is named after the run
   with what failed it, red runs included: as a warning when its first attempt failed on those alone, and otherwise
   as a flaky test that fails the run. CI keeps the result bundles and attachments of any run that retried a test.
+- Each simulator boots before `xcodebuild` builds, so its first minutes are over when the first test installs the
+  app. `scripts/ios-ui-watchdog.py` watches the UI plan and ends a run that no longer moves: XCTest's wait for the
+  app to be idle timed out five times (a minute each: "App animations complete notification not received"), or no
+  test moved for ten minutes. The plan then fails with that verdict, and `mobile/ios/build/ui-watchdog/` holds what
+  the watchdog found (the simulators, samples of `xcodebuild`, the test runner and the app, the animations on the
+  app's layers), which CI keeps with the failed tests' attachments.
 - CI runs the plans as parallel jobs over one build of the core (`.github/workflows/ios.yml`): `--prebuilt-core`
   takes the XCFramework and bindings a `--no-xcode` run left in `Generated/`, `--device phone|tablet` keeps a plan
   to one simulator, and `--ui-shard K/N` to the K-th of N shares of the UI test classes (the last share skips what

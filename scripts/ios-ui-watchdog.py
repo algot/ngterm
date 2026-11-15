@@ -218,7 +218,7 @@ def self_test():
     with tempfile.TemporaryDirectory() as temp:
         bundle = os.path.join(temp, "UI.xcresult")
         out = os.path.join(temp, "ui-watchdog")
-        session = os.path.join(bundle, "Staging", "2_Test", "Diagnostics", "NgTermUITests-A-Iteration-1", "NgTermUITests-B")
+        session = os.path.join(bundle, "Staging", "2_Test", "Diagnostics", "NgTermUITests-A", "NgTermUITests-B")
         os.makedirs(session)
         runner = os.path.join(session, "StandardOutputAndStandardError.txt")
         app_log = os.path.join(session, "StandardOutputAndStandardError-com.nickalie.ngterm.ios.txt")

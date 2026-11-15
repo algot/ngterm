@@ -28,8 +28,9 @@
 #      none of them. Each runs even when an earlier one failed, and the action fails when any did;
 #    - build: the app, its tests and its packages for the simulator (Debug);
 #    - test: the Unit and then the UI test plan on the pinned phone and tablet simulators (IOS_SIM_PHONE_NAME and
-#      IOS_SIM_TABLET_NAME, made by setup-ios.sh), one at a time, each with its keyboard's slide-to-type introduction
-#      marked as shown (it would cover the keys the UI tests tap); result bundles in mobile/ios/build/, and a failed
+#      IOS_SIM_TABLET_NAME, made by setup-ios.sh), one at a time, each booted before the build and with its
+#      keyboard's slide-to-type introduction marked as shown (it would cover the keys the UI tests tap); result
+#      bundles in mobile/ios/build/, and a failed
 #      snapshot's image in mobile/ios/build/snapshot-failures/ (its diff is in the result bundle). The Unit plan
 #      measures line coverage of the app's own code (Unit.xctestplan names the targets): scripts/ios-coverage.py
 #      writes its summary beside the result bundle (Unit.coverage.txt and Unit.coverage.json, from the run's
@@ -38,7 +39,8 @@
 #      classes' times;
 #    - coverage: the Unit plan alone on both simulators, its coverage summary and the floor check, as test measures
 #      them;
-#    - ui: the UI plan alone, as test runs it;
+#    - ui: the UI plan alone, as test runs it. Either way scripts/ios-ui-watchdog.py watches the UI plan, and a run
+#      that no longer moves fails with its verdict (run_ui_plan);
 #    - archive: a Release archive for devices, mobile/ios/build/NgTerm.xcarchive, unsigned unless the release
 #      environment is set (APP_STORE_CONNECT_KEY_PATH, APP_STORE_CONNECT_KEY_ID, APP_STORE_CONNECT_ISSUER_ID and
 #      IOS_DEVELOPMENT_TEAM: automatic signing through that App Store Connect API key). Its marketing version is the
