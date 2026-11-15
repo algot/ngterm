@@ -344,19 +344,24 @@ pub fn remote_error(stdout: &str) -> Option<String> {
 /// # Errors
 ///
 /// The output is not a response, the far side refused, or an older far side answered without a session list. An
-/// unreadable agterm answer beside a readable ngterm one is left out.
+/// unreadable agterm answer beside a readable ngterm one is left out. An app left out, there or by the listing
+/// itself ([`super::peer::skipped_line`]), is named as skipped.
 pub fn decode(stdout: &str) -> Result<ControlRemoteTree, MergeError> {
     use super::peer::RemotePeer;
 
     let answers = super::peer::split_answers(stdout);
     let Some(own) = answers.ngterm else {
-        return decode_app(answers.agterm.unwrap_or_default(), Some(RemotePeer::Agterm));
+        let mut tree = decode_app(answers.agterm.unwrap_or_default(), Some(RemotePeer::Agterm))?;
+        tree.skipped = answers.skipped.filter(|skipped| *skipped == RemotePeer::Ngterm);
+        return Ok(tree);
     };
     let mut tree = decode_app(own, None)?;
     tree.beside = answers
         .agterm
         .and_then(|answer| decode_app(answer, Some(RemotePeer::Agterm)).ok())
         .map(Box::new);
+    let without_agterm = answers.agterm.is_some() || answers.skipped == Some(RemotePeer::Agterm);
+    tree.skipped = (tree.beside.is_none() && without_agterm).then_some(RemotePeer::Agterm);
     Ok(tree)
 }
 
@@ -365,6 +370,7 @@ fn decode_app(stdout: &str, peer: Option<super::peer::RemotePeer>) -> Result<Con
     let mut tree = decode_answer(stdout)?;
     tree.endpoint.peer = peer;
     tree.beside = None;
+    tree.skipped = None;
     Ok(tree)
 }
 
@@ -457,6 +463,7 @@ pub fn candidates(
         sessions: terminals.into_iter().chain(pages).collect(),
         presentation: Some(frames::VERSION),
         beside: None,
+        skipped: None,
     })
 }
 
@@ -990,6 +997,7 @@ mod tests {
             }],
             presentation: Some(1),
             beside: None,
+            skipped: None,
         };
         let stdout = serde_json::to_string(&json!({"ok": true, "result": {"remote": remote}})).unwrap();
         let decoded = decode(&stdout).unwrap();
@@ -1042,13 +1050,39 @@ mod tests {
 
         let alone = decode(&format!("{AGTERM_ANSWER}\n{theirs}")).unwrap();
         assert_eq!((alone.endpoint.peer, &alone.beside), (Some(RemotePeer::Agterm), &None));
-        // agterm's unreadable answer beside ngterm's leaves ngterm's listing whole
+        assert_eq!((tree.skipped, alone.skipped), (None, None));
+        // agterm's unreadable answer beside ngterm's leaves ngterm's listing whole, agterm skipped
         let half = decode(&format!("{own}\n{AGTERM_ANSWER}\nnot json")).unwrap();
         assert_eq!((ids(&half), &half.beside), (vec!["N1".to_owned()], &None));
+        assert_eq!(half.skipped, Some(RemotePeer::Agterm));
         assert_eq!(
             decode(&format!("not json\n{AGTERM_ANSWER}\n{theirs}")),
             Err(MergeError::MalformedProjection)
         );
+    }
+
+    /// A listing that went on without an installed app names it, whichever side of the answer its line is on; what an
+    /// origin says of it itself is never taken.
+    #[test]
+    fn a_listing_that_went_on_without_an_app_names_it_as_skipped() {
+        use crate::remote::peer::{AGTERM_ANSWER, RemotePeer, skipped_line};
+
+        let (own, theirs) = (answer_of("/ngterm-session", "N1"), answer_of("/zmx", "A1"));
+        let (own_skipped, no_agterm) = (skipped_line(RemotePeer::Ngterm), skipped_line(RemotePeer::Agterm));
+        let ids = |tree: &ControlRemoteTree| tree.sessions.iter().map(|s| s.id.clone()).collect::<Vec<_>>();
+        for stdout in [format!("{own}\n{no_agterm}\n"), format!("{no_agterm}\n{own}\n")] {
+            let tree = decode(&stdout).unwrap();
+            assert_eq!((ids(&tree), &tree.beside), (vec!["N1".to_owned()], &None), "{stdout}");
+            assert_eq!(tree.skipped, Some(RemotePeer::Agterm), "{stdout}");
+        }
+        let tree = decode(&format!("{own_skipped}\n{AGTERM_ANSWER}\n{theirs}\n")).unwrap();
+        assert_eq!(ids(&tree), ["A1"]);
+        assert_eq!(
+            (tree.endpoint.peer, tree.skipped),
+            (Some(RemotePeer::Agterm), Some(RemotePeer::Ngterm))
+        );
+        let forged = own.replace("\"sessions\"", "\"skipped\":\"agterm\",\"sessions\"");
+        assert_eq!(decode(&forged).unwrap().skipped, None);
     }
 
     #[test]
@@ -1125,20 +1159,22 @@ mod tests {
     }
 
     /// One ssh call asks each app installed: a host that runs both answers with ngterm's listing, then agterm's under
-    /// its marker line. An app that fails beside one that answers is left out; with no answer the failure is ngterm's
-    /// when it is installed, else agterm's, and the shell's command-not-found when neither is.
+    /// its marker line. An app that fails beside one that answers is left out and named as skipped; with no answer the
+    /// failure is ngterm's when it is installed, else agterm's, and the shell's command-not-found when neither is.
     #[cfg(unix)]
     #[test]
     fn the_remote_line_lists_each_app_that_answers_and_marks_agterms_answer() {
         let ngterm = "ngtermctl live tree --json\n";
         let agterm = "ngterm-peer: agterm\nagtermctl zmx tree --json\n";
         let both = format!("{ngterm}{agterm}");
+        let no_agterm = format!("{ngterm}ngterm-peer: agterm-skipped\n");
+        let theirs_alone = format!("ngterm-peer: ngterm-skipped\n{agterm}");
         let cases: [(Clis<'_>, Option<i32>, &str); 8] = [
             (&[("ngtermctl", 0), ("agtermctl", 0)], Some(0), &both),
             (&[("ngtermctl", 0)], Some(0), ngterm),
             (&[("agtermctl", 0)], Some(0), agterm),
-            (&[("ngtermctl", 0), ("agtermctl", 3)], Some(0), ngterm),
-            (&[("ngtermctl", 2), ("agtermctl", 0)], Some(0), agterm),
+            (&[("ngtermctl", 0), ("agtermctl", 3)], Some(0), &no_agterm),
+            (&[("ngtermctl", 2), ("agtermctl", 0)], Some(0), &theirs_alone),
             (&[("ngtermctl", 2), ("agtermctl", 3)], Some(2), ngterm),
             (&[("ngtermctl", 2)], Some(2), ngterm),
             (&[("agtermctl", 3)], Some(3), agterm),
@@ -1160,18 +1196,24 @@ mod tests {
         assert!(none.stdout.is_empty());
     }
 
-    /// An app that stalls is ended at its bound and left out beside one that answers, whichever of the two it is, and
-    /// its output and the shell's word on its end reach nobody. With no answer the stalled app is asked again
-    /// unbounded, so the caller's deadline reports the stall.
+    /// An app that stalls is ended at its bound and left out beside one that answers, whichever of the two it is: the
+    /// answer names it as skipped, and its output and the shell's word on its end reach nobody. With no answer the
+    /// stalled app is asked again unbounded, so the caller's deadline reports the stall, and an answer it then gives
+    /// still names the app that failed beside it.
     #[cfg(unix)]
     #[test]
     fn an_app_that_stalls_does_not_hold_back_the_other_apps_answer() {
         let line = super::super::ssh::both_apps_tail(1);
         let ngterm = "ngtermctl live tree --json\n";
-        let agterm = "ngterm-peer: agterm\nagtermctl zmx tree --json\n";
         let cases: [(Clis<'_>, &str); 2] = [
-            (&[("ngtermctl", 0), ("agtermctl", STALLS)], ngterm),
-            (&[("ngtermctl", STALLS), ("agtermctl", 0)], agterm),
+            (
+                &[("ngtermctl", 0), ("agtermctl", STALLS)],
+                "ngtermctl live tree --json\nngterm-peer: agterm-skipped\n",
+            ),
+            (
+                &[("ngtermctl", STALLS), ("agtermctl", 0)],
+                "ngterm-peer: ngterm-skipped\nngterm-peer: agterm\nagtermctl zmx tree --json\n",
+            ),
         ];
         for (clis, stdout) in cases {
             let home = remote_home(clis);
@@ -1210,6 +1252,15 @@ mod tests {
                 "{clis:?}"
             );
         }
+        // an ngterm that stalls once and answers when asked again, beside an agterm that fails
+        let home = remote_home(&[("agtermctl", 3)]);
+        let once =
+            "#!/bin/sh\n[ -e \"$HOME/asked\" ] || { : >\"$HOME/asked\"; exec sleep 60; }\necho ngtermctl \"$@\"\n";
+        ngterm_host::fakes::write_executable(&home.path().join(".local/bin/ngtermctl"), once).unwrap();
+        assert_eq!(
+            answer(&remote_shell(&home, &line).output().unwrap()),
+            (Some(0), format!("ngterm-peer: agterm-skipped\n{ngterm}"))
+        );
         // ngterm's own failure beside a stalled agterm stays the listing's failure
         let home = remote_home(&[("ngtermctl", 2), ("agtermctl", STALLS)]);
         assert_eq!(

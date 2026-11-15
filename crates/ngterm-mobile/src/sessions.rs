@@ -125,6 +125,34 @@ pub fn beside_kept(mut fresh: ControlRemoteTree, kept: Option<&ControlRemoteTree
     }
 }
 
+/// `fresh`, a listing that went on without an app the machine has ([`ControlRemoteTree::skipped`]), as the machine's
+/// whole listing: with that app's sessions as `kept`, the machine's last listing, has them, since an app that did not
+/// answer has not ended its sessions. A listing that skipped nothing, or an app `kept` never listed, is as it came.
+#[must_use]
+pub fn skipped_kept(mut fresh: ControlRemoteTree, kept: Option<&ControlRemoteTree>) -> ControlRemoteTree {
+    let last = fresh
+        .skipped
+        .and_then(|skipped| kept?.apps().find(|app| app.endpoint.peer() == skipped));
+    let Some(last) = last else {
+        return fresh;
+    };
+    fresh.skipped = None;
+    let last = ControlRemoteTree {
+        beside: None,
+        skipped: None,
+        ..last.clone()
+    };
+    if last.endpoint.peer() == RemotePeer::Ngterm {
+        fresh.beside = None;
+        return ControlRemoteTree {
+            beside: Some(Box::new(fresh)),
+            ..last
+        };
+    }
+    fresh.beside = Some(Box::new(last));
+    fresh
+}
+
 /// `message` with desktop's `ngtermctl live attach` advice replaced by [`ATTACH_FROM_LIST`]; any other message as it
 /// is.
 #[must_use]
@@ -264,7 +292,10 @@ pub async fn read_tree<C: Connection>(
 ) -> Result<ControlRemoteTree, String> {
     let result = run_tree(connection, deadline, None).await?;
     let tree = read_remote_tree(&result, host)?;
-    connection.set_origin_peer(tree.endpoint.peer());
+    // an ngterm that did not answer this once still has the machine, once a listing has told it
+    if tree.skipped != Some(RemotePeer::Ngterm) || !connection.learned().peer_known {
+        connection.set_origin_peer(tree.endpoint.peer());
+    }
     Ok(tree)
 }
 

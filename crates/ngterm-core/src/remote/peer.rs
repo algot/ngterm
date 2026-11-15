@@ -15,7 +15,9 @@
 //!   and learned for the host ([`learn`]); a listing pinned to one app learns nothing.
 //! - a host that runs both answers with both: ngterm's sessions, and agterm's beside them
 //!   ([`ngterm_proto::ControlRemoteTree::beside`]), each with the endpoint its own sessions attach through. Such a
-//!   host is learned as ngterm, which a New Session there is asked of.
+//!   host is learned as ngterm, which a New Session there is asked of. An app that fails or stalls beside the one
+//!   that answers is named as skipped ([`skipped_line`], [`ngterm_proto::ControlRemoteTree::skipped`]): its sessions
+//!   are missing from that listing, not ended, and it does not take the host from an ngterm learned before.
 //!
 //! A row attached from a host keeps the peer its endpoint was stamped with: every later command for that row, and its
 //! relaunch, go to that app, whichever one a later listing of the host finds. A new session asked of a host from the
@@ -118,6 +120,16 @@ pub fn learn(host: &str, peer: RemotePeer) {
         .insert(host.to_owned(), peer);
 }
 
+/// Records which app answered a listing of `host` that went on without ngterm: kept only for a host nothing is
+/// learned about yet, as an ngterm that did not answer this once still has the host.
+pub fn learn_beside_skipped(host: &str, peer: RemotePeer) {
+    LEARNED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .entry(host.to_owned())
+        .or_insert(peer);
+}
+
 /// What each app answered a listing with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Answers<'a> {
@@ -125,6 +137,8 @@ pub struct Answers<'a> {
     pub ngterm: Option<&'a str>,
     /// agterm's: the output after that line.
     pub agterm: Option<&'a str>,
+    /// The installed app the listing went on without ([`skipped_line`]).
+    pub skipped: Option<RemotePeer>,
 }
 
 impl<'a> Answers<'a> {
@@ -135,24 +149,54 @@ impl<'a> Answers<'a> {
     }
 }
 
+/// The line a listing of a host that runs both apps prints for the one it went on without, an app that failed or
+/// stalled beside one that answered: ahead of the other app's answer or after it.
+#[must_use]
+pub const fn skipped_line(peer: RemotePeer) -> &'static str {
+    match peer {
+        RemotePeer::Ngterm => "ngterm-peer: ngterm-skipped",
+        RemotePeer::Agterm => "ngterm-peer: agterm-skipped",
+    }
+}
+
 /// A listing's output split at its [`AGTERM_ANSWER`] line: a host that runs both apps answers with ngterm's output,
-/// the line, then agterm's; an agterm host with the line first. Only a whole line is the marker.
+/// the line, then agterm's; an agterm host with the line first. A [`skipped_line`] names the app left out and is no
+/// part of an answer. Only a whole line is either.
 #[must_use]
 pub fn split_answers(stdout: &str) -> Answers<'_> {
-    let mut start = 0;
+    let (mut start, mut own, mut skipped) = (0, 0..stdout.len(), None);
+    let mut ended = false;
     for line in stdout.split_inclusive('\n') {
-        if line.trim_end_matches(['\r', '\n']) == AGTERM_ANSWER {
-            let own = &stdout[..start];
+        let word = line.trim_end_matches(['\r', '\n']);
+        let next = start + line.len();
+        if word == AGTERM_ANSWER {
+            if !ended {
+                own.end = start;
+            }
+            let own = &stdout[own];
             return Answers {
                 ngterm: (!own.trim().is_empty()).then_some(own),
-                agterm: Some(&stdout[start + line.len()..]),
+                agterm: Some(&stdout[next..]),
+                skipped,
             };
         }
-        start += line.len();
+        if let Some(peer) = [RemotePeer::Ngterm, RemotePeer::Agterm]
+            .into_iter()
+            .find(|peer| word == skipped_line(*peer))
+        {
+            skipped = Some(peer);
+            if own.start == start {
+                own.start = next;
+            } else if !ended {
+                (own.end, ended) = (start, true);
+            }
+        }
+        start = next;
     }
     Answers {
-        ngterm: Some(stdout),
+        ngterm: Some(&stdout[own]),
         agterm: None,
+        skipped,
     }
 }
 
@@ -349,7 +393,11 @@ mod tests {
 
     #[test]
     fn only_a_whole_marker_line_says_agterm() {
-        let both = |ngterm, agterm| Answers { ngterm, agterm };
+        let both = |ngterm, agterm| Answers {
+            ngterm,
+            agterm,
+            skipped: None,
+        };
         assert_eq!(
             split_answers("ngterm-peer: agterm\n{\"ok\":true}"),
             both(None, Some("{\"ok\":true}"))
@@ -362,6 +410,52 @@ mod tests {
             both(Some("ngterm-peer: agtermx\n{}"), None)
         );
         assert_eq!(split_answers("{} ngterm-peer: agterm\n{}").agterm, None);
+    }
+
+    #[test]
+    fn a_skipped_line_names_the_app_left_out_and_is_no_part_of_an_answer() {
+        let own = split_answers("{\"own\":1}\nngterm-peer: agterm-skipped\n");
+        assert_eq!(
+            (own.ngterm, own.agterm, own.skipped),
+            (Some("{\"own\":1}\n"), None, Some(RemotePeer::Agterm))
+        );
+        let theirs = split_answers("ngterm-peer: ngterm-skipped\r\nngterm-peer: agterm\n{\"theirs\":2}\n");
+        assert_eq!(
+            (theirs.ngterm, theirs.agterm, theirs.skipped),
+            (None, Some("{\"theirs\":2}\n"), Some(RemotePeer::Ngterm))
+        );
+        let ahead = split_answers("ngterm-peer: agterm-skipped\n{\"own\":1}\n");
+        assert_eq!(
+            (ahead.ngterm, ahead.agterm, ahead.skipped),
+            (Some("{\"own\":1}\n"), None, Some(RemotePeer::Agterm))
+        );
+        assert_eq!(split_answers("{} ngterm-peer: agterm-skipped\n").skipped, None);
+        assert_eq!(split_answers("{}\nngterm-peer: agterm\n{}").skipped, None);
+    }
+
+    #[test]
+    fn a_listing_that_skipped_ngterm_teaches_only_a_host_nothing_is_known_of() {
+        learn_beside_skipped("skipped-fresh.example", RemotePeer::Agterm);
+        assert_eq!(peer_of("skipped-fresh.example"), RemotePeer::Agterm);
+        learn("skipped-known.example", RemotePeer::Ngterm);
+        learn_beside_skipped("skipped-known.example", RemotePeer::Agterm);
+        assert_eq!(peer_of("skipped-known.example"), RemotePeer::Ngterm);
+
+        // as a listing's read does it
+        let answer = r#"{"ok":true,"result":{"remote":{"endpoint":{"executable":"/zmx","socketDirectory":"/t"},"sessions":[]}}}"#;
+        let result = crate::remote::tree::RemoteCommandResult {
+            status: 0,
+            stdout: format!("{}\n{AGTERM_ANSWER}\n{answer}\n", skipped_line(RemotePeer::Ngterm)),
+            stderr: String::new(),
+        };
+        for (host, expected) in [
+            ("skipped-known.example", RemotePeer::Ngterm),
+            ("skipped-read.example", RemotePeer::Agterm),
+        ] {
+            let tree = crate::remote::origin_replies::read_remote_tree(&result, host).unwrap();
+            assert_eq!(tree.skipped, Some(RemotePeer::Ngterm));
+            assert_eq!(peer_of(host), expected, "{host}");
+        }
     }
 
     #[test]

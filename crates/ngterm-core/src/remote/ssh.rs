@@ -86,7 +86,7 @@ pub fn tree_tail(shell: OriginShell) -> String {
 /// pinned to agterm, its `agtermctl zmx tree --json` after the [`AGTERM_ANSWER`] line. A host that pins neither asks
 /// each app installed there, in one ssh call: ngterm's answer first, then agterm's under that line, so a host that
 /// runs both lists both ([`super::peer`]). An app that fails or stalls beside one that answers is left out
-/// ([`both_apps_tail`]); with no answer the failure is ngterm's when it is installed, else agterm's. A Windows origin's
+/// and named as skipped ([`both_apps_tail`]); with no answer the failure is ngterm's when it is installed, else agterm's. A Windows origin's
 /// form is ngterm's, as agterm runs only on Macs.
 #[must_use]
 pub fn tree_tail_for(shell: OriginShell, pin: Option<RemotePeer>) -> String {
@@ -109,8 +109,9 @@ const APP_LISTING_BOUND_SECONDS: u64 = 4;
 const _: () = assert!(2 * APP_LISTING_BOUND_SECONDS < super::tree::TREE_DEADLINE.as_secs());
 
 /// [`tree_tail_for`]'s remote command for a host that pins no peer, each app's listing ended after `bound` seconds.
-/// An app that stalls beside one that answers is left out, as one that fails is; with no answer the stalled app is
-/// asked again without a bound, ngterm first, so the caller's own deadline names the stall. The watcher that ends a
+/// An app that stalls beside one that answers is left out, as one that fails is, and the answer names it
+/// ([`peer::skipped_line`]): its sessions are not listed, and nothing says they ended. With no answer the stalled app
+/// is asked again without a bound, ngterm first, so the caller's own deadline names the stall. The watcher that ends a
 /// listing holds its timer in a variable of its own, empty until the timer runs: the script's variables reach it, and
 /// an app that answers first ends the watcher before it has set one.
 pub(super) fn both_apps_tail(bound: u64) -> String {
@@ -126,14 +127,19 @@ pub(super) fn both_apps_tail(bound: u64) -> String {
          if command -v {n} >/dev/null 2>&1; then o=$(b {ngterm}); s=$?; fi; \
          if command -v {a} >/dev/null 2>&1; then p=$(b {agterm}); t=$?; fi; \
          if [ \"${{s:-1}}\" -eq 0 ]; then printf '%s\\n' \"$o\"; \
-         if [ \"${{t:-1}}\" -eq 0 ]; then printf '%s\\n%s\\n' {marker} \"$p\"; fi; exit 0; fi; \
-         if [ \"${{t:-1}}\" -eq 0 ]; then printf '%s\\n%s\\n' {marker} \"$p\"; exit 0; fi; \
+         if [ \"${{t:-1}}\" -eq 0 ]; then printf '%s\\n%s\\n' {marker} \"$p\"; \
+         elif [ -n \"${{t:-}}\" ]; then printf '%s\\n' {no_agterm}; fi; exit 0; fi; \
+         if [ \"${{t:-1}}\" -eq 0 ]; then if [ -n \"${{s:-}}\" ]; then printf '%s\\n' {no_ngterm}; fi; \
+         printf '%s\\n%s\\n' {marker} \"$p\"; exit 0; fi; \
          if [ -n \"${{s:-}}\" ] && [ \"$s\" -ne 137 ]; then printf '%s\\n' \"$o\"; exit \"$s\"; fi; \
          if [ -z \"${{s:-}}\" ] && [ -n \"${{t:-}}\" ]; then \
          if [ \"$t\" -ne 137 ]; then printf '%s\\n%s\\n' {marker} \"$p\"; exit \"$t\"; fi; \
          printf '%s\\n' {marker}; exec {agterm}; fi; \
+         if [ -n \"${{t:-}}\" ]; then printf '%s\\n' {no_agterm}; fi; \
          exec {ngterm}",
         dirs = agterm::PATH_DIRECTORIES,
+        no_ngterm = shell_quoted_line(&[peer::skipped_line(RemotePeer::Ngterm)]),
+        no_agterm = shell_quoted_line(&[peer::skipped_line(RemotePeer::Agterm)]),
     );
     shell_quoted_line(&["/bin/sh", "-c", script.as_str()])
 }

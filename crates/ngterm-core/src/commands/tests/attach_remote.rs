@@ -2147,6 +2147,7 @@ fn initial_remote_panes_pair_their_capability_gated_commands_and_nonces() {
             sessions: vec![remote.clone()],
             presentation: None,
             beside: None,
+            skipped: None,
         };
         let result = fixture
             .core

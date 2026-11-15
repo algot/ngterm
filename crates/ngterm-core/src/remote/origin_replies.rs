@@ -167,7 +167,11 @@ pub fn unattached(noun: &str, created: &str, host: &str, reason: &str) -> String
 /// The refusal or failure as the caller reads it.
 pub fn read_remote_tree(result: &RemoteCommandResult, host: &str) -> Result<ControlRemoteTree, String> {
     let remote = read_peer_tree(result, host)?;
-    super::peer::learn(host, remote.endpoint.peer());
+    if remote.skipped == Some(super::peer::RemotePeer::Ngterm) {
+        super::peer::learn_beside_skipped(host, remote.endpoint.peer());
+    } else {
+        super::peer::learn(host, remote.endpoint.peer());
+    }
     Ok(remote)
 }
 

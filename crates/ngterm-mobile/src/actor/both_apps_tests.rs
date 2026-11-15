@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use futures_lite::future::block_on;
 use ngterm_core::remote::origin::{OriginForm, OriginShell};
 use ngterm_core::remote::origin_replies::{RESTORE_MODE_ARGUMENTS, duplicate_session_arguments, end_session_arguments};
-use ngterm_core::remote::peer::{AGTERM_ANSWER, RemotePeer, daemon_name};
+use ngterm_core::remote::peer::{AGTERM_ANSWER, RemotePeer, daemon_name, skipped_line};
 use ngterm_core::remote::ssh::{control_tail, present_tail, tree_tail, tree_tail_for};
 use uuid::Uuid;
 
@@ -243,4 +243,57 @@ fn duplicating_an_agterm_session_asks_agterm_and_keeps_ngterms_sessions_listed()
     );
     let ran: Vec<String> = both.transport.execs().into_iter().map(|exec| exec.command).collect();
     assert!(!ran.iter().any(|line| line.contains("ngtermctl session")), "{ran:?}");
+}
+
+/// A listing that goes on without agterm (it stalled or failed there) says nothing of agterm's sessions: they stay
+/// listed and attachable, so the app has no reason to let an attached one go.
+#[test]
+fn a_listing_that_went_on_without_agterm_keeps_its_sessions_listed_and_attachable() {
+    let (both, whole) = Both::listed();
+    both.transport.script(
+        &tree_tail(OriginShell::Posix),
+        Script::ok(&format!("{}\n{}\n", ngterms_answer(), skipped_line(RemotePeer::Agterm))),
+    );
+    let partial = block_on(both.core.list_sessions("m1".to_owned())).expect("listed");
+    assert_eq!(apps(&partial), apps(&whole));
+    assert_eq!(both.next_tree(), apps(&whole));
+    block_on(both.core.attach_session("m1".to_owned(), THEIRS.to_owned())).expect("still attachable");
+    assert_eq!(both.ran(THEIRS), present_tail(AGTERM, THEIRS).unwrap());
+    block_on(
+        both.core
+            .show_pane("m1".to_owned(), THEIRS.to_owned(), THEIR_PANE.to_owned(), SIZE),
+    )
+    .expect("its pane still shows");
+}
+
+/// The same for ngterm: its sessions stay, the machine stays ngterm's, and a later whole listing replaces them.
+#[test]
+fn a_listing_that_went_on_without_ngterm_keeps_its_sessions_until_a_whole_listing() {
+    let (both, whole) = Both::listed();
+    both.transport.script(
+        &tree_tail(OriginShell::Posix),
+        Script::ok(&format!(
+            "{}\n{}\n",
+            skipped_line(RemotePeer::Ngterm),
+            agterms_answer(&[THEIRS, COPY])
+        )),
+    );
+    let partial = block_on(both.core.list_sessions("m1".to_owned())).expect("listed");
+    let kept = [
+        app(OWN, PeerKind::Ngterm),
+        app(THEIRS, PeerKind::Agterm),
+        app(COPY, PeerKind::Agterm),
+    ];
+    assert_eq!(apps(&partial), kept);
+    assert_eq!(both.next_tree(), kept);
+    block_on(both.core.attach_session("m1".to_owned(), OWN.to_owned())).expect("still attachable");
+    assert_eq!(both.ran(OWN), present_tail(OriginShell::Posix, OWN).unwrap());
+
+    both.transport.script(
+        &tree_tail(OriginShell::Posix),
+        Script::ok(&format!("{}\n", agterms_answer(&[THEIRS]))),
+    );
+    block_on(both.core.list_sessions("m1".to_owned())).expect("listed");
+    assert_eq!(both.next_tree(), [app(THEIRS, PeerKind::Agterm)]);
+    drop(whole);
 }

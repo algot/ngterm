@@ -915,7 +915,8 @@ fn remote(reason: String) -> MobileError {
     MobileError::Remote { reason }
 }
 
-/// The sessions of `tree`, a listing of `machine_id` that began at ticket `began`. It is kept and reported as a
+/// The sessions of `tree`, a listing of `machine_id` that began at ticket `began`, an app it went on without as last
+/// listed ([`sessions::skipped_kept`]). It is kept and reported as a
 /// [`MobileEvent::Tree`] only while its connection is still the machine's and nothing newer about the machine's
 /// sessions is known; a stale listing still answers its caller.
 fn listed<T: Transport>(
@@ -925,6 +926,7 @@ fn listed<T: Transport>(
     tree: ControlRemoteTree,
     began: u64,
 ) -> Vec<RemoteSession> {
+    let tree = with_skipped_app(state, &machine_id, tree);
     let sessions = sessions::listed_sessions(&tree);
     if !state.is_current(&machine_id, &link.connection) {
         return sessions;
@@ -971,6 +973,12 @@ async fn create_session<T: Transport>(
     let tree = with_other_app(&state, &machine_id, tree);
     listed(&state, &link, machine_id, tree, began.get());
     Ok(receipt)
+}
+
+/// `tree`, a listing of the machine, with an app it went on without as last listed: that app's sessions stay.
+fn with_skipped_app<T: Transport>(state: &State<T>, machine_id: &str, tree: ControlRemoteTree) -> ControlRemoteTree {
+    let listings = state.listings.borrow();
+    sessions::skipped_kept(tree, listings.get(machine_id).and_then(|kept| kept.tree.as_ref()))
 }
 
 /// `tree`, the listing of the one app a session was made on, with the machine's other app as last listed.
@@ -1197,6 +1205,7 @@ fn check_gone<T: Transport>(state: &Rc<State<T>>, check: GoneCheck) {
         let began = state.ticket();
         let gone = match sessions::list(&*link.connection, &link.host).await {
             Ok(tree) => {
+                let tree = with_skipped_app(&state, &check.machine_id, tree);
                 let gone = !tree
                     .apps()
                     .any(|app| app.sessions.iter().any(|listed| listed.id == check.session_id));

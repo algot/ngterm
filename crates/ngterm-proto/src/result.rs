@@ -377,6 +377,10 @@ pub struct ControlRemoteTree {
     /// sessions beside ngterm's, with the endpoint they attach through. Absent from an origin's own answer.
     #[serde(default)]
     pub beside: Option<Box<ControlRemoteTree>>,
+    /// The app the host has that this listing went on without, as it failed or did not answer in time: its sessions
+    /// are not listed here and are not known to have ended. Absent from an origin's own answer.
+    #[serde(default)]
+    pub skipped: Option<RemotePeer>,
 }
 
 impl ControlRemoteTree {
@@ -815,6 +819,19 @@ mod tests {
         let wire = serde_json::to_value(&both).unwrap();
         assert_eq!(wire["beside"]["sessions"][0]["id"], "A1");
         assert_eq!(serde_json::from_value::<ControlRemoteTree>(wire).unwrap(), both);
+        let partial = ControlRemoteTree {
+            skipped: Some(RemotePeer::Agterm),
+            ..app("/own", "N1")
+        };
+        let wire = serde_json::to_value(&partial).unwrap();
+        assert_eq!(wire["skipped"], "agterm");
+        assert_eq!(serde_json::from_value::<ControlRemoteTree>(wire).unwrap(), partial);
+        assert!(
+            serde_json::to_value(app("/own", "N1"))
+                .unwrap()
+                .get("skipped")
+                .is_none()
+        );
     }
 
     #[test]

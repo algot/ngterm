@@ -842,6 +842,77 @@ fn one_apps_listing_keeps_the_other_apps_sessions_of_a_machine_running_both() {
     assert_eq!(listed_ids(&ended), [own(PARENT), theirs(CREATED)]);
 }
 
+/// An app that failed or stalled beside the one that answered has not ended its sessions: they stay as last listed,
+/// whichever of the two it is, and the app that answered is listed afresh.
+#[test]
+fn a_listing_that_went_on_without_an_app_keeps_that_apps_sessions_as_last_listed() {
+    use crate::peer::PeerKind::{Agterm, Ngterm};
+
+    let both = ControlRemoteTree {
+        beside: Some(Box::new(app_tree(RemotePeer::Agterm, &[COMPANION]))),
+        ..app_tree(RemotePeer::Ngterm, &[PARENT])
+    };
+    let without = |peer: RemotePeer, skipped: RemotePeer, ids: &[&str]| ControlRemoteTree {
+        skipped: Some(skipped),
+        ..app_tree(peer, ids)
+    };
+    let own = |id: &str| (id.to_owned(), Some(Ngterm));
+    let theirs = |id: &str| (id.to_owned(), Some(Agterm));
+
+    let no_agterm = skipped_kept(without(RemotePeer::Ngterm, RemotePeer::Agterm, &[CREATED]), Some(&both));
+    assert_eq!(listed_ids(&no_agterm), [own(CREATED), theirs(COMPANION)]);
+    assert_eq!(no_agterm.listing(COMPANION).endpoint, both.listing(COMPANION).endpoint);
+    let own_kept = skipped_kept(without(RemotePeer::Agterm, RemotePeer::Ngterm, &[CREATED]), Some(&both));
+    assert_eq!(listed_ids(&own_kept), [own(PARENT), theirs(CREATED)]);
+    assert_eq!(own_kept.endpoint.peer(), RemotePeer::Ngterm);
+    // the result is a whole listing: a second pass changes nothing
+    assert_eq!(skipped_kept(own_kept.clone(), Some(&both)), own_kept);
+
+    // the app is kept from a listing that had it alone too
+    let alone = app_tree(RemotePeer::Agterm, &[COMPANION]);
+    let beside_alone = skipped_kept(without(RemotePeer::Ngterm, RemotePeer::Agterm, &[PARENT]), Some(&alone));
+    assert_eq!(listed_ids(&beside_alone), [own(PARENT), theirs(COMPANION)]);
+
+    // an app never listed has nothing to keep, and a listing that skipped nothing replaces what was kept
+    let never = without(RemotePeer::Ngterm, RemotePeer::Agterm, &[PARENT]);
+    assert_eq!(skipped_kept(never.clone(), None), never);
+    assert_eq!(
+        skipped_kept(never.clone(), Some(&app_tree(RemotePeer::Ngterm, &[CREATED]))),
+        never
+    );
+    let whole = app_tree(RemotePeer::Ngterm, &[CREATED]);
+    assert_eq!(skipped_kept(whole.clone(), Some(&both)), whole);
+}
+
+/// A machine a listing has told is ngterm's stays ngterm's when one listing goes on without ngterm; a machine no
+/// listing has told yet is the app that answered.
+#[tokio::test]
+async fn a_listing_that_went_on_without_ngterm_does_not_hand_a_known_machine_to_agterm() {
+    use ngterm_core::remote::peer::{AGTERM_ANSWER, skipped_line};
+
+    let own = String::from_utf8(listing(&[session(PARENT, "own", None, None)]).stdout).expect("utf-8");
+    let theirs = String::from_utf8(listing(&[session(COMPANION, "theirs", None, None)]).stdout).expect("utf-8");
+    let no_ngterm = format!("{}\n{AGTERM_ANSWER}\n{theirs}\n", skipped_line(RemotePeer::Ngterm));
+    let tail = tree_tail(OriginShell::Posix);
+
+    let transport = FakeTransport::new();
+    transport.script(&tail, Script::ok(&format!("{own}\n{AGTERM_ANSWER}\n{theirs}\n")));
+    let connection = fresh(&transport).await;
+    list(&connection, HOST).await.expect("both listed");
+    assert_eq!(connection.origin_form().peer, RemotePeer::Ngterm);
+    transport.script(&tail, Script::ok(&no_ngterm));
+    let partial = list(&connection, HOST).await.expect("agterm listed");
+    assert_eq!(partial.skipped, Some(RemotePeer::Ngterm));
+    assert_eq!(connection.origin_form().peer, RemotePeer::Ngterm);
+
+    let transport = FakeTransport::new();
+    transport.script(&tail, Script::ok(&no_ngterm));
+    let connection = fresh(&transport).await;
+    list(&connection, HOST).await.expect("agterm listed");
+    assert_eq!(connection.origin_form().peer, RemotePeer::Agterm);
+    assert!(connection.learned().peer_known);
+}
+
 // MARK: - phone wording
 
 #[test]

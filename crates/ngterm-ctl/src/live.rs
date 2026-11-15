@@ -596,11 +596,21 @@ impl RequestCommand for Present {
 }
 
 /// `live.tree`: one attachable session per line, carrying the id `live attach` takes (upstream's `formatRemoteTree`).
-/// An empty answer says so rather than printing nothing, which a caller cannot tell from a failed read.
+/// An empty answer says so rather than printing nothing, which a caller cannot tell from a failed read, and a last
+/// line names an app the listing went on without.
 #[must_use]
 pub fn format_remote_tree(tree: &ngterm_proto::ControlRemoteTree) -> String {
+    let skipped = tree.skipped.map(|app| {
+        let place = tree
+            .host
+            .as_deref()
+            .map(|host| format!(" on {host}"))
+            .unwrap_or_default();
+        format!("{}{place} did not answer: its sessions are not listed", app.name())
+    });
     tree.apps()
-        .map(|app| format_app_tree(app, tree.beside.is_some()))
+        .map(|app| format_app_tree(app, tree.beside.is_some() || tree.skipped.is_some()))
+        .chain(skipped)
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -783,6 +793,12 @@ mod tests {
         assert_eq!(
             format_remote_tree(&tree),
             "no attachable sessions on studio (ngterm)\nno attachable sessions on studio (agterm)"
+        );
+        tree.beside = None;
+        tree.skipped = Some(ngterm_proto::RemotePeer::Agterm);
+        assert_eq!(
+            format_remote_tree(&tree),
+            "no attachable sessions on studio (ngterm)\nagterm on studio did not answer: its sessions are not listed"
         );
     }
 
