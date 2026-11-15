@@ -109,19 +109,27 @@ internal fun rememberExportStart(
     return start
 }
 
+/** What the export screen asks of its view model: [start] hears each tap on Save or Copy, before anything else. */
+internal class ExportHandlers(
+    val start: () -> Unit,
+    val save: (Uri, ExportProtection?) -> Unit,
+    val copy: (ExportProtection) -> Unit,
+    val back: () -> Unit,
+)
+
+internal fun ExportKeyViewModel.handlers() = ExportHandlers(::begin, ::save, ::copy, ::close)
+
 /**
  * The export screen of [key], its passphrase held to [rule]: Save to a file opens the system's screen for making a
- * document and hands [onSave] the one the user makes, with the protection chosen (none when it was lost: it waits
- * here, in memory only, while the system's screen is up); Copy hands [onCopy] the protection.
+ * document and hands [ExportHandlers.save] the one the user makes, with the protection chosen (none when it was lost:
+ * it waits here, in memory only, while the system's screen is up); Copy hands [ExportHandlers.copy] the protection.
  */
 @Composable
 internal fun ExportKeyPage(
     key: AppKey,
     work: ExportWork,
     rule: PassphraseRule,
-    onSave: (Uri, ExportProtection?) -> Unit,
-    onCopy: (ExportProtection) -> Unit,
-    onBack: () -> Unit,
+    on: ExportHandlers,
     modifier: Modifier = Modifier,
 ) {
     var chosen by remember { mutableStateOf<ExportProtection?>(null) }
@@ -129,7 +137,7 @@ internal fun ExportKeyPage(
         rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(KEY_FILE_TYPE)) { target ->
             val protection = chosen
             chosen = null
-            if (target != null) onSave(target, protection)
+            if (target != null) on.save(target, protection)
         }
     val name = stringResource(R.string.export_file_name)
     ExportKeyScreen(
@@ -140,9 +148,10 @@ internal fun ExportKeyPage(
             chosen = it
             create.launch(name)
         },
-        onCopy = onCopy,
-        onBack = onBack,
+        onCopy = on.copy,
+        onBack = on.back,
         modifier = modifier,
+        onStart = on.start,
     )
 }
 

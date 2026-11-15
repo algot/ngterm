@@ -105,6 +105,11 @@ class ExportKeyViewModel(
         }
     }
 
+    /** An export is asked for: what the last one said no longer stands, whether or not this one gets to write. */
+    fun begin() {
+        state.value = state.value.copy(done = null, problem = null)
+    }
+
     /** Saves the key under [protection] into the document [target] the user made. */
     fun save(
         target: Uri,
@@ -113,7 +118,7 @@ class ExportKeyViewModel(
         if (protection == null || !ready()) {
             exports.discard(target)
             if (protection == null && state.value.keyId != null) {
-                state.value = state.value.copy(problem = ExportProblem.Interrupted)
+                state.value = state.value.copy(done = null, problem = ExportProblem.Interrupted)
             }
             return
         }

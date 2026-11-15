@@ -126,6 +126,44 @@ class ExportKeyViewModelTest {
     }
 
     @Test
+    fun whatTheLastExportSaidGoesWhenAnotherIsAskedFor() {
+        val key = test.seedKey()
+        val model = model()
+        model.unlock(key.id)
+        val idle = ExportWork(keyId = key.id)
+
+        model.save(target, locked)
+        assertEquals(ExportDone.Saved, model.settled().done)
+        model.begin()
+        assertEquals("a save that never came back still says Saved", idle, model.work.value)
+
+        model.copy(locked)
+        assertEquals(ExportDone.Copied, model.settled().done)
+        model.begin()
+        assertEquals(idle, model.work.value)
+
+        exports.saveFailure = IOException("no space left")
+        model.save(target, locked)
+        assertEquals(ExportProblem.Failed("no space left"), model.settled().problem)
+        model.begin()
+        assertEquals(idle, model.work.value)
+        assertEquals("only the first save wrote", 1, exports.saved.size)
+    }
+
+    @Test
+    fun aSaveWhoseProtectionWasLostTakesBackWhatAnEarlierSaveSaid() {
+        val key = test.seedKey()
+        val model = model()
+        model.unlock(key.id)
+        model.save(target, locked)
+        assertEquals(ExportDone.Saved, model.settled().done)
+
+        model.save(target, null)
+
+        assertEquals(ExportWork(keyId = key.id, problem = ExportProblem.Interrupted), model.settled())
+    }
+
+    @Test
     fun aProvidersOwnRefusalIsAProblemInWordsNotACrash() {
         val key = test.seedKey()
         val model = model()

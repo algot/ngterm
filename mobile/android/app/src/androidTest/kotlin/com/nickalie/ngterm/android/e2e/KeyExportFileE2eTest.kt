@@ -17,6 +17,7 @@ import org.junit.runner.RunWith
  * A key saved to a file and read back from it, end to end through the system's own file screen, as when a person
  * moves to another install of ngterm: Save to a file opens the system's screen for a new document; leaving that
  * screen writes nothing and says nothing was saved; saving writes an OpenSSH private key file under the passphrase;
+ * a second save left without a file takes "Saved" back off the screen and leaves the first file as it was;
  * Import a key's Choose file reads that file back, refuses a wrong passphrase and with the right one holds the same
  * public key.
  */
@@ -47,7 +48,17 @@ class KeyExportFileE2eTest {
         driver.tap(SAVE)
         driver.saveInFileScreen()
         driver.awaitText(SAVED, substring = true)
-        assertTrue("an OpenSSH private key file was written", driver.exportedFile().startsWith(KEY_START))
+        val written = driver.exportedFile()
+        assertTrue("an OpenSSH private key file was written", written.startsWith(KEY_START))
+
+        driver.tap(UNPROTECTED)
+        driver.tap(SAVE)
+        driver.awaitText("Export without a passphrase?")
+        driver.tapInDialog(UNPROTECTED)
+        driver.leaveFileScreen()
+        driver.awaitText(SAVE)
+        assertEquals("a second save that wrote nothing still says Saved", 0, driver.shown(SAVED, substring = true))
+        assertEquals("the second save, left without a file, changed the first one's", written, driver.exportedFile())
         driver.back()
 
         driver.awaitText("Import a key")
@@ -67,5 +78,6 @@ class KeyExportFileE2eTest {
     private companion object {
         const val SAVE = "Save to a file"
         const val SAVED = "Saved. Delete the file"
+        const val UNPROTECTED = "Export without a passphrase"
     }
 }

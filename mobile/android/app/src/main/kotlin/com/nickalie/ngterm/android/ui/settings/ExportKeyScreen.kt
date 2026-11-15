@@ -43,8 +43,8 @@ private enum class Target { File, Clipboard }
  * key is, the passphrase that encrypts it (typed twice, long enough for [rule], the exporter's own count of its
  * characters), or the explicit choice of none, which is confirmed again;
  * then Save to a file ([onSave]) or Copy to the clipboard ([onCopy]) with the protection chosen. [work] says how the
- * last one went. The passphrase lives only in this screen's memory, never in saved state; the window is secure
- * while it is up.
+ * last one went; [onStart] hears each tap on either, so what an earlier one said goes before this one ends. The
+ * passphrase lives only in this screen's memory, never in saved state; the window is secure while it is up.
  */
 @Composable
 fun ExportKeyScreen(
@@ -56,6 +56,7 @@ fun ExportKeyScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     draft: ExportDraft = ExportDraft(),
+    onStart: () -> Unit = {},
 ) {
     SecureWindow()
     var passphrase by remember { mutableStateOf(draft.passphrase) }
@@ -67,6 +68,7 @@ fun ExportKeyScreen(
         if (target == Target.File) onSave(protection) else onCopy(protection)
     }
     val start = { target: Target ->
+        onStart()
         when {
             unprotected -> asking = target
             rule.tooShort(passphrase) || passphrase != again -> checked = true

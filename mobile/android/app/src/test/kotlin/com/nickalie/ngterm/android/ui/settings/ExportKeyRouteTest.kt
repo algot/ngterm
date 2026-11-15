@@ -43,6 +43,7 @@ import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import java.io.IOException
 
 /**
  * Settings' Export private key, from the key's plate to the file or the clipboard: the device's owner proves it is
@@ -188,6 +189,63 @@ class ExportKeyRouteTest {
     }
 
     @Test
+    fun aSecondSaveLeftWithoutAFileNoLongerSaysTheFirstOneSaved() {
+        show()
+        tap("Export private key")
+        compose.awaitText(FAKE_FINGERPRINT)
+        typePassphrase()
+        tap("Save to a file")
+        compose.runOnUiThread { registry.dispatchResult(registry.request, target) }
+        compose.awaitText(SAVED)
+
+        tap("Export without a passphrase")
+        tap("Save to a file")
+        compose.onAllNodes(hasText("Export without a passphrase"))[1].performClick()
+        compose.runOnUiThread { registry.dispatchResult(registry.request, null) }
+        compose.waitForIdle()
+
+        compose.onNodeWithText(SAVED).assertDoesNotExist()
+        assertEquals("only the first save wrote", mapOf(target to fakeExport(stored, "correct horse")), exports.saved)
+    }
+
+    @Test
+    fun aCopyDeclinedAtItsLastQuestionNoLongerSaysTheKeyWasSaved() {
+        show()
+        tap("Export private key")
+        compose.awaitText(FAKE_FINGERPRINT)
+        typePassphrase()
+        tap("Save to a file")
+        compose.runOnUiThread { registry.dispatchResult(registry.request, target) }
+        compose.awaitText(SAVED)
+
+        tap("Export without a passphrase")
+        tap("Copy to the clipboard")
+        compose.onNodeWithText("Cancel").performClick()
+        compose.waitForIdle()
+
+        compose.onNodeWithText(SAVED).assertDoesNotExist()
+        assertTrue(exports.copied.isEmpty())
+    }
+
+    @Test
+    fun aSaveLeftWithoutAFileNoLongerSaysTheOneBeforeItFailed() {
+        show()
+        tap("Export private key")
+        compose.awaitText(FAKE_FINGERPRINT)
+        typePassphrase()
+        exports.saveFailure = IOException("no space left")
+        tap("Save to a file")
+        compose.runOnUiThread { registry.dispatchResult(registry.request, target) }
+        compose.awaitText("The key couldn't be exported: no space left")
+
+        tap("Save to a file")
+        compose.runOnUiThread { registry.dispatchResult(registry.request, null) }
+        compose.waitForIdle()
+
+        compose.onNodeWithText("The key couldn't be exported: no space left").assertDoesNotExist()
+    }
+
+    @Test
     fun aDeviceWithNoScreenLockIsSentToSetOneAndNeverAsked() {
         auth.secured = false
         show()
@@ -226,6 +284,10 @@ class ExportKeyRouteTest {
 
         compose.awaitText(FAKE_FINGERPRINT)
         assertEquals(3, auth.prompts.size)
+    }
+
+    private companion object {
+        const val SAVED = "Saved. Delete the file once you've imported the key."
     }
 
     private class DocumentRegistry : ActivityResultRegistry() {
