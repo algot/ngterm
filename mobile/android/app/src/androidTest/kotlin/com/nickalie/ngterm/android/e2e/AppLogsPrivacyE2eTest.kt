@@ -51,8 +51,10 @@ import java.io.File
  * command. Settings > Logs then tells what happened, newest first: the connect that failed and why, the attach, and
  * each change of what became of the input (sent, held as an unsafe paste). None of what was typed, pasted, held back
  * or printed by the shell, nor the session's name, the private key or a host key fingerprint, is in the lines shown,
- * in what Copy takes, in the file Share writes or in the log's files on the device. Clear logs asks first: Cancel
- * keeps every line, Clear logs deletes them and the log starts again.
+ * in what Copy takes, in the file Share writes or in the log's files on the device. What is typed reaches the app a key
+ * at a time, so the log is also held to what a key at a time could put there: it gains fewer lines over all the typing
+ * than the shortest typed word has letters, and a line about input holds how it was delivered, its kind and its pane,
+ * nothing else. Clear logs asks first: Cancel keeps every line, Clear logs deletes them and the log starts again.
  *
  * The stack is [SoftKeyboardSwitchE2eTest]'s: `scripts/test-android-e2e.sh` starts the machine and hands it over as
  * instrumentation arguments; without them the test is skipped.
@@ -87,6 +89,9 @@ class AppLogsPrivacyE2eTest {
         }
 
     private val keyboards = QaKeyboards(instrumentation)
+
+    /** How many lines the log had as the first key was about to be typed. */
+    private var linesBeforeTyping = 0
 
     private val evidence =
         object : TestWatcher() {
@@ -128,6 +133,7 @@ class AppLogsPrivacyE2eTest {
         openANewSession()
         typeAtTheShell()
         pasteIntoTheShell()
+        assertNoLinePerKey()
         screenshot("terminal")
 
         openLogs()
@@ -151,7 +157,9 @@ class AppLogsPrivacyE2eTest {
         val whole = requireNotNull(exported()).readText()
         for (line in TOLD) assertTrue("the exported log holds \"$line\":\n$whole", line in whole)
         assertClean("the exported log", whole, key)
+        assertInputLinesHoldNoText("the exported log", whole)
         assertClean("the log's files", logFiles(), key)
+        assertInputLinesHoldNoText("the log's files", logFiles())
         device.pressBack()
         assertEquals("the app is back from the share sheet", true, device.wait(Until.hasObject(app), SHEET_WAIT_MS))
 
@@ -202,6 +210,7 @@ class AppLogsPrivacyE2eTest {
         val bounds = compose.onNode(terminal()).fetchSemanticsNode().boundsInWindow
         device.click(bounds.center.x.toInt(), bounds.center.y.toInt())
         keyboards.awaitKey(QaKeyboard.keyDescription("e"))
+        linesBeforeTyping = logLines().size
         TYPED.split(' ').forEach { word ->
             keyboards.tapKeys(word)
             keyboards.tapKey(QaKeyboard.keyDescription(QaKeyboard.SPACE))
@@ -286,6 +295,33 @@ class AppLogsPrivacyE2eTest {
         assertFalse("$what hold a fingerprint", "SHA256:" in log)
     }
 
+    // a key is typed alone, so a log that took each one would hold no typed word whole: it would gain a line a key
+    private fun assertNoLinePerKey() {
+        val gained = logLines().drop(linesBeforeTyping)
+        assertTrue(
+            "the log gained ${gained.size} lines while the keys were typed, as many as " +
+                "\"${TYPED_MARKERS.minBy { it.length }}\" has letters or more:\n${gained.joinToString("\n")}",
+            gained.size < TYPED_MARKERS.minOf { it.length },
+        )
+    }
+
+    // a line about input: how it was delivered, its kind and its pane; one for each change, not one for each key
+    private fun assertInputLinesHoldNoText(
+        what: String,
+        log: String,
+    ) {
+        val input = log.lines().filter { INPUT_TAG in it }
+        assertTrue("$what tell of the input:\n$log", input.isNotEmpty())
+        for (line in input) {
+            assertTrue("$what hold a line about input with more than its delivery:\n$line", INPUT_LINE.matches(line))
+        }
+        assertTrue(
+            "$what hold ${input.size} lines about input for $INPUT_CHANGES changes of its delivery:\n" +
+                input.joinToString("\n"),
+            input.size <= INPUT_CHANGES,
+        )
+    }
+
     private fun copy(text: String) {
         val clipboard = instrumentation.targetContext.getSystemService(ClipboardManager::class.java)
         instrumentation.runOnMainSync { clipboard.setPrimaryClip(ClipData.newPlainText("qa", text)) }
@@ -328,6 +364,8 @@ class AppLogsPrivacyE2eTest {
             .walk()
             .filter { it.isFile }
             .joinToString("\n") { it.readText() }
+
+    private fun logLines(): List<String> = logFiles().lines().filter { it.isNotBlank() }
 
     private fun exportDir() = File(instrumentation.targetContext.cacheDir, LogsViewModel.EXPORT_DIR)
 
@@ -387,17 +425,29 @@ class AppLogsPrivacyE2eTest {
         const val SESSION = "qa-sess-mk5n"
 
         /** Typed on the soft keyboard; the shell prints [PRINTED], which is never typed. */
-        const val TYPED = "expr 8641975300 + 12345"
+        const val SOFT_TYPED = "8641975300"
+        const val TYPED = "expr $SOFT_TYPED + 12345"
         const val PRINTED = "8641987645"
         const val HARDWARE_TYPED = "qa-hw-mk2j"
         const val PASTED = "qa-paste-mk8v"
         const val HELD_PASTE = "qa-held-mk4w"
         const val ECHOED = "qa-echo-mk1c"
 
+        /** What is typed a key at a time: on the soft keyboard, on a hardware one, into a program. */
+        val TYPED_MARKERS = listOf(SOFT_TYPED, HARDWARE_TYPED, ECHOED)
+
+        /** The log's lines about input: their tag, and the whole of one as the file holds it. */
+        const val INPUT_TAG = " input: "
+        val INPUT_LINE =
+            Regex("""\S+ [IWE] input: input delivery=[a-z-]+ kind=(key|text|paste) pane=[0-9A-Fa-f-]{36}""")
+
+        /** The input starts to go and a paste is held back; room for one drop and its end, far under a line a key. */
+        const val INPUT_CHANGES = 4
+
         /** What must be in no form of the log. */
         val SECRETS =
             mapOf(
-                "what was typed on the soft keyboard" to "8641975300",
+                "what was typed on the soft keyboard" to SOFT_TYPED,
                 "what the shell printed" to PRINTED,
                 "what was typed on a hardware keyboard" to HARDWARE_TYPED,
                 "what was pasted" to PASTED,
