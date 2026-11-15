@@ -69,8 +69,8 @@ use ngterm_mobile::PeerKind;
 
 use self::agterm::AgtermMac;
 use self::both::{
-    AGTERM_SESSION, BothHost, HOST, Viewer, named, the_viewer_attaches_a_session_of_each_app,
-    the_viewer_lists_both_apps,
+    AGTERM_SESSION, BothHost, HOST, Viewer, agterm_outside_live_sessions_mode_is_said_by_both, named,
+    the_viewer_attaches_a_session_of_each_app, the_viewer_lists_both_apps,
 };
 use self::chat::Scene;
 use self::machine::World;
@@ -243,23 +243,5 @@ fn a_machine_running_both_apps_lists_the_sessions_of_both_and_each_works_through
         "agterm in Live sessions mode got a hint: {text}"
     );
 
-    // agterm outside Live sessions mode: the viewer and the phone say why it lists nothing, and nothing set its mode
-    host.agterm.set_restore("none");
-    let not_live = "is not in Live sessions mode: set Settings > General > Restore sessions to Live sessions and \
-                    restart agterm; only sessions started after that can be attached";
-    let text = viewer
-        .headless
-        .ctl(&["live", "tree", HOST])
-        .expect("the viewer's listing");
-    assert!(text.ends_with(&format!("agterm on {HOST} {not_live}\n")), "{text}");
-    second.drain();
-    second.sessions();
-    second.wait("the listing's hint", |seen| {
-        seen.hints.last().is_some_and(Option::is_some)
-    });
-    assert_eq!(
-        second.seen.hints.last().cloned().flatten(),
-        Some(format!("agterm on e2e machine {not_live}"))
-    );
-    assert_eq!(host.agterm.restore(), "none");
+    agterm_outside_live_sessions_mode_is_said_by_both(&viewer, &host, &mut second);
 }

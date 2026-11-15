@@ -16,7 +16,7 @@ use ngterm_mobile::api::generate_key;
 
 use crate::agterm::{StandIn, executable};
 use crate::machine::{Headless, STAGE_VARIABLE, WORK_VARIABLE, account, quoted, text};
-use crate::phone::{Listed, PRINTED, poll};
+use crate::phone::{Client, Listed, PRINTED, poll};
 use crate::sshd::{Sshd, SshdSetup};
 
 /// The name the viewer's `ssh` knows the machine by.
@@ -193,4 +193,27 @@ pub(crate) fn the_viewer_attaches_a_session_of_each_app(
     shows(&local, "agterm$");
     // what the phone ran in ngterm's session
     shows(&attach(ngterm), PRINTED);
+}
+
+/// agterm outside Live sessions mode: the viewer and the phone `second` say why it lists nothing, and nothing set its
+/// mode.
+pub(crate) fn agterm_outside_live_sessions_mode_is_said_by_both(viewer: &Viewer, host: &BothHost, second: &mut Client) {
+    host.agterm.set_restore("none");
+    let not_live = "is not in Live sessions mode: set Settings > General > Restore sessions to Live sessions and \
+                    restart agterm; only sessions started after that can be attached";
+    let text = viewer
+        .headless
+        .ctl(&["live", "tree", HOST])
+        .expect("the viewer's listing");
+    assert!(text.ends_with(&format!("agterm on {HOST} {not_live}\n")), "{text}");
+    second.drain();
+    second.sessions();
+    second.wait("the listing's hint", |seen| {
+        seen.hints.last().is_some_and(Option::is_some)
+    });
+    assert_eq!(
+        second.seen.hints.last().cloned().flatten(),
+        Some(format!("agterm on e2e machine {not_live}"))
+    );
+    assert_eq!(host.agterm.restore(), "none");
 }

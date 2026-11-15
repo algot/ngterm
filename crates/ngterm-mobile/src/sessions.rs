@@ -328,8 +328,9 @@ async fn control_in<C: Connection, S: AsRef<str>>(
     run(connection, &control_tail(form, arguments), COMPANION_DEADLINE).await
 }
 
-/// `host`'s attachable sessions, within `deadline`; `host` is the name the messages give the machine. An agterm there
-/// that lists none is asked its restore mode, as desktop's picker asks it ([`not_live`]), so the listing says why.
+/// `host`'s attachable sessions, within `deadline`; `host` is the name the messages give the machine. The plain
+/// listing a flow reads before it acts there, as desktop's flows read `tree::run_tree`; [`list`] is the one the
+/// sessions screen shows.
 ///
 /// # Errors
 ///
@@ -339,21 +340,51 @@ pub async fn read_tree<C: Connection>(
     host: &str,
     deadline: Duration,
 ) -> Result<ControlRemoteTree, String> {
-    let mut result = run_tree(connection, deadline, None).await.inspect_err(|_| {
-        note!(WARN, tag::SESSIONS, "listing failed", class = "no-channel", host = host);
-    })?;
+    let result = tree_answer(connection, host, deadline).await?;
+    learned_tree(connection, host, &result)
+}
+
+/// The sessions screen's listing of `host`, within desktop's [`TREE_DEADLINE`]. An agterm there that lists none is
+/// then asked its restore mode, within [`not_live::RESTORE_DEADLINE`] more, as desktop's listings ask it
+/// ([`not_live::run_listing`]), so the listing says why.
+///
+/// # Errors
+///
+/// As [`read_tree`].
+pub async fn list<C: Connection>(connection: &C, host: &str) -> Result<ControlRemoteTree, String> {
+    let mut result = tree_answer(connection, host, TREE_DEADLINE).await?;
     if not_live::asks_restore_mode(&result) {
         // the mode only says why agterm listed nothing, so a failed ask leaves the listing as it is
         if let Ok(restore) = run(connection, &not_live::restore_tail(), not_live::RESTORE_DEADLINE).await {
             result = not_live::with_restore(result, &restore);
         }
     }
-    let tree = read_remote_tree(&result, host).inspect_err(|_| {
+    learned_tree(connection, host, &result)
+}
+
+/// `host`'s listing answer within `deadline`, a channel that never opened noted.
+async fn tree_answer<C: Connection>(
+    connection: &C,
+    host: &str,
+    deadline: Duration,
+) -> Result<RemoteCommandResult, String> {
+    run_tree(connection, deadline, None).await.inspect_err(|_| {
+        note!(WARN, tag::SESSIONS, "listing failed", class = "no-channel", host = host);
+    })
+}
+
+/// `result` read as `host`'s listing, its app kept on the connection for the commands that follow.
+fn learned_tree<C: Connection>(
+    connection: &C,
+    host: &str,
+    result: &RemoteCommandResult,
+) -> Result<ControlRemoteTree, String> {
+    let tree = read_remote_tree(result, host).inspect_err(|_| {
         note!(
             WARN,
             tag::SESSIONS,
             "listing failed",
-            class = failure_class(&result),
+            class = failure_class(result),
             status = result.status,
             stdout_bytes = result.stdout.len(),
             stderr_bytes = result.stderr.len(),
@@ -381,15 +412,6 @@ pub async fn read_tree<C: Connection>(
         host = host
     );
     Ok(tree)
-}
-
-/// [`read_tree`] within desktop's [`TREE_DEADLINE`].
-///
-/// # Errors
-///
-/// As [`read_tree`].
-pub async fn list<C: Connection>(connection: &C, host: &str) -> Result<ControlRemoteTree, String> {
-    read_tree(connection, host, TREE_DEADLINE).await
 }
 
 /// New Session on `host`, named `name` when given: the created session once it is attachable, and the listing that

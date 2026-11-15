@@ -245,6 +245,40 @@ async fn an_agterm_that_lists_nothing_is_asked_its_mode_and_the_listing_says_why
     }
 }
 
+/// A flow's listing on a fresh connection reads the machine plainly, as desktop's flows do: an agterm that lists
+/// nothing is asked its restore mode once, by the flow that needs it, never also by the listing before it.
+#[tokio::test(start_paused = true)]
+async fn a_flows_listing_of_an_empty_agterm_does_not_ask_its_mode() {
+    use ngterm_core::remote::origin::{OriginForm, OriginShell};
+    use ngterm_core::remote::peer::{AGTERM_ANSWER, RemotePeer};
+    let transport = FakeTransport::new();
+    let empty = json!({"ok": true, "result": {"remote": {
+        "endpoint": {"executable": "/Applications/agterm.app/Contents/MacOS/zmx", "socketDirectory": "/tmp/agterm-zmx-1"},
+        "sessions": [],
+    }}});
+    transport.script(
+        &tree_tail(OriginShell::Posix),
+        Script::ok(&format!("{AGTERM_ANSWER}\n{empty}")),
+    );
+    let agterm = OriginForm {
+        shell: OriginShell::Posix,
+        peer: RemotePeer::Agterm,
+    };
+    transport.script(&control_tail(agterm, &RESTORE_MODE_ARGUMENTS), restore_mode("none"));
+    let connection = fresh(&transport).await;
+
+    let error = create(&connection, HOST, None, || {}).await.expect_err("not live");
+
+    assert!(error.contains("restore mode none"), "{error}");
+    assert_eq!(
+        commands(&transport),
+        [
+            tree_tail(OriginShell::Posix),
+            control_tail(agterm, &RESTORE_MODE_ARGUMENTS)
+        ]
+    );
+}
+
 /// A first control line on a fresh connection is agterm's on an agterm-only Mac: the app is listed first, never guessed.
 #[tokio::test]
 async fn a_fresh_connections_first_control_line_lists_the_app_first() {
