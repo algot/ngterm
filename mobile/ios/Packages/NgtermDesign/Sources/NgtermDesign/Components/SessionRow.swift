@@ -4,9 +4,9 @@ import SwiftUI
 /// and the Attached mark, its line, and its status.
 ///
 /// The badge and the mark follow the name; with a badge they go under it at an accessibility size rather than cutting
-/// it short. The line is the context, the working directory, or "Companion of …"; the status an
-/// ``AgentStatusBadge``, or an ``UnderWayLabel`` while the session is being ended ("Ending") or duplicated
-/// ("Duplicating"). A companion sits indented under its parent. It reads no app state; its list adds the selection, swipe actions and the context menu.
+/// it short. The line is the context, the working directory, or "Companion of …"; the status an ``AgentStatusBadge``,
+/// or an ``UnderWayLabel`` while the session is being ended ("Ending") or duplicated ("Duplicating"). A companion sits
+/// indented under its parent. It reads no app state; its list adds the selection, swipe actions and the context menu.
 public struct SessionRow<Status: View>: View {
     @Environment(\.dynamicTypeSize)
     private var typeSize

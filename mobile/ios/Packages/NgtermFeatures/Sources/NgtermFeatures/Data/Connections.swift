@@ -29,12 +29,13 @@ public final class Connections {
     /// Why a machine's agterm lists no session (the core's words: it is not in Live sessions mode, and what to change
     /// there), by id, as its last listing said.
     public private(set) var hints: [String: String] = [:]
-    /// The app each machine runs, by id, as its connection's last listing with a session named it; a machine not here
-    /// runs ngterm or hasn't said. A machine that runs both apps is ngterm's: ``sessionPeers`` names its agterm
-    /// sessions.
-    public private(set) var peers: [String: MachinePeer] = [:]
+    /// The app each machine runs, by id, as its connection's last listing with a session named it.
+    ///
+    /// A machine not here runs ngterm or hasn't said. A machine that runs both apps is ngterm's: ``sessionPeers`` names
+    /// its agterm sessions.
+    public internal(set) var peers: [String: MachinePeer] = [:]
     /// The app of each listed session that isn't ngterm's; a session not here is ngterm's.
-    public private(set) var sessionPeers: [SessionKey: MachinePeer] = [:]
+    public internal(set) var sessionPeers: [SessionKey: MachinePeer] = [:]
     /// The sessions this app has attached, by machine id: each machine's session ids.
     public internal(set) var attached: [String: Set<String>] = [:] {
         didSet {
@@ -359,44 +360,6 @@ public final class Connections {
         let gone = (attached[machineId] ?? []).subtracting(sessions.map(\.id))
         for sessionId in gone.sorted() {
             detach(machineId: machineId, sessionId: sessionId)
-        }
-    }
-
-    // a listing names each session's app; the machine's is another app than ngterm only when every session's is (a
-    // machine may run both). An empty listing says nothing, so the app learned before stays
-    private func learnPeer(_ machineId: String, _ sessions: [RemoteSession]) {
-        var apps: [PeerKind: MachinePeer] = [:]
-        var foreign: [SessionKey: MachinePeer] = [:]
-        for session in sessions {
-            guard let kind = session.peer, kind != .ngterm else {
-                continue
-            }
-            let app = apps[kind] ?? MachinePeer(kind: kind)
-            apps[kind] = app
-            foreign[SessionKey(machineId: machineId, sessionId: session.id)] = app
-        }
-        let known = sessionPeers.filter { $0.key.machineId != machineId }.merging(foreign) { _, new in new }
-        if known != sessionPeers {
-            sessionPeers = known
-        }
-        let kind: PeerKind? =
-            if sessions.isEmpty {
-                nil
-            } else if foreign.count == sessions.count {
-                sessions.first?.peer
-            } else {
-                sessions.lazy.compactMap(\.peer).first { $0 == .ngterm }
-            }
-        guard let kind, peers[machineId]?.kind != kind else {
-            return
-        }
-        peers[machineId] = apps[kind] ?? MachinePeer(kind: kind)
-    }
-
-    private func forgetPeers(_ machineId: String) {
-        peers[machineId] = nil
-        if sessionPeers.keys.contains(where: { $0.machineId == machineId }) {
-            sessionPeers = sessionPeers.filter { $0.key.machineId != machineId }
         }
     }
 

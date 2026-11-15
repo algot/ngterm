@@ -28,7 +28,7 @@ internal struct AgtermBesideNgtermTests {
 
     // the machine's sessions listed anew, as `peers` names each (`nil`: the listing doesn't say)
     private func listed(_ peers: [String: PeerKind?]) async {
-        test.core.sessions["m1"] = peers.keys.sorted().map { fakeSession(id: $0, peer: peers[$0] ?? nil) }
+        test.core.sessions["m1"] = peers.keys.sorted().map { fakeSession(id: $0, peer: peers[$0, default: nil]) }
         await connections.listSessions(machineId: "m1")
         await test.settled()
     }

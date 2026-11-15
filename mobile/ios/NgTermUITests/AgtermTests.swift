@@ -147,8 +147,9 @@ internal final class AgtermTests: XCTestCase {
     }
 
     // `duo` (the app's `FakeAgtermWorld`) runs agterm beside ngterm, Claude Code in each session's pane: the machine
-    // has no badge, `journal` (agterm's) has one in its row and its title, its Chat view is off and greyed, saying why,
-    // in the row's menu and in More, and its pane keeps the terminal; `build` (ngterm's) has no badge and shows its chat
+    // has no badge, `journal` (agterm's) has one in its row and its title, its Chat view is off and greyed, saying
+    // why, in the row's menu and in More, and its pane keeps the terminal; `build` (ngterm's) has no badge and shows
+    // its chat
     @MainActor
     internal func testOnAMacRunningBothOnlyTheAgtermSessionHasTheBadgeAndNoChat() throws {
         let app = FakeApp.launch(withKey: true, arguments: ["-ngterm-fake-agterm-beside"], for: self)

@@ -94,7 +94,7 @@
                 let total = UInt64(bytes.count)
                 _ = try state.withLock { state throws(MobileError) in
                     _ = try state.sessionsOf(machineId)
-                    try state.offersChat(machineId)
+                    try state.offersChat(machineId, sessionId: nil)
                     state.uploadTokens.append(cancel)
                 }
                 // half of it has gone when a test's gate holds the call; a cancel there stops it
