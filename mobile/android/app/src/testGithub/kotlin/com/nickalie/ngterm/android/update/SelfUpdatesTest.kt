@@ -118,12 +118,16 @@ class SelfUpdatesTest {
     fun aCheckThatCantReachGitHubSaysWhyAndCanBeTriedAgain() {
         rig.http.failure = IOException("no route to host")
         val updates = rig.updates()
+        val unreachable = UpdateState.Failed(UpdateFailure.Check("no route to host"))
         assertFalse(runBlocking { updates.checkInBackground() })
-        assertEquals(UpdateState.Failed(UpdateFailure.Check("no route to host")), updates.state.value)
+        assertEquals(unreachable, updates.state.value)
         rig.http.failure = null
         rig.http.bodies[RELEASES_API] = "not json".toByteArray()
         updates.check()
-        assertTrue(failed(updates).failure is UpdateFailure.Check)
+        // the first failure shows until this check's own replaces it: waiting for any failure would not wait at all,
+        // and the next check would then be asked for while this one runs, and be dropped
+        val unreadable = awaitState(updates) { it is UpdateState.Failed && it != unreachable } as UpdateState.Failed
+        assertTrue(unreadable.failure is UpdateFailure.Check)
         released("0.3.0")
         updates.check()
         available(updates)
