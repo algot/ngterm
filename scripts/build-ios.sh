@@ -375,6 +375,14 @@ quiet_keyboard_introduction() {
   fi || die "couldn't set simulator $1's keyboard preferences"
 }
 
+# Boots the simulator $1 (named $2) and waits until it has: xcodebuild then builds while the simulator's services
+# settle. One xcodebuild boots only as the tests start is still busy with its first minutes when the first test
+# installs the app, and on CI's virtual Macs that install has outlasted XCTest's wait for the launch ("Failed to
+# launch ... Timed out while launching application via Xcode", xcodebuild still in the simulator's install).
+boot_simulator() {
+  xcrun simctl bootstatus "$1" -b >/dev/null || die "the $2 simulator ($1) didn't boot"
+}
+
 # Run test plan $1 on the phone and tablet simulators, one after the other (or on --device's alone), into
 # mobile/ios/build/$1.xcresult, with xcodebuild's options $2... (the UI plan's retry and shard), then count its tests
 # (report_test_counts); its status is xcodebuild's.
@@ -389,6 +397,7 @@ run_test_plan() {
     udid="$(simulator_udid "$name")"
     [[ -n "$udid" ]] || die "no $name simulator on iOS $IOS_SIMULATOR_RUNTIME: run scripts/setup-ios.sh"
     quiet_keyboard_introduction "$udid"
+    boot_simulator "$udid" "$name"
     destinations+=(-destination "id=$udid")
   done
   mkdir -p "$BUILD_DIR"
@@ -428,15 +437,28 @@ ui_shard_options() {
 }
 
 # The UI plan: a UI test that fails runs once more; report_retried_tests then judges each that passed so, red runs
-# included. Status 0 only when the plan passed and none was flaky.
+# included. Status 0 only when the plan passed and none was flaky. scripts/ios-ui-watchdog.py watches the run, and
+# ends one that no longer moves (the app never idle for XCTest, or xcodebuild with no test moving) with what it
+# found in mobile/ios/build/ui-watchdog/: such a run fails here, rather than at the job's timeout hours later.
 run_ui_plan() {
-  local status=0 options option shard=()
+  local status=0 options option shard=() watchdog verdict
   rm -f "$BUILD_DIR/retried-tests.txt"
   options="$(ui_shard_options)"
   while IFS= read -r option; do
     [[ -z "$option" ]] || shard+=("$option")
   done <<<"$options"
+  scripts/ios-ui-watchdog.py --bundle "$BUILD_DIR/UI.xcresult" --parent $$ --out "$BUILD_DIR/ui-watchdog" &
+  watchdog=$!
   run_test_plan UI -retry-tests-on-failure -test-iterations 2 ${shard[@]+"${shard[@]}"} || status=$?
+  kill "$watchdog" 2>/dev/null || true
+  wait "$watchdog" 2>/dev/null || true
+  if [[ -s "$BUILD_DIR/ui-watchdog/verdict.txt" ]]; then
+    verdict="$(<"$BUILD_DIR/ui-watchdog/verdict.txt")"
+    if [[ "${GITHUB_ACTIONS:-}" == true ]]; then
+      echo "::error title=UI plan ended by its watchdog::$verdict"
+    fi
+    die "build-ios.sh: the UI plan was ended: $verdict; what the watchdog found is in $BUILD_DIR/ui-watchdog/"
+  fi
   report_retried_tests "$BUILD_DIR/UI.xcresult" "$BUILD_DIR/retried-tests.txt" || status=1
   return "$status"
 }

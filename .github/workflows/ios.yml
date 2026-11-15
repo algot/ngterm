@@ -75,6 +75,7 @@ on:
       - scripts/ios-sim-runner.sh
       - scripts/ios-privacy-check.sh
       - scripts/ios-coverage.py
+      - scripts/ios-ui-watchdog.py
       - scripts/build-ghostty-vt.sh
       - scripts/lib/native.sh
       - build/pins.env
@@ -261,6 +262,7 @@ jobs:
             xcrun xcresulttool export attachments --path "$bundle" \
               --output-path "mobile/ios/build/failure-attachments/$(basename "$bundle" .xcresult)" || true
           done
+      # with what the UI plan's watchdog found about a run it ended (scripts/ios-ui-watchdog.py)
       - &upload-failure-diffs
         name: upload the failed snapshots and attachments
         if: failure() || cancelled() || hashFiles('mobile/ios/build/retried-tests.txt') != ''
@@ -270,6 +272,7 @@ jobs:
           path: |
             mobile/ios/build/snapshot-failures/
             mobile/ios/build/failure-attachments/
+            mobile/ios/build/ui-watchdog/
           if-no-files-found: ignore
           retention-days: 1
 
