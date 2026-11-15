@@ -1,9 +1,11 @@
 package com.nickalie.ngterm.android.platform
 
 import android.app.UiAutomation
+import android.content.ClipData
 import android.content.ClipboardManager
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.os.PersistableBundle
 import android.os.SystemClock
 import android.util.Base64
 import android.view.accessibility.AccessibilityNodeInfo
@@ -12,7 +14,10 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.nickalie.ngterm.android.MainActivity
 import com.nickalie.ngterm.core.ffi.ClipboardPart
+import com.nickalie.ngterm.core.ffi.ClipboardReadConsent
+import com.nickalie.ngterm.core.ffi.ClipboardReadFacts
 import com.nickalie.ngterm.core.ffi.ClipboardWriteStatus
+import com.nickalie.ngterm.core.ffi.clipboardReadConsent
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -116,8 +121,39 @@ class AndroidClipboardDeviceTest {
         assertEquals(emptyList<String>(), onMain { clipboard.types() })
     }
 
+    @Test
+    fun aClipMarkedSensitiveReadsAsSensitiveAndAnotherDoesNot() {
+        val manager = compose.activity.getSystemService(ClipboardManager::class.java)
+        val marked = ClipData.newPlainText("password", "hunter2")
+        marked.description.extras = PersistableBundle().apply { putBoolean(AndroidClipboard.IS_SENSITIVE, true) }
+        onMain { manager.setPrimaryClip(marked) }
+        val taken = onMain { clipboard.take(listOf("text/plain"), list = false) }
+        assertEquals(true, taken.sensitive)
+        assertEquals(keys(listOf(ClipboardPart("text/plain", "hunter2".toByteArray()))), keys(taken.contents))
+        onMain { manager.setPrimaryClip(ClipData.newPlainText("plain", "ls -la")) }
+        assertEquals(false, onMain { clipboard.take(listOf("text/plain"), list = false) }.sensitive)
+    }
+
+    @Test
+    fun theTestsConsentRuleIsTheCores() {
+        for (bits in 0 until FACT_COMBINATIONS) {
+            val facts = ClipboardReadFacts(bits and 1 != 0, bits and 2 != 0, bits and 4 != 0, bits and 8 != 0)
+            assertEquals("$facts", expectedConsent(facts), clipboardReadConsent(facts))
+        }
+    }
+
+    // the rule the app's JVM tests stand in for the core's (`fakeClipboardReadConsent`)
+    private fun expectedConsent(facts: ClipboardReadFacts) =
+        when {
+            !facts.discloses -> ClipboardReadConsent.UNASKED
+            facts.sensitive -> ClipboardReadConsent.ASK_ONCE
+            facts.granted || facts.trusted -> ClipboardReadConsent.UNASKED
+            else -> ClipboardReadConsent.ASK
+        }
+
     private companion object {
         const val BINARY = 2048
+        const val FACT_COMBINATIONS = 16
         const val FOCUS_TIMEOUT_MS = 30_000L
         const val FOCUS_POLL_MS = 250L
 
@@ -143,3 +179,7 @@ class AndroidClipboardDeviceTest {
             )
     }
 }
+
+private fun AndroidClipboard.read(mimes: List<String>) = take(mimes, list = false).contents
+
+private fun AndroidClipboard.types() = take(emptyList(), list = true).available

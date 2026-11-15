@@ -30,6 +30,7 @@
 //! - **Kitty images** are off (`kitty_image_limit` 0): the attach client's probe reports no support.
 
 mod clipboard;
+mod consent;
 mod records;
 #[cfg(test)]
 mod tests;
@@ -54,6 +55,7 @@ use tokio::task::AbortHandle;
 use uuid::Uuid;
 
 use self::clipboard::{Read, Write};
+pub use self::consent::{ClipboardReadConsent, ClipboardReadFacts, clipboard_read_consent};
 pub use self::records::{
     ClipboardPart, ClipboardReply, ClipboardWriteStatus, PaneClipboard, PaneEnd, PaneRef, PaneRole,
 };

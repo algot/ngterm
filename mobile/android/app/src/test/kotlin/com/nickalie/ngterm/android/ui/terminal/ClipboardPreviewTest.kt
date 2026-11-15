@@ -105,6 +105,31 @@ class ClipboardPreviewTest {
     }
 
     @Test
+    fun aQuestionForOneReadOffersNoStandingPermission() {
+        var remembered: Boolean? = null
+        compose.setContent {
+            NgtermTheme {
+                ClipboardReadQuestion(
+                    canRemember = true,
+                    machine = "build-01",
+                    session = "docs-site",
+                    preview = ClipboardSnapshot(listOf(part("text/plain", "hunter2")), emptyList(), sensitive = true),
+                    onAllow = { remembered = it },
+                    onAlways = { error("not offered") },
+                    onDeny = {},
+                    once = true,
+                )
+            }
+        }
+        compose.onNodeWithText("Hidden").assertExists()
+        compose.onNodeWithText("hunter2").assertDoesNotExist()
+        compose.onNodeWithText("Always allow on build-01").assertDoesNotExist()
+        compose.onNodeWithText("Don't ask again for this program in this terminal").assertDoesNotExist()
+        compose.onNodeWithText("Allow once").assertIsEnabled().performClick()
+        assertEquals(false, remembered)
+    }
+
+    @Test
     fun sizesReadAsGhosttysDialogSaysThem() {
         assertEquals(
             listOf("1 byte", "73 bytes", "999 bytes", "2.0 kB", "1.5 MB", "2.1 GB"),

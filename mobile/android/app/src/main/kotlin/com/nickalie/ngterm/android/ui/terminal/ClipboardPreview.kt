@@ -17,10 +17,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -155,12 +158,15 @@ private val UNITS = listOf("kB", "MB", "GB")
  * What a program's read would hand over, under the question: a page per type, picked with a chip each (when there is
  * more than one), on a `surfaceContainerLow` plate. An image shows at most [PREVIEW_IMAGE_HEIGHT] tall, text in mono,
  * other data as a note with its size, an empty part as such; each page says its size under the plate. A [snapshot]
- * still being read shows a quiet line, one with none of the types says so.
+ * still being read shows a quiet line, one with none of the types says so. A [concealed] one (a clip marked
+ * sensitive) shows "Hidden" over each part's type and size until the user asks to see it, and hides again on
+ * request.
  */
 @Composable
 internal fun ClipboardPreview(
     snapshot: ClipboardSnapshot?,
     modifier: Modifier = Modifier,
+    concealed: Boolean = false,
 ) {
     val spacing = NgtermTheme.spacing
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(spacing.sm)) {
@@ -181,10 +187,45 @@ internal fun ClipboardPreview(
                 )
             }
 
+            concealed -> {
+                Concealed(previewPages(snapshot.contents))
+            }
+
             else -> {
                 Pages(previewPages(snapshot.contents))
             }
         }
+    }
+}
+
+@Composable
+private fun Concealed(pages: List<PreviewPage>) {
+    val spacing = NgtermTheme.spacing
+    var revealed by rememberSaveable { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(spacing.sm)) {
+        if (revealed) {
+            Pages(pages)
+            TextButton(onClick = { revealed = false }) { Text(stringResource(R.string.clipboard_preview_hide)) }
+            return@Column
+        }
+        Column(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surfaceContainerLow, MaterialTheme.shapes.small)
+                    .padding(spacing.md),
+            verticalArrangement = Arrangement.spacedBy(spacing.xs),
+        ) {
+            Quiet(stringResource(R.string.clipboard_preview_hidden))
+            for (page in pages) {
+                Text(
+                    text = stringResource(R.string.clipboard_preview_caption, page.mime, formatSize(page.size)),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        TextButton(onClick = { revealed = true }) { Text(stringResource(R.string.clipboard_preview_show)) }
     }
 }
 

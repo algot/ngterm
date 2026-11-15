@@ -96,7 +96,8 @@ fun PasteConfirmDialog(
  * The first clipboard read [graph]'s panes are waiting on, as a sheet over whatever is shown: the machine and the
  * session it comes from by their names, what it would hand over ([ClipboardReads.preview], read once the sheet is up;
  * a clipboard that fails to read refuses the read, and the sheet goes),
- * and Allow, Always allow on the machine, or Deny. Swiping it away denies.
+ * and Allow, Always allow on the machine, or Deny. Swiping it away denies. A read that would hand over a clip marked
+ * sensitive is asked for that one read ([ClipboardReads.asksOnce]).
  */
 @Composable
 fun ClipboardReadPrompt(graph: AppGraph) {
@@ -116,6 +117,7 @@ fun ClipboardReadPrompt(graph: AppGraph) {
             machine = machine,
             session = session,
             preview = preview,
+            once = preview?.let { reads.asksOnce(read, it) } == true,
             onAllow = { remember -> preview?.let { reads.allow(read, it, remember) } },
             onAlways = { remember -> preview?.let { reads.allowAlways(read, it, remember) } },
             onDeny = { reads.deny(read) },
@@ -135,6 +137,7 @@ fun ClipboardReadSheet(
     onAlways: (remember: Boolean) -> Unit,
     onDeny: () -> Unit,
     modifier: Modifier = Modifier,
+    once: Boolean = false,
 ) {
     ModalBottomSheet(
         onDismissRequest = onDeny,
@@ -143,7 +146,7 @@ fun ClipboardReadSheet(
         containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
         shape = MaterialTheme.shapes.large,
     ) {
-        ClipboardReadQuestion(read.canRemember, machine, session, preview, onAllow, onAlways, onDeny)
+        ClipboardReadQuestion(read.canRemember, machine, session, preview, onAllow, onAlways, onDeny, once = once)
     }
 }
 
@@ -151,6 +154,8 @@ fun ClipboardReadSheet(
  * The question a program's clipboard read asks: the attention diamond, "Let docs-site read your clipboard?", from
  * where, what it would see ([ClipboardPreview]), the "don't ask again" switch when the read [canRemember], then Allow
  * (filled), Always allow on [machine] (outlined) and Deny. Allow and Always stay disabled until [preview] is read.
+ * Asked for the one read ([once]: the clip is marked sensitive), it says so, hides what was copied until the user asks
+ * to see it, and offers Allow once and Deny alone.
  */
 @Composable
 internal fun ClipboardReadQuestion(
@@ -162,9 +167,11 @@ internal fun ClipboardReadQuestion(
     onAlways: (remember: Boolean) -> Unit,
     onDeny: () -> Unit,
     modifier: Modifier = Modifier,
+    once: Boolean = false,
 ) {
     val spacing = NgtermTheme.spacing
     var remember by rememberSaveable { mutableStateOf(false) }
+    val body = if (once) R.string.clipboard_read_sensitive_body else R.string.clipboard_read_body
     Column(
         modifier =
             modifier
@@ -183,12 +190,12 @@ internal fun ClipboardReadQuestion(
             modifier = Modifier.semantics { heading() },
         )
         Text(
-            text = stringResource(R.string.clipboard_read_body, session, machine),
+            text = stringResource(body, session, machine),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        ClipboardPreview(preview)
-        if (canRemember) {
+        ClipboardPreview(preview, concealed = once)
+        if (canRemember && !once) {
             Row(
                 modifier =
                     Modifier
@@ -207,18 +214,38 @@ internal fun ClipboardReadQuestion(
                 Switch(checked = remember, onCheckedChange = null)
             }
         }
-        Column(verticalArrangement = Arrangement.spacedBy(spacing.sm)) {
-            // nothing is handed over before the user has seen it: Allow and Always wait for the preview
-            val shown = preview != null
-            Button(onClick = { onAllow(remember) }, enabled = shown, modifier = Modifier.fillMaxWidth()) {
-                Text(stringResource(R.string.clipboard_read_allow))
-            }
-            OutlinedButton(onClick = { onAlways(remember) }, enabled = shown, modifier = Modifier.fillMaxWidth()) {
+        // nothing is handed over before the user has seen it: Allow and Always wait for the preview
+        ClipboardReadAnswers(
+            machine = machine,
+            shown = preview != null,
+            once = once,
+            onAllow = { onAllow(remember) },
+            onAlways = { onAlways(remember) },
+            onDeny = onDeny,
+        )
+    }
+}
+
+@Composable
+private fun ClipboardReadAnswers(
+    machine: String,
+    shown: Boolean,
+    once: Boolean,
+    onAllow: () -> Unit,
+    onAlways: () -> Unit,
+    onDeny: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(NgtermTheme.spacing.sm)) {
+        Button(onClick = onAllow, enabled = shown, modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(if (once) R.string.clipboard_read_allow_once else R.string.clipboard_read_allow))
+        }
+        if (!once) {
+            OutlinedButton(onClick = onAlways, enabled = shown, modifier = Modifier.fillMaxWidth()) {
                 Text(stringResource(R.string.clipboard_read_always, machine))
             }
-            TextButton(onClick = onDeny, modifier = Modifier.fillMaxWidth()) {
-                Text(stringResource(R.string.clipboard_read_deny))
-            }
+        }
+        TextButton(onClick = onDeny, modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(R.string.clipboard_read_deny))
         }
     }
 }

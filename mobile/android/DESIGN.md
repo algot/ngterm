@@ -475,6 +475,15 @@ gives up on (its pane hidden, detached, lost or exited) closes its sheet.
 - "Always" is the app's to keep, per machine (`ClipboardTrust`, which Settings lists), and answers that machine's later
   reads at once. In the background Android lets no app read the clipboard, so an always-allowed read then gets an
   empty one.
+- **A clip marked sensitive** (the app that copied it set Android's `EXTRA_IS_SENSITIVE`, as password managers do)
+  is never handed over unasked: the sheet comes up also on an always-allowed machine and for a program holding a
+  grant, and its answer is for that one read. It says why in place of the usual line ("What you copied is marked
+  sensitive, like a password or a key. A program in docs-site on build-01 asks for it and sees it only if you allow
+  it. A clip like this is asked about every time."), keeps what was copied off the screen (the plate says "Hidden"
+  over each part's type and size, with **Show what you copied** under it; shown, the usual preview with **Hide what
+  you copied** under it), and offers **Allow once** (filled) and **Deny** alone: no Always, no grant switch. The
+  rule is the core's (`clipboard_read_consent`), the same on iOS. A clip without the mark is an ordinary clip,
+  whatever it holds.
 
 A program's write isn't asked about (Ghostty's `clipboard-write = allow`): its text, HTML and first image land on the
 clipboard as one clip (an image through the app's own content URI, replaced by the next write; HTML with its text, as

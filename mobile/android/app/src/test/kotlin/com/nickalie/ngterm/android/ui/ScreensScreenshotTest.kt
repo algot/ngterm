@@ -220,6 +220,33 @@ class ScreensScreenshotTest(
         captureScreenRoboImage(golden("clipboard_read_sheet"))
     }
 
+    @OptIn(ExperimentalRoborazziApi::class)
+    @Test
+    fun clipboardReadSheetForASensitiveClip() {
+        compose.setContent {
+            NgtermTheme {
+                MachinesSample(MachinesUiState.Ready(SampleMachines.take(1), offline = false))
+                ClipboardReadSheet(
+                    read = ClipboardRead(PaneRef("m1", "s1", "P1"), readId = 1u, listOnly = false, canRemember = true),
+                    machine = "build-01",
+                    session = "docs-site",
+                    preview =
+                        ClipboardSnapshot(
+                            listOf(part("text/plain", "correct horse battery staple")),
+                            emptyList(),
+                            sensitive = true,
+                        ),
+                    onAllow = {},
+                    onAlways = {},
+                    onDeny = {},
+                    once = true,
+                )
+            }
+        }
+        compose.waitForIdle()
+        captureScreenRoboImage(golden("clipboard_read_sheet_sensitive"))
+    }
+
     @Test
     fun hostKeyChanged() =
         capture("host_key_changed") {

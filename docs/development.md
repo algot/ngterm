@@ -806,7 +806,9 @@ OSC 52's.
 The Android and iOS apps take a program's reads and writes the same way, per MIME type, on the device's one clipboard:
 it keeps text, HTML and images (Android's clip with its image behind the app's content URI, iOS's pasteboard item),
 the read's prompt previews what would be disclosed (a page per type on Android, the text and first image on iOS) and
-offers the same grant, and a write completes only once the clipboard took it. Each app's design system has the
+offers the same grant, and a write completes only once the clipboard took it. A clip the device marks sensitive
+(Android's `EXTRA_IS_SENSITIVE`, iOS's `org.nspasteboard.ConcealedType` pasteboard type) always asks, for that one
+read, whatever was allowed before: the rule is the core's `clipboard_read_consent`. Each app's design system has the
 details (`mobile/android/DESIGN.md`, `mobile/ios/DESIGN.md`).
 
 The values mean what they mean in Ghostty at `LIBGHOSTTY_VT_REV`, not in the older libghostty upstream links, so two

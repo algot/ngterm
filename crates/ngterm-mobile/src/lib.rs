@@ -72,7 +72,10 @@ pub use chat::{
     ChatQuestionOption, ChatState, ChatTool, ChatToolKind, ChatToolStatus, ChatUsage, UploadCancel, filter_commands,
 };
 pub use keys::{ExportProtection, KeyError, KeyPair};
-pub use pane::{ClipboardPart, ClipboardReply, ClipboardWriteStatus, PaneClipboard, PaneEnd, PaneRef, PaneRole};
+pub use pane::{
+    ClipboardPart, ClipboardReadConsent, ClipboardReadFacts, ClipboardReply, ClipboardWriteStatus, PaneClipboard,
+    PaneEnd, PaneRef, PaneRole, clipboard_read_consent,
+};
 pub use peer::{PeerCapabilities, PeerKind, peer_capabilities};
 pub use presentation::{
     AskReply, PresentationRole, RemoteAsk, RemoteAskButton, RemoteAskChoice, RemoteAskChoices, RemoteAskInput,

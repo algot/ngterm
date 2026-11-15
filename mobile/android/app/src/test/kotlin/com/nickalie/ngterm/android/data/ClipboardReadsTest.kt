@@ -42,7 +42,14 @@ class ClipboardReadsTest {
         device: DeviceClipboard = clipboard,
     ): ClipboardReads {
         val connections = Connections(this, { 0L }) { sink -> FakeMobileCore(sink).also { core = it } }
-        return ClipboardReads(backgroundScope, connections, trust, device, EmptyCoroutineContext)
+        return ClipboardReads(
+            backgroundScope,
+            connections,
+            trust,
+            device,
+            EmptyCoroutineContext,
+            ::fakeClipboardReadConsent,
+        )
     }
 
     private fun request(
@@ -280,11 +287,9 @@ class ClipboardReadsTest {
     fun anUnaskedReadDismissedWhileItsSnapshotIsTakenGoesUnanswered() =
         runTest {
             val dismissing =
-                object : DeviceClipboard by clipboard {
-                    override fun read(mimes: List<String>): List<ClipboardPart> {
-                        core.emit(MobileEvent.ClipboardReadDismiss(pane, 1u))
-                        return clipboard.read(mimes)
-                    }
+                DeviceClipboard { mimes, list ->
+                    core.emit(MobileEvent.ClipboardReadDismiss(pane, 1u))
+                    clipboard.take(mimes, list)
                 }
             reads(device = dismissing)
             advanceUntilIdle()
@@ -299,14 +304,12 @@ class ClipboardReadsTest {
         runTest {
             var failing = true
             val flaky =
-                object : DeviceClipboard by clipboard {
-                    override fun read(mimes: List<String>): List<ClipboardPart> {
-                        if (failing) {
-                            failing = false
-                            error("the provider failed")
-                        }
-                        return clipboard.read(mimes)
+                DeviceClipboard { mimes, list ->
+                    if (failing) {
+                        failing = false
+                        error("the provider failed")
                     }
+                    clipboard.take(mimes, list)
                 }
             reads(device = flaky)
             advanceUntilIdle()
@@ -320,9 +323,7 @@ class ClipboardReadsTest {
     fun anAskedReadWhoseClipboardFailsToPreviewIsRefused() =
         runTest {
             val failing =
-                object : DeviceClipboard by clipboard {
-                    override fun read(mimes: List<String>): List<ClipboardPart> = error("the provider failed")
-                }
+                DeviceClipboard { _, _ -> error("the provider failed") }
             val reads = reads(device = failing)
             advanceUntilIdle()
             request(1u)
@@ -331,6 +332,139 @@ class ClipboardReadsTest {
             assertNull("no snapshot to Allow", reads.preview(read))
             assertEquals(listOf(1uL to ClipboardReply.Deny.key()), answers())
             assertEquals("the next read still waits", listOf(2uL), reads.pending.value.map { it.readId })
+        }
+
+    // reads whose machine m1 the user allowed always
+    private suspend fun TestScope.trustedReads(): ClipboardReads {
+        val trust = ClipboardTrust(testStore(dir.root, "clipboard"))
+        val reads = reads(trust)
+        trust.allow("m1")
+        settle { reads.trusted.value == setOf("m1") }
+        return reads
+    }
+
+    @Test
+    fun aSensitiveClipAsksOnAnAlwaysAllowedMachineAndItsAllowIsForThatOneRead() =
+        runTest {
+            val reads = trustedReads()
+            clipboard.sensitive = true
+            request(1u)
+            runCurrent()
+            assertEquals("nothing is handed over unasked", emptyList<Any>(), answers())
+            val read = reads.pending.value.single()
+            assertEquals(1uL, read.readId)
+            val shown = reads.shown(read)
+            assertEquals(listOf(copied.key()), shown.contents.map { it.key() })
+            assertEquals("the prompt shows the snapshot that was taken", 1, clipboard.reads)
+            assertEquals(true, reads.asksOnce(read, shown))
+
+            reads.allow(read, shown)
+            assertEquals(listOf(1uL to allowed(copied)), answers())
+            request(2u)
+            runCurrent()
+            assertEquals("the next read asks again", listOf(2uL), reads.pending.value.map { it.readId })
+
+            clipboard.sensitive = false
+            request(3u)
+            runCurrent()
+            assertEquals("an ordinary clip is answered unasked as before", 3uL to allowed(copied), answers().last())
+            assertEquals(setOf("m1"), reads.trusted.value)
+        }
+
+    @Test
+    fun aSensitiveClipAsksAProgramHoldingAGrantAndKeepsNoGrant() =
+        runTest {
+            val reads = reads()
+            advanceUntilIdle()
+            clipboard.sensitive = true
+            request(ClipboardRead(pane, 1u, listOnly = false, canRemember = true), granted = true)
+            runCurrent()
+            assertEquals(emptyList<Any>(), answers())
+            val read = reads.pending.value.single()
+            reads.allow(read, reads.shown(read), remember = true)
+            assertEquals(listOf(1uL to allowed(copied, remember = false)), answers())
+        }
+
+    @Test
+    fun alwaysAllowOverASensitiveClipTrustsNoMachine() =
+        runTest {
+            val reads = reads()
+            advanceUntilIdle()
+            clipboard.sensitive = true
+            request(1u, canRemember = true)
+            val read = reads.pending.value.single()
+            reads.allowAlways(read, reads.shown(read), remember = true)
+            runCurrent()
+            assertEquals(listOf(1uL to allowed(copied, remember = false)), answers())
+            assertEquals(emptySet<String>(), reads.trusted.value)
+            request(2u)
+            runCurrent()
+            assertEquals(listOf(2uL), reads.pending.value.map { it.readId })
+        }
+
+    @Test
+    fun alwaysAllowLeavesAWaitingReadAskingOnceTheClipIsSensitive() =
+        runTest {
+            val reads = reads()
+            advanceUntilIdle()
+            request(1u)
+            request(2u, PaneRef("m1", "s2", "P2"))
+            val first = reads.pending.value.first()
+            val shown = reads.shown(first)
+            clipboard.sensitive = true
+            reads.allowAlways(first, shown)
+            runCurrent()
+            assertEquals("only the read the user saw is answered", listOf(1uL to allowed(copied)), answers())
+            assertEquals(listOf(2uL), reads.pending.value.map { it.readId })
+            assertEquals(true, reads.asksOnce(reads.pending.value.single(), reads.shown(reads.pending.value.single())))
+        }
+
+    @Test
+    fun aSensitiveClipTheReadGetsNoneOfIsAnsweredUnasked() =
+        runTest {
+            val reads = reads()
+            advanceUntilIdle()
+            clipboard.sensitive = true
+            request(ClipboardRead(pane, 1u, listOnly = false, mimes = listOf("image/png"), list = true), granted = true)
+            request(ClipboardRead(pane, 2u, listOnly = true, mimes = emptyList(), list = true))
+            runCurrent()
+            assertEquals(emptyList<ClipboardRead>(), reads.pending.value)
+            val listed = listOf("text/plain")
+            assertEquals(
+                listOf(1uL to allowed(available = listed), 2uL to allowed(available = listed)),
+                answers(),
+            )
+        }
+
+    @Test
+    fun aSensitiveReadTheCoreDismissesStopsAsking() =
+        runTest {
+            val reads = reads()
+            advanceUntilIdle()
+            clipboard.sensitive = true
+            request(1u, granted = true)
+            runCurrent()
+            assertEquals(1, reads.pending.value.size)
+            core.emit(MobileEvent.ClipboardReadDismiss(pane, 1u))
+            assertEquals(emptyList<ClipboardRead>(), reads.pending.value)
+            assertEquals(emptyList<Any>(), answers())
+        }
+
+    @Test
+    fun aSensitiveReadDismissedWhileItsSnapshotIsTakenNeverAsks() =
+        runTest {
+            clipboard.sensitive = true
+            val dismissing =
+                DeviceClipboard { mimes, list ->
+                    core.emit(MobileEvent.ClipboardReadDismiss(pane, 1u))
+                    clipboard.take(mimes, list)
+                }
+            val reads = reads(device = dismissing)
+            advanceUntilIdle()
+            request(1u, granted = true)
+            runCurrent()
+            assertEquals(emptyList<ClipboardRead>(), reads.pending.value)
+            assertEquals(emptyList<Any>(), answers())
         }
 
     private companion object {

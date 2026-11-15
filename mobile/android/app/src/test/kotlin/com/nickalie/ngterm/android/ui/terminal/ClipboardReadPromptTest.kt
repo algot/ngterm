@@ -178,6 +178,39 @@ class ClipboardReadPromptTest {
     }
 
     @Test
+    fun aSensitiveClipAsksOnAnAlwaysAllowedMachineForThatOneRead() {
+        request(1u)
+        compose.awaitText("copied text")
+        compose.onNodeWithText("Always allow on build-01").performClick()
+        compose.waitForIdle()
+
+        compose.runOnIdle { test.deviceClipboard.sensitive = true }
+        request(2u, canRemember = true)
+        compose.awaitText("Allow once")
+        compose.onNodeWithText("What you copied is marked sensitive", substring = true).assertExists()
+        compose.onNodeWithText("Hidden").assertExists()
+        compose.onNodeWithText("text/plain, 11 bytes").assertExists()
+        compose.onNodeWithText("copied text").assertDoesNotExist()
+        compose.onNodeWithText("Always allow on build-01").assertDoesNotExist()
+        compose.onNodeWithText("Don't ask again for this program in this terminal").assertDoesNotExist()
+        assertEquals("nothing is handed over unasked", listOf(1uL to allowed(copied)), answers())
+
+        compose.onNodeWithText("Show what you copied").performClick()
+        compose.awaitText("copied text")
+        compose.onNodeWithText("Hide what you copied").performScrollTo().performClick()
+        compose.onNodeWithText("copied text").assertDoesNotExist()
+        compose.onNodeWithText("Allow once").performScrollTo().performClick()
+        compose.waitForIdle()
+        assertEquals(2uL to allowed(copied), answers().last())
+
+        request(3u)
+        compose.awaitText("Allow once")
+        compose.onNodeWithText("Deny").performScrollTo().performClick()
+        compose.waitForIdle()
+        assertEquals(3uL to ClipboardReply.Deny.key(), answers().last())
+    }
+
+    @Test
     fun aReadTheCoreDismissesClosesItsSheet() {
         request(1u)
         compose.awaitText("Let docs-site read your clipboard?")

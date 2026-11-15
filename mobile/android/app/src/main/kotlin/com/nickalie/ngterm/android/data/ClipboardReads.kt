@@ -5,10 +5,13 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import com.nickalie.ngterm.core.ffi.ClipboardPart
+import com.nickalie.ngterm.core.ffi.ClipboardReadConsent
+import com.nickalie.ngterm.core.ffi.ClipboardReadFacts
 import com.nickalie.ngterm.core.ffi.ClipboardReply
 import com.nickalie.ngterm.core.ffi.MobileEvent
 import com.nickalie.ngterm.core.ffi.MobileException
 import com.nickalie.ngterm.core.ffi.PaneRef
+import com.nickalie.ngterm.core.ffi.clipboardReadConsent
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -26,13 +29,15 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.CoroutineContext
 
 /**
- * The device's clipboard per MIME type, as a program's reads see it (text as `text/plain`): which types it holds, and
- * each of [read]'s types it holds, in that order; none when it holds none (or the app may not read it).
+ * The device's clipboard per MIME type, as a program's reads see it (text as `text/plain`). [take] reads one clip
+ * once: each of [mimes] it holds, in that order, the types it holds when [list] asks, and whether the device marks
+ * that same clip sensitive; nothing when it holds none (or the app may not read it).
  */
-interface DeviceClipboard {
-    fun types(): List<String>
-
-    fun read(mimes: List<String>): List<ClipboardPart>
+fun interface DeviceClipboard {
+    fun take(
+        mimes: List<String>,
+        list: Boolean,
+    ): ClipboardSnapshot
 }
 
 /**
@@ -63,7 +68,8 @@ class ClipboardTrust(
 /**
  * A program's read of the clipboard waiting for the user's answer: the [mimes] it wants (text as `text/plain`) and,
  * with [list], the types the clipboard holds; [canRemember] when an Allow may keep a grant for the program in its
- * terminal (the Kitty protocol's password). [listOnly] reads ask only which types it holds.
+ * terminal (the Kitty protocol's password), [granted] when the program holds one. [listOnly] reads ask only which
+ * types it holds.
  */
 data class ClipboardRead(
     val pane: PaneRef,
@@ -72,19 +78,27 @@ data class ClipboardRead(
     val mimes: List<String> = listOf("text/plain"),
     val list: Boolean = false,
     val canRemember: Boolean = false,
+    val granted: Boolean = false,
 )
 
-/** What the clipboard holds of a read's types: each one it holds, and the types it holds when the read asked. */
+/**
+ * What the clipboard holds of a read's types: each one it holds, the types it holds when the read asked, and whether
+ * the device marks the clip [sensitive] (a password manager's, an exported key).
+ */
 data class ClipboardSnapshot(
     val contents: List<ClipboardPart>,
     val available: List<String>,
+    val sensitive: Boolean = false,
 )
 
 /**
  * The clipboard reads of shown panes' programs (Ghostty's `clipboard-read = ask`): each waits in [pending] for the
  * user's Allow, Always or Deny, unless its machine is in [trust] or the program holds a grant in its terminal, which
  * answer it at once. A read that discloses no data (a listing of the types, or one asking for no type) is answered at
- * once too. The prompt shows what the read would hand over ([preview]); its Allow hands over exactly that. A read the
+ * once too. A read that would hand over a clip the device marks sensitive always asks, with the snapshot that showed
+ * it, and its answer is for that one read ([asksOnce]): it keeps no grant and trusts no machine. The rule is the
+ * core's ([consent], its `clipboard_read_consent`; the app's tests, which run without the native library, give their
+ * own). The prompt shows what the read would hand over ([preview]); its Allow hands over exactly that. A read the
  * core dismisses (its pane hidden, detached, lost or exited: the core denied it) leaves [pending]. The core's own
  * thread delivers the requests and dismissals in order, and both are taken on it, so a dismissal never overtakes its
  * request. The clipboard is never read on that thread (another app's image is a content provider's stream, which may
@@ -98,6 +112,7 @@ class ClipboardReads(
     private val trust: ClipboardTrust,
     private val clipboard: DeviceClipboard,
     private val io: CoroutineContext = Dispatchers.IO,
+    private val consent: (ClipboardReadFacts) -> ClipboardReadConsent = { clipboardReadConsent(it) },
 ) {
     private val pendingState = MutableStateFlow<List<ClipboardRead>>(emptyList())
 
@@ -113,6 +128,7 @@ class ClipboardReads(
     // out of [unanswered], and only a read still in it is answered
     private val unasked = Channel<ClipboardRead>(Channel.UNLIMITED)
     private val unanswered: MutableSet<ClipboardRead> = ConcurrentHashMap.newKeySet()
+    private val rule = ReadConsent(consent) { it in trustedState.value }
 
     /** The machines whose reads are answered unasked, as this class last heard. */
     internal val trusted: StateFlow<Set<String>> = trustedState.asStateFlow()
@@ -131,10 +147,7 @@ class ClipboardReads(
         scope.launch {
             for (read in unasked) {
                 withContext(io) {
-                    if (read in unanswered) {
-                        val reply = unaskedReply { snapshot(read) }
-                        if (unanswered.remove(read)) reply(read, reply)
-                    }
+                    if (read in unanswered) settle(read, takenOrNull { clipboard.snapshot(read) })
                 }
             }
         }
@@ -145,9 +158,17 @@ class ClipboardReads(
         when (event) {
             is MobileEvent.ClipboardReadRequest -> {
                 val read =
-                    ClipboardRead(event.pane, event.readId, event.listOnly, event.mimes, event.list, event.canRemember)
-                val discloses = !read.listOnly && read.mimes.isNotEmpty()
-                if (!discloses || event.granted || event.pane.machineId in trusted.value) {
+                    ClipboardRead(
+                        event.pane,
+                        event.readId,
+                        event.listOnly,
+                        event.mimes,
+                        event.list,
+                        event.canRemember,
+                        event.granted,
+                    )
+                val asksData = !read.listOnly && read.mimes.isNotEmpty()
+                if (rule.of(read, asksData, sensitive = false) == ClipboardReadConsent.UNASKED) {
                     answerUnasked(read)
                 } else {
                     pendingState.update { it + read }
@@ -155,11 +176,12 @@ class ClipboardReads(
             }
 
             is MobileEvent.ClipboardReadDismiss -> {
+                // [unanswered] first: [settle] takes a read out of it last, so it sees a dismissal that raced it
+                unanswered.removeAll { it.pane == event.pane && it.readId == event.readId }
                 pendingState.update { reads ->
                     reads.filterNot { it.pane == event.pane && it.readId == event.readId }
                 }
                 shown.keys.removeAll { it.pane == event.pane && it.readId == event.readId }
-                unanswered.removeAll { it.pane == event.pane && it.readId == event.readId }
             }
 
             else -> {}
@@ -173,7 +195,7 @@ class ClipboardReads(
      */
     suspend fun preview(read: ClipboardRead): ClipboardSnapshot? =
         shown[read] ?: try {
-            withContext(io) { snapshot(read) }.also { if (read in pending.value) shown[read] = it }
+            withContext(io) { clipboard.snapshot(read) }.also { if (read in pending.value) shown[read] = it }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: RuntimeException) {
@@ -183,7 +205,8 @@ class ClipboardReads(
 
     /**
      * Hands [read]'s program [shown], what its prompt showed ([preview]), this once: never a fresh read the user didn't
-     * see. [remember] keeps a grant for the program in its terminal, where the read can keep one.
+     * see. [remember] keeps a grant for the program in its terminal, where the read can keep one and [shown] is
+     * not for this one read ([asksOnce]).
      */
     fun allow(
         read: ClipboardRead,
@@ -191,18 +214,30 @@ class ClipboardReads(
         remember: Boolean = false,
     ) {
         this.shown.remove(read)
-        answer(read, shown.allowed(remember && read.canRemember))
+        pendingState.update { it - read }
+        reply(read, shown.allowed(remember && read.canRemember && !asksOnce(read, shown)))
     }
 
     /**
+     * Whether an Allow of [read] handing over [shown] is for that one read: it keeps no grant, trusts no machine, and
+     * the prompt offers neither.
+     */
+    fun asksOnce(
+        read: ClipboardRead,
+        shown: ClipboardSnapshot,
+    ): Boolean = rule.of(read, shown) == ClipboardReadConsent.ASK_ONCE
+
+    /**
      * Allows [read] as [allow] does, and lets its machine's programs read the clipboard from now on unasked: the
-     * machine's other reads already waiting are answered too, as unasked reads are.
+     * machine's other reads already waiting are answered too, as unasked reads are. An Allow for one read
+     * ([asksOnce]) stays that.
      */
     fun allowAlways(
         read: ClipboardRead,
         shown: ClipboardSnapshot,
         remember: Boolean = false,
     ) {
+        if (asksOnce(read, shown)) return allow(read, shown)
         val machine = read.pane.machineId
         unsaved.update { it + machine }
         trustedState.update { it + machine }
@@ -234,7 +269,8 @@ class ClipboardReads(
     /** Refuses [read]: its program reads an empty clipboard (OSC 52) or is told it was refused. */
     fun deny(read: ClipboardRead) {
         shown.remove(read)
-        answer(read, ClipboardReply.Deny)
+        pendingState.update { it - read }
+        reply(read, ClipboardReply.Deny)
     }
 
     // answers [read] with a snapshot taken off the caller's thread (the core's, or the main thread)
@@ -243,18 +279,22 @@ class ClipboardReads(
         unasked.trySend(read)
     }
 
-    private fun snapshot(read: ClipboardRead) =
-        ClipboardSnapshot(
-            contents = if (read.listOnly || read.mimes.isEmpty()) emptyList() else clipboard.read(read.mimes),
-            available = if (read.list) clipboard.types().take(MAX_LISTED) else emptyList(),
-        )
-
-    private fun answer(
+    // answers an unasked read with what was [taken] (a failed read refuses this read, not every later one), or asks
+    // about it after all, showing [taken]: a clip marked sensitive, or a permission that went meanwhile
+    private fun settle(
         read: ClipboardRead,
-        reply: ClipboardReply,
+        taken: ClipboardSnapshot?,
     ) {
-        pendingState.update { it - read }
-        reply(read, reply)
+        if (taken == null || rule.of(read, taken) == ClipboardReadConsent.UNASKED) {
+            if (unanswered.remove(read)) reply(read, taken?.allowed(remember = false) ?: ClipboardReply.Deny)
+            return
+        }
+        shown[read] = taken
+        pendingState.update { it + read }
+        if (!unanswered.remove(read)) {
+            pendingState.update { it - read }
+            shown.remove(read)
+        }
     }
 
     private fun reply(
@@ -273,21 +313,43 @@ class ClipboardReads(
             // the core has stopped: no program is left waiting
         }
     }
-
-    private companion object {
-        // the most types a listing names (Ghostty's clipboard_response.zig)
-        const val MAX_LISTED = 16
-    }
 }
+
+// the most types a listing names (Ghostty's clipboard_response.zig)
+private const val MAX_LISTED = 16
+
+/** How a read is answered, by the core's rule [consent], on a machine [trusted] or not. */
+private class ReadConsent(
+    private val consent: (ClipboardReadFacts) -> ClipboardReadConsent,
+    private val trusted: (machineId: String) -> Boolean,
+) {
+    /** For [read] handing over what was [taken]. */
+    fun of(
+        read: ClipboardRead,
+        taken: ClipboardSnapshot,
+    ) = of(read, discloses = taken.contents.isNotEmpty(), sensitive = taken.sensitive)
+
+    /** For [read] before the clipboard is read: [discloses] says whether it asks for data. */
+    fun of(
+        read: ClipboardRead,
+        discloses: Boolean,
+        sensitive: Boolean,
+    ) = consent(ClipboardReadFacts(discloses, read.granted, trusted(read.pane.machineId), sensitive))
+}
+
+// what [read] takes from the clipboard, read once
+private fun DeviceClipboard.snapshot(read: ClipboardRead): ClipboardSnapshot {
+    val taken = take(if (read.listOnly) emptyList() else read.mimes, read.list)
+    return taken.copy(available = taken.available.take(MAX_LISTED))
+}
+
+// an unasked read's snapshot; null when the clipboard failed to hand it over
+private inline fun takenOrNull(take: () -> ClipboardSnapshot): ClipboardSnapshot? =
+    try {
+        take()
+    } catch (_: RuntimeException) {
+        null
+    }
 
 /** The Allow that hands over this snapshot, keeping a grant with [remember]. */
 private fun ClipboardSnapshot.allowed(remember: Boolean) = ClipboardReply.Allow(contents, available, remember)
-
-// an unasked read's Allow of what [take] reads; a provider's or the system clipboard's failure refuses this read, not
-// every later one
-private inline fun unaskedReply(take: () -> ClipboardSnapshot): ClipboardReply =
-    try {
-        take().allowed(remember = false)
-    } catch (_: RuntimeException) {
-        ClipboardReply.Deny
-    }

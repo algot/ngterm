@@ -1,11 +1,17 @@
 package com.nickalie.ngterm.android.data
 
 import com.nickalie.ngterm.core.ffi.ClipboardPart
+import com.nickalie.ngterm.core.ffi.ClipboardReadConsent
+import com.nickalie.ngterm.core.ffi.ClipboardReadFacts
 import com.nickalie.ngterm.core.ffi.ClipboardReply
 
-/** A device clipboard in memory, holding [contents] (each its own type): what the clipboard reads see in tests. */
+/**
+ * A device clipboard in memory, holding [contents] (each its own type), marked [sensitive] or not: what the clipboard
+ * reads see in tests.
+ */
 class MemoryClipboard(
     @Volatile var contents: List<ClipboardPart> = emptyList(),
+    @Volatile var sensitive: Boolean = false,
 ) : DeviceClipboard {
     /** Its text alone, as most tests set it; `null`: it holds nothing. */
     var text: String?
@@ -14,17 +20,35 @@ class MemoryClipboard(
             contents = listOfNotNull(value?.let { part("text/plain", it) })
         }
 
-    override fun types() = contents.map { it.mime }
-
     /** How many times its data was read. */
     @Volatile var reads = 0
         private set
 
-    override fun read(mimes: List<String>): List<ClipboardPart> {
-        reads++
-        return mimes.mapNotNull { mime -> contents.firstOrNull { it.mime == mime } }
+    override fun take(
+        mimes: List<String>,
+        list: Boolean,
+    ): ClipboardSnapshot {
+        if (mimes.isNotEmpty()) reads++
+        val held = contents
+        return ClipboardSnapshot(
+            contents = mimes.mapNotNull { mime -> held.firstOrNull { it.mime == mime } },
+            available = if (list) held.map { it.mime } else emptyList(),
+            sensitive = sensitive,
+        )
     }
 }
+
+/**
+ * What the core's `clipboard_read_consent` answers, for the app's tests, which run without the native library
+ * (`AndroidClipboardDeviceTest` holds the same rule to the core's on a device).
+ */
+fun fakeClipboardReadConsent(facts: ClipboardReadFacts): ClipboardReadConsent =
+    when {
+        !facts.discloses -> ClipboardReadConsent.UNASKED
+        facts.sensitive -> ClipboardReadConsent.ASK_ONCE
+        facts.granted || facts.trusted -> ClipboardReadConsent.UNASKED
+        else -> ClipboardReadConsent.ASK
+    }
 
 fun part(
     mime: String,

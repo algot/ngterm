@@ -6,6 +6,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.ContextWrapper
 import android.net.Uri
+import android.os.PersistableBundle
 import android.os.TransactionTooLargeException
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -50,6 +51,30 @@ class AndroidClipboardTest {
         assertEquals("first", text(clipboard))
         clipboard.write(listOf(part("text/plain", "")))
         assertEquals("", text(clipboard))
+    }
+
+    @Test
+    fun aClipItsAppMarkedSensitiveReadsAsSensitiveWithItsContents() {
+        assertEquals(false, clipboard.take(listOf("text/plain"), list = true).sensitive)
+        val marked = ClipData.newPlainText("password", "hunter2")
+        marked.description.extras = PersistableBundle().apply { putBoolean(AndroidClipboard.IS_SENSITIVE, true) }
+        manager.setPrimaryClip(marked)
+        val taken = clipboard.take(listOf("text/plain"), list = true)
+        assertEquals(true, taken.sensitive)
+        assertEquals(keys(listOf(part("text/plain", "hunter2"))), keys(taken.contents))
+        assertEquals(listOf("text/plain"), taken.available)
+        assertEquals(
+            "no listing unless asked",
+            emptyList<String>(),
+            clipboard.take(emptyList(), list = false).available,
+        )
+
+        val unmarked = ClipData.newPlainText("password", "hunter2")
+        unmarked.description.extras = PersistableBundle().apply { putBoolean(AndroidClipboard.IS_SENSITIVE, false) }
+        manager.setPrimaryClip(unmarked)
+        assertEquals(false, clipboard.take(listOf("text/plain"), list = false).sensitive)
+        manager.setPrimaryClip(ClipData.newPlainText("plain", "ls -la"))
+        assertEquals(false, clipboard.take(listOf("text/plain"), list = false).sensitive)
     }
 
     @Test
@@ -269,3 +294,7 @@ class FailingClipboardManager : ShadowClipboardManager() {
         var failing = false
     }
 }
+
+private fun AndroidClipboard.read(mimes: List<String>) = take(mimes, list = false).contents
+
+private fun AndroidClipboard.types() = take(emptyList(), list = true).available

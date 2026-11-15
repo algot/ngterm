@@ -15,6 +15,7 @@ import android.os.ParcelFileDescriptor.MODE_READ_ONLY
 import android.provider.OpenableColumns
 import android.text.Html
 import android.webkit.MimeTypeMap
+import com.nickalie.ngterm.android.data.ClipboardSnapshot
 import com.nickalie.ngterm.android.data.ClipboardWriter
 import com.nickalie.ngterm.android.data.DeviceClipboard
 import com.nickalie.ngterm.core.ffi.ClipboardPart
@@ -29,7 +30,9 @@ import java.io.InputStream
  * (`text/plain`), HTML (`text/html`, with its text beside it, as Android's clips carry HTML) and images: an image is a
  * file in the app's cache served through [ClipboardFiles] (a content URI, as Android's clipboard requires), replaced by
  * the next write. Other types aren't kept. Android lets only the app in front (or the keyboard) read the clipboard: in
- * the background it reads as holding nothing. A write shows Android's own notice of it.
+ * the background it reads as holding nothing. A write shows Android's own notice of it. A clip is sensitive when the
+ * app that copied it said so in its description (Android's `EXTRA_IS_SENSITIVE`, which password managers set); a clip
+ * without the mark reads as any other, whatever it holds.
  */
 class AndroidClipboard(
     private val context: Context,
@@ -37,44 +40,19 @@ class AndroidClipboard(
     ClipboardWriter {
     private val manager = context.getSystemService(ClipboardManager::class.java)
     private val files get() = File(context.cacheDir, FILES_DIR)
+    private val reader = ClipReader(context)
 
-    override fun types(): List<String> {
-        val clip = manager?.primaryClip?.takeIf { it.itemCount > 0 } ?: return emptyList()
-        val item = clip.getItemAt(0)
-        val types = mutableListOf<String>()
-        if (text(item) != null) types += TEXT
-        if (item.htmlText != null) types += HTML
-        item.uri?.let(::contentType)?.let { types += it }
-        val description = clip.description
-        for (index in 0 until description.mimeTypeCount) {
-            val type = description.getMimeType(index)
-            // the description's text types are the item's text, listed once above; a URI's own type is above too
-            if (!type.startsWith("text/") && type !in types && !type.contains('*')) types += type
-        }
-        return types.distinct()
-    }
-
-    override fun read(mimes: List<String>): List<ClipboardPart> {
-        val clip = manager?.primaryClip?.takeIf { it.itemCount > 0 } ?: return emptyList()
-        val item = clip.getItemAt(0)
-        return mimes.distinct().mapNotNull { mime ->
-            when (mime) {
-                TEXT -> {
-                    text(item)?.let { ClipboardPart(mime, it.toByteArray()) }
-                }
-
-                HTML -> {
-                    item.htmlText?.let { ClipboardPart(mime, it.toByteArray()) }
-                }
-
-                else -> {
-                    item.uri
-                        ?.takeIf { contentType(it) == mime }
-                        ?.let { bytes(it) }
-                        ?.let { ClipboardPart(mime, it) }
-                }
-            }
-        }
+    override fun take(
+        mimes: List<String>,
+        list: Boolean,
+    ): ClipboardSnapshot {
+        val clip =
+            manager?.primaryClip?.takeIf { it.itemCount > 0 } ?: return ClipboardSnapshot(emptyList(), emptyList())
+        return ClipboardSnapshot(
+            contents = reader.read(clip, mimes),
+            available = if (list) reader.types(clip) else emptyList(),
+            sensitive = clip.description.extras?.getBoolean(IS_SENSITIVE, false) == true,
+        )
     }
 
     override fun write(contents: List<ClipboardPart>): ClipboardWriteStatus {
@@ -178,50 +156,16 @@ class AndroidClipboard(
         types.remove(file.name)
     }
 
-    // a clip's text: its own, else a link that isn't content (a content URI is data, read by its type)
-    private fun text(item: ClipData.Item): String? =
-        item.text?.toString() ?: item.uri?.takeIf { it.scheme != "content" }?.toString()
-
-    private fun contentType(uri: Uri): String? =
-        if (uri.scheme == "content") {
-            ourType(uri) ?: runCatching { context.contentResolver.getType(uri) }.getOrNull()
-        } else {
-            null
-        }
-
-    // an image this process wrote keeps the type it was written with (an extension can't name every type)
-    private fun ourType(uri: Uri): String? =
-        uri.takeIf { it.authority == authority(context) }?.lastPathSegment?.let(::typeOf)
-
-    private fun bytes(uri: Uri): ByteArray? =
-        try {
-            context.contentResolver.openInputStream(uri)?.use { it.readBounded() }
-        } catch (_: IOException) {
-            null
-        } catch (_: SecurityException) {
-            null
-        }
-
-    // the stream's bytes, or null past MAX_READ
-    private fun InputStream.readBounded(): ByteArray? {
-        val out = java.io.ByteArrayOutputStream()
-        val buffer = ByteArray(BUFFER)
-        while (true) {
-            val read = read(buffer)
-            if (read < 0) return out.toByteArray()
-            if (out.size() + read > MAX_READ) return null
-            out.write(buffer, 0, read)
-        }
-    }
-
     companion object {
         // what the system's clipboard notice and history call a program's copy
         const val LABEL = "ngterm"
         const val TEXT = "text/plain"
         const val HTML = "text/html"
+
+        // ClipDescription.EXTRA_IS_SENSITIVE (API 33), under the same name before it, as its documentation says
+        const val IS_SENSITIVE = "android.content.extra.IS_SENSITIVE"
         private const val IMAGE = "image/"
         private const val FILES_DIR = "clipboard"
-        private const val BUFFER = 64 * 1024
 
         /** The most bytes one representation another app put on the clipboard is read with. */
         const val MAX_READ = 32 * 1024 * 1024
@@ -247,6 +191,96 @@ class AndroidClipboard(
                 ?: MimeTypeMap.getSingleton().getMimeTypeFromExtension(name.substringAfterLast('.', ""))
     }
 }
+
+/** What a clip holds, per MIME type: its first item's text, HTML and the data behind its content URI. */
+private class ClipReader(
+    private val context: Context,
+) {
+    fun types(clip: ClipData): List<String> {
+        val item = clip.getItemAt(0)
+        val types = mutableListOf<String>()
+        if (text(item) != null) types += AndroidClipboard.TEXT
+        if (item.htmlText != null) types += AndroidClipboard.HTML
+        item.uri?.let(::contentType)?.let { types += it }
+        val description = clip.description
+        for (index in 0 until description.mimeTypeCount) {
+            val type = description.getMimeType(index)
+            // the description's text types are the item's text, listed once above; a URI's own type is above too
+            if (!type.startsWith("text/") && type !in types && !type.contains('*')) types += type
+        }
+        return types.distinct()
+    }
+
+    fun read(
+        clip: ClipData,
+        mimes: List<String>,
+    ): List<ClipboardPart> {
+        val item = clip.getItemAt(0)
+        return mimes.distinct().mapNotNull { mime ->
+            when (mime) {
+                AndroidClipboard.TEXT -> {
+                    text(item)?.let { ClipboardPart(mime, it.toByteArray()) }
+                }
+
+                AndroidClipboard.HTML -> {
+                    item.htmlText?.let { ClipboardPart(mime, it.toByteArray()) }
+                }
+
+                else -> {
+                    item.uri
+                        ?.takeIf { contentType(it) == mime }
+                        ?.let { bytes(it) }
+                        ?.let { ClipboardPart(mime, it) }
+                }
+            }
+        }
+    }
+
+    // a clip's text: its own, else a link that isn't content (a content URI is data, read by its type)
+    private fun text(item: ClipData.Item): String? =
+        item.text?.toString() ?: item.uri?.takeIf { it.scheme != "content" }?.toString()
+
+    private fun contentType(uri: Uri): String? =
+        if (uri.scheme == "content") {
+            ourType(uri) ?: runCatching { context.contentResolver.getType(uri) }.getOrNull()
+        } else {
+            null
+        }
+
+    // an image this process wrote keeps the type it was written with (an extension can't name every type)
+    private fun ourType(uri: Uri): String? =
+        uri
+            .takeIf {
+                it.authority ==
+                    AndroidClipboard.authority(
+                        context,
+                    )
+            }?.lastPathSegment
+            ?.let(AndroidClipboard::typeOf)
+
+    private fun bytes(uri: Uri): ByteArray? =
+        try {
+            context.contentResolver.openInputStream(uri)?.use { it.readBounded() }
+        } catch (_: IOException) {
+            null
+        } catch (_: SecurityException) {
+            null
+        }
+
+    // the stream's bytes, or null past AndroidClipboard.MAX_READ
+    private fun InputStream.readBounded(): ByteArray? {
+        val out = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(READ_BUFFER)
+        while (true) {
+            val read = read(buffer)
+            if (read < 0) return out.toByteArray()
+            if (out.size() + read > AndroidClipboard.MAX_READ) return null
+            out.write(buffer, 0, read)
+        }
+    }
+}
+
+private const val READ_BUFFER = 64 * 1024
 
 /**
  * The content URIs of the images [AndroidClipboard] puts on the clipboard: read-only, one file at a time, nothing

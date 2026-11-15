@@ -20,6 +20,7 @@ import com.nickalie.ngterm.android.data.PassphraseRule
 import com.nickalie.ngterm.android.data.SessionChatViews
 import com.nickalie.ngterm.android.data.SettingsStore
 import com.nickalie.ngterm.android.data.StoredMachine
+import com.nickalie.ngterm.android.data.fakeClipboardReadConsent
 import com.nickalie.ngterm.android.platform.KeyWrapper
 import com.nickalie.ngterm.android.platform.KeystoreKeyVault
 import com.nickalie.ngterm.android.platform.PinnedHostKeys
@@ -236,7 +237,8 @@ class TestGraph(
             deviceClipboard.text = value
         }
     val trust = ClipboardTrust(testStore(dir, "clipboard"))
-    val clipboardReads = ClipboardReads(scope, connections, trust, deviceClipboard, Dispatchers.IO)
+    val clipboardReads =
+        ClipboardReads(scope, connections, trust, deviceClipboard, Dispatchers.IO, ::fakeClipboardReadConsent)
 
     /** What programs wrote to the device's clipboard, oldest first (no parts: cleared). */
     val clipboardWrites: MutableList<List<ClipboardPart>> = java.util.Collections.synchronizedList(mutableListOf())
