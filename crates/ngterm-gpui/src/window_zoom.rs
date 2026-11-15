@@ -23,6 +23,9 @@
 //! window manager may never answer (X11 without one, a tiling compositor that refuses a maximize): a request the
 //! window's maximize still reads unchanged for after [`UNANSWERED`] is forgotten, and the next one goes out as the
 //! first did. A request answered whose frames are still to come is kept, however long they take.
+//!
+//! A size that waits on a window at rest maximized is looked at the same way, for as long as it waits: the window
+//! manager's own restore need not change the window's bounds either.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -33,7 +36,7 @@ use gpui_kit::{App, Pixels, Size, Window};
 /// How long a request's answer is waited for before it counts as never coming.
 pub const UNANSWERED: Duration = Duration::from_secs(1);
 
-/// How often a request sent is looked at for its answer.
+/// How often a request sent is looked at for its answer, and a maximized window for the restore a size waits for.
 const LOOK: Duration = Duration::from_millis(50);
 
 /// What the window does next for a zoom.
@@ -175,12 +178,21 @@ impl Pending {
 /// Looks at a request just sent every [`LOOK`] while `look` asks for more; it is told which look is the last,
 /// [`UNANSWERED`] after the request.
 pub(crate) fn watch(window: &Window, cx: &App, mut look: impl FnMut(bool, &mut Window, &mut App) -> bool + 'static) {
+    let looks = UNANSWERED.as_millis() / LOOK.as_millis();
+    let mut nth = 0;
+    look_while(window, cx, move |window, cx| {
+        nth += 1;
+        look(nth == looks, window, cx) && nth < looks
+    });
+}
+
+/// Looks every [`LOOK`] while `look` asks for more and the window lives.
+fn look_while(window: &Window, cx: &App, mut look: impl FnMut(&mut Window, &mut App) -> bool + 'static) {
     window
         .spawn(cx, async move |cx| {
-            let looks = UNANSWERED.as_millis() / LOOK.as_millis();
-            for nth in 1..=looks {
+            loop {
                 cx.background_executor().timer(LOOK).await;
-                if !cx.update(|window, cx| look(nth == looks, window, cx)).unwrap_or(false) {
+                if !cx.update(|window, cx| look(window, cx)).unwrap_or(false) {
                     return;
                 }
             }
@@ -195,6 +207,8 @@ pub struct WindowZoom {
     pending: RefCell<Pending>,
     committed: Cell<bool>,
     resize: Cell<Option<Size<Pixels>>>,
+    /// Whether the looks for the restore the size waits for are running.
+    size_watched: Cell<bool>,
     request: fn(&mut Window),
 }
 
@@ -210,6 +224,7 @@ impl WindowZoom {
             pending: RefCell::default(),
             committed: Cell::new(window.is_maximized()),
             resize: Cell::new(None),
+            size_watched: Cell::new(false),
             request,
         })
     }
@@ -280,22 +295,22 @@ impl WindowZoom {
         tracing::debug!(?step, committed, maximized, "window: zoom step");
         match step {
             Some(Settle::Wait) => {}
-            None => self.rest(window),
+            None => self.rest(maximized, window, cx),
             Some(Settle::Done) => {
                 tracing::info!(maximized, "window: zoom settled");
-                self.rest(window);
+                self.rest(maximized, window, cx);
             }
             Some(Settle::Again) => self.settle_after_a_frame(window),
             Some(Settle::Request) => {
                 (self.request)(window);
                 let (zoom, send) = (Rc::clone(self), self.pending.borrow().sends());
-                watch(window, cx, move |last, window, _| zoom.look(send, last, window));
+                watch(window, cx, move |last, window, cx| zoom.look(send, last, window, cx));
             }
         }
     }
 
     /// A look at the request sent as `send`; whether it is to be looked at again.
-    fn look(self: &Rc<Self>, send: u64, last: bool, window: &mut Window) -> bool {
+    fn look(self: &Rc<Self>, send: u64, last: bool, window: &mut Window, cx: &App) -> bool {
         let maximized = window.is_maximized();
         let watch = self.pending.borrow_mut().watch(send, maximized, last);
         match watch {
@@ -307,20 +322,40 @@ impl WindowZoom {
             }
             Watch::Unanswered => {
                 tracing::info!(maximized, "window: zoom request unanswered");
-                self.rest(window);
+                self.rest(maximized, window, cx);
                 false
             }
         }
     }
 
-    /// No request is left: a window restored takes the size that waited for it. A window maximized keeps it for
-    /// its next restore, the window manager's own included.
-    fn rest(&self, window: &mut Window) {
-        if !window.is_maximized()
-            && let Some(size) = self.resize.take()
-        {
-            window.resize(size);
+    /// No request is left and the window reads `maximized`: a window restored takes the size that waited for it. A
+    /// window maximized keeps it for its next restore, the window manager's own included, and is looked at for it:
+    /// that restore need not change the window's bounds.
+    fn rest(self: &Rc<Self>, maximized: bool, window: &mut Window, cx: &App) {
+        if !maximized {
+            if let Some(size) = self.resize.take() {
+                window.resize(size);
+            }
+        } else if self.resize.get().is_some() && !self.size_watched.replace(true) {
+            let zoom = Rc::clone(self);
+            look_while(window, cx, move |window, _| {
+                zoom.size_look(window.is_maximized(), window)
+            });
         }
+    }
+
+    /// A look at a window that reads `maximized` for the restore its size waits for; whether it is to be looked at
+    /// again. The restore settles after its frames, as one that changes the bounds does.
+    fn size_look(self: &Rc<Self>, maximized: bool, window: &Window) -> bool {
+        let waits = self.resize.get().is_some();
+        if waits && (maximized || !self.pending.borrow().is_settled()) {
+            return true;
+        }
+        self.size_watched.set(false);
+        if waits {
+            self.settle_after_a_frame(window);
+        }
+        false
     }
 }
 

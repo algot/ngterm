@@ -307,14 +307,79 @@ fn a_size_given_to_a_window_at_rest_drops_one_still_waiting(cx: &mut gpui_kit::T
 #[gpui_kit::test]
 fn an_answer_seen_by_a_look_settles_after_its_frames(cx: &mut gpui_kit::TestAppContext) {
     let cx = cx.add_empty_window();
-    cx.update(|window, _| {
+    cx.update(|window, cx| {
         let zoom = unanswered(window);
         // a restore sent from a maximized window, which reads restored at the look
         zoom.pending.borrow_mut().want(false);
         assert_eq!(zoom.pending.borrow_mut().settle(true, true), Some(Settle::Request));
-        assert!(zoom.look(1, false, window));
+        assert!(zoom.look(1, false, window, cx));
         assert_eq!(Rc::strong_count(&zoom), 2, "a frame callback holds the zoom");
-        assert!(zoom.look(1, true, window), "answered: kept for its frames");
-        assert!(!zoom.look(0, true, window), "another request's look is over");
+        assert!(zoom.look(1, true, window, cx), "answered: kept for its frames");
+        assert!(!zoom.look(0, true, window, cx), "another request's look is over");
+    });
+}
+
+#[gpui_kit::test]
+fn a_size_waiting_on_a_maximized_window_at_rest_sees_a_restore_that_changes_no_bounds(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    let cx = cx.add_empty_window();
+    let size = gpui_kit::size(gpui_kit::px(640.), gpui_kit::px(400.));
+    let zoom = cx.update(|window, cx| {
+        let zoom = WindowZoom::new(window);
+        zoom.resize.set(Some(size));
+        // at rest maximized: the size keeps waiting, and one set of looks watches for the restore
+        zoom.rest(true, window, cx);
+        zoom.rest(true, window, cx);
+        assert_eq!(zoom.resize.get(), Some(size));
+        assert_eq!(Rc::strong_count(&zoom), 2, "the looks hold the zoom, once");
+        assert!(zoom.size_look(true, window), "still maximized");
+        zoom.pending.borrow_mut().want(true);
+        assert!(
+            zoom.size_look(false, window),
+            "a request on its way settles the size itself"
+        );
+        *zoom.pending.borrow_mut() = Pending::default();
+        zoom
+    });
+    // the test window reads restored with no bounds change: the next look finds it and settles after the frames
+    cx.executor().advance_clock(LOOK);
+    assert_eq!(
+        Rc::strong_count(&zoom),
+        2,
+        "the looks are over, a frame callback holds the zoom"
+    );
+    assert!(!zoom.size_watched.get());
+    cx.update(|window, cx| {
+        zoom.frame_started(window);
+        zoom.settle(false, window, cx);
+        assert_eq!(window.bounds().size, size);
+    });
+    assert_eq!(zoom.resize.get(), None);
+}
+
+#[gpui_kit::test]
+fn the_looks_for_a_restore_end_with_the_size_they_waited_for(cx: &mut gpui_kit::TestAppContext) {
+    let cx = cx.add_empty_window();
+    let zoom = cx.update(|window, cx| {
+        let zoom = WindowZoom::new(window);
+        zoom.resize
+            .set(Some(gpui_kit::size(gpui_kit::px(640.), gpui_kit::px(400.))));
+        zoom.rest(true, window, cx);
+        // the caller sized the window itself since
+        zoom.resize.set(None);
+        zoom
+    });
+    cx.executor().advance_clock(LOOK);
+    assert_eq!(
+        Rc::strong_count(&zoom),
+        1,
+        "no look and no frame callback holds the zoom"
+    );
+    cx.update(|window, cx| {
+        zoom.resize
+            .set(Some(gpui_kit::size(gpui_kit::px(300.), gpui_kit::px(200.))));
+        zoom.rest(true, window, cx);
+        assert_eq!(Rc::strong_count(&zoom), 2, "a size that waits again is looked at again");
     });
 }
