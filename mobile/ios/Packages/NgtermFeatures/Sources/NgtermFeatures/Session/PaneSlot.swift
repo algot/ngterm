@@ -84,15 +84,8 @@ internal struct PaneSlot: View {
         let select = actions.select
         Group {
             if let chat = spot.chat {
-                ChatScreen(
-                    chat: chat,
-                    machine: actions.machine,
-                    keyboard: actions.keyboard,
-                    isSelected: isFocused
-                ) {
-                    actions.model.pick(paneId, .terminal)
-                }
-                .id(spot.ref)
+                chatScreen(chat)
+                    .id(spot.ref)
             } else {
                 ChatLoading(machine: actions.machine)
                     .background(ChatGrounds.chat)
@@ -103,6 +96,16 @@ internal struct PaneSlot: View {
                 select(paneId)
             }
         )
+    }
+
+    /// The pane's chat: its Show terminal and Answer in terminal turn the pane to its terminal, which takes the prompt
+    /// field's keyboard (``SessionModel/showTerminal(of:)``).
+    internal func chatScreen(_ chat: ChatModel) -> ChatScreen {
+        let paneId = spot.id
+        let model = actions.model
+        return ChatScreen(chat: chat, machine: actions.machine, keyboard: actions.keyboard, isSelected: isFocused) {
+            model.showTerminal(of: paneId)
+        }
     }
 
     // what the show of a pane at `size` waits on

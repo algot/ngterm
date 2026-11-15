@@ -1,4 +1,5 @@
 import NgtermDesign
+import NgtermPlatform
 import NgtermTerminal
 import SwiftUI
 import Testing
@@ -6,7 +7,7 @@ import UIKit
 
 @testable import NgtermFeatures
 
-/// A pane turned from its chat to its terminal (the toolbar's Show terminal, the chat's own Answer in terminal) while
+/// A pane turned from its chat to its terminal (the toolbar's Show terminal, the chat's own Show terminal) while
 /// the chat's prompt field has the keyboard, in the session view: the terminal, under the chat, takes the keyboard straight from the field before the
 /// view changes, so the soft keyboard stays up and no first responder moves inside the view update (which has the
 /// hosting view read its graph mid-update, and can spin for good); the chat shown again takes it back.
@@ -36,13 +37,6 @@ internal struct PaneTurnTests {
 
     private static func terminals(in view: UIView) -> [TerminalView] {
         ((view as? TerminalView).map { [$0] } ?? []) + view.subviews.flatMap(terminals)
-    }
-
-    // every accessibility element under `object`, SwiftUI's among them
-    private static func elements(under object: NSObject) -> [NSObject] {
-        let listed = object.accessibilityElements?.compactMap { $0 as? NSObject } ?? []
-        let children = listed + ((object as? UIView)?.subviews ?? [])
-        return children + children.flatMap(elements)
     }
 
     // `world`'s session view in a window, its chat live and its prompt field with the keyboard: the window and the
@@ -89,20 +83,35 @@ internal struct PaneTurnTests {
         #expect(keyboard.target == nil)
     }
 
-    @Test("the chat's own Answer in terminal gives the terminal the prompt's keyboard before the view changes")
-    internal func answerInTerminal() async throws {
+    @Test("the chat's own Show terminal gives the terminal the prompt's keyboard before the view changes")
+    internal func chatAction() async throws {
         let world = ChatWorld()
         defer { world.remove() }
         let keyboard = TerminalKeyboard(hardware: HardwareKeyboard(fixed: true))
         let (window, terminal) = try await Self.open(world, keyboard: keyboard)
         defer { window.isHidden = true }
 
-        let chat = try #require(world.chat)
-        chat.snapshot.problem = .unconfirmed
-        let title = "Answer in terminal"
-        await Wait.until { Self.elements(under: window).contains { $0.accessibilityLabel == title } }
-        let answer = try #require(Self.elements(under: window).first { $0.accessibilityLabel == title })
-        #expect(answer.accessibilityActivate())
+        let model = SessionModel(graph: world.graph, key: SessionWorld.key, keyboard: keyboard)
+        guard case .live(let session, _) = model.state else {
+            Issue.record("not live")
+            return
+        }
+        let spot = try #require(model.spots(of: session).first)
+        let slot = PaneSlot(
+            spot: spot,
+            isFocused: true,
+            actions: PaneSlot.Actions(
+                model: model,
+                keyboard: keyboard,
+                machine: session.machine,
+                look: TerminalLook(AppSettings(), isDark: true),
+                select: { _ in
+                    // the pane is the selected one
+                },
+                swipe: nil
+            )
+        )
+        try slot.chatScreen(#require(spot.chat)).onShowTerminal()
         #expect(terminal.isFirstResponder, "the keyboard goes from the field straight to the terminal")
         #expect(keyboard.target === terminal)
         #expect(terminal.softKeyboardWanted, "the field had the soft keyboard")

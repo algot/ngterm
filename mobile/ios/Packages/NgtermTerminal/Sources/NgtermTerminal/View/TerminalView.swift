@@ -121,6 +121,9 @@ public final class TerminalView: UIView {
     public var onSwipe: (@MainActor (Bool) -> Void)?
     /// Whether VoiceOver hears its cursor's line as it changes (the selected pane's), at most once a second.
     public var readsAloud = false
+    /// Whether SwiftUI puts it in its window, inside a view update: the handover waiting there is taken after that
+    /// update (``TerminalKeyboard/duringViewUpdate(_:)``).
+    internal var comesOnInViewUpdates = false
 
     /// The grid it last gave the pane; `nil` until it has a size that holds a cell.
     public private(set) var grid: PaneSize?
@@ -348,7 +351,11 @@ public final class TerminalView: UIView {
         made.isPaused = !framePending
         made.add(to: .main, forMode: .common)
         link = made
-        takeHandover()
+        if comesOnInViewUpdates {
+            keyboard.takeAfterViewUpdate()
+        } else {
+            takeHandover()
+        }
     }
 
     /// A touch or a click on it selects it (``onSelect``), whatever it goes on to do.

@@ -75,6 +75,7 @@ public struct TerminalViewRepresentable: UIViewRepresentable {
     /// The terminal view, joined to the feed.
     public func makeUIView(context _: Context) -> TerminalView {
         let view = TerminalView(pane: pane, palette: palette, textSize: textSize, faces: faces, keyboard: keyboard)
+        view.comesOnInViewUpdates = true
         take(into: view)
         return view
     }
@@ -97,7 +98,7 @@ public struct TerminalViewRepresentable: UIViewRepresentable {
     }
 
     // what changes with every update: the hooks, then the focus; a terminal drawn focused takes the focus handed over
-    // once the update is over (TerminalKeyboard.duringViewUpdate)
+    // once the update is over (TerminalKeyboard.duringViewUpdate), as one the update puts in a window does
     private func take(into view: TerminalView) {
         view.onSelect = select
         view.onSwipe = swipe

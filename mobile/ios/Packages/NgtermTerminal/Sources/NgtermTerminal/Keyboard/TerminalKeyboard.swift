@@ -256,6 +256,12 @@ public final class TerminalKeyboard {
         isUpdatingViews = true
         update()
         isUpdatingViews = false
+        takeAfterViewUpdate()
+    }
+
+    /// The terminals drawn focused take the handover waiting once the SwiftUI view update running now is over: what
+    /// ``duringViewUpdate(_:)`` puts off, and a terminal the update puts in a window, for the same reason.
+    internal func takeAfterViewUpdate() {
         guard handingOver != nil, !takesAfterUpdate else {
             return
         }
