@@ -41,7 +41,12 @@ would, so the origin's agent record, `ngtermctl agent chat` and the phone's chat
   input rows and the footer. A paste of four lines or more, or of over 800 characters, shows in the box as
   `[Pasted text #1 +N lines]` and is written to the transcript between `<pasted_content id="…">` lines, as
   Claude Code writes it; a shorter one shows as typed. Each prompt submitted shows above the box in full and gets the
-  reply `ok`.
+  reply `ok`, except `Run this shell command with the Bash tool: COMMAND`: it writes the Bash call, tells the
+  `PermissionRequest` hook, sets the pane `blocked` and draws Claude Code's permission dialog for COMMAND in place of
+  the box. `1` (Yes) goes back to the box with a turn's spinner over it, the approved command running on with
+  nothing written and no status reported, as Claude Code does until the call ends (the stand-in never ends it); Esc
+  then interrupts it. `3` (No) or Esc on the dialog refuses it. Either end writes the call's error result and the
+  turn's interrupt, shows `Interrupted` under the call and brings the prompt back, again with no status reported.
 
 Usage: fake_agent.py CONFIG.json (the keys: agent, capture, transcript, backlog, payload, user_template, screens,
 ngtermctl, socket, target, pane_id, control, pid, keys, question, groups), or fake_agent.py --standalone [NAME].
@@ -112,11 +117,13 @@ def report(config):
 
 class Input:
     """The terminal's input as the TUI reads it: text, pastes and Enter; escape sequences (query replies, focus and
-    mouse reports) dropped."""
+    mouse reports) dropped. With `escape`, an Esc read alone (the last byte of a read, nothing after it) is the Esc key,
+    not the start of a sequence cut short."""
 
-    def __init__(self):
+    def __init__(self, escape=False):
         self.decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         self.pending = ""
+        self.escape = escape
 
     def feed(self, data):
         self.pending += self.decoder.decode(data)
@@ -126,6 +133,9 @@ class Input:
             if taken == 0:
                 break  # an escape sequence or a paste not all read yet
             self.pending = self.pending[taken:]
+        if self.escape and self.pending == "\x1b":
+            actions.append(("escape", None))
+            self.pending = ""
         return actions
 
     def take(self, actions):
@@ -171,6 +181,9 @@ def escape_length(text):
 
 
 class Agent:
+    # whether an Esc read alone is a key the agent takes ([`Input`])
+    ESCAPE = False
+
     def __init__(self, config, captures):
         self.config = config
         self.captures = captures
@@ -309,7 +322,7 @@ class Agent:
 
     def run(self, wake):
         stdin = sys.stdin.fileno()
-        reader = Input()
+        reader = Input(escape=self.ESCAPE)
         self.draw()
         while True:
             ready, _, _ = select.select([stdin, wake], [], [])
@@ -349,20 +362,89 @@ class Standalone(Agent):
     """Claude Code 2.1.325's prompt drawn for any grid, in a session with a name (the module docs)."""
 
     PLACEHOLDER = 'Try "how does <filepath> work?"'
+    ESCAPE = True
+    # a prompt that asks for a shell command: the call goes to the permission dialog
+    BASH = re.compile(r"Run this shell command with the Bash tool: (.+)", re.S)
+    # what Claude Code writes as the result of a call the user refused or interrupted, and what it shows after either
+    DENIED = ("The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file "
+              "edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to "
+              "tell you how to proceed.")
+    INTERRUPTED = "\u23bf  Interrupted \u00b7 What should Claude do instead?"
 
     def __init__(self, config, name):
         super().__init__(config, {})
         self.name = name
         self.pastes = []
-        self.replies = []
+        # what the agent showed under each prompt of `history`, by its index
+        self.replies = {}
+        # the Bash call asked for, while its dialog is up or the approved command runs: (tool use id, command)
+        self.call = None
+        self.calls = 0
 
     def take_control(self):
         return True
+
+    def ctl(self, words, stdin=b""):
+        """Runs `ngtermctl` on the pane, addressed and aimed at the socket explicitly, as the agent's hooks do."""
+        env = {key: value for key, value in os.environ.items() if not key.startswith("NGTERM_")}
+        config = self.config
+        command = [config["ngtermctl"], *words, "--target", config["target"], "--pane", "primary",
+                   "--pane-id", config["pane_id"], "--socket", config["socket"]]
+        subprocess.run(command, input=stdin, capture_output=True, env=env, check=False)
+
+    def ask(self, command):
+        """Claude Code's call of the Bash tool for `command`, up to its permission dialog: the call written, the
+        `PermissionRequest` hook told and the pane set `blocked`, as its status hooks do when the dialog opens."""
+        self.calls += 1
+        call_id = f"toolu_e2e_bash_{self.calls}"
+        tool_input = {"command": command, "description": "An e2e command"}
+        line = {"parentUuid": self.parent, "isSidechain": False, "type": "assistant", "uuid": str(uuid.uuid4()),
+                "message": {"role": "assistant", "content": [{"type": "tool_use", "id": call_id, "name": "Bash",
+                                                              "input": tool_input}]}}
+        self.parent = line["uuid"]
+        self.append([self.stamped(line)])
+        payload = {"session_id": self.config["user_template"]["sessionId"],
+                   "transcript_path": self.config["transcript"], "cwd": os.getcwd(), "permission_mode": "default",
+                   "hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": tool_input}
+        self.ctl(["agent", "hook", "claude", "PermissionRequest"], json.dumps(payload).encode())
+        self.ctl(["session", "status", "blocked"])
+        self.call = (call_id, command)
+        self.state = "permission"
+
+    def stop_call(self):
+        """The call refused (No, Esc on its dialog) or interrupted while it runs (Esc): its result an error, the turn
+        over, as Claude Code writes them; the prompt is back. Like Claude Code, it reports no status for either."""
+        call_id, _ = self.call
+        result = self.stamped(copy.deepcopy(self.config["user_template"]))
+        result["uuid"], result["parentUuid"] = str(uuid.uuid4()), self.parent
+        result["message"]["content"] = [{"type": "tool_result", "content": self.DENIED, "is_error": True,
+                                         "tool_use_id": call_id}]
+        notice = self.stamped(copy.deepcopy(self.config["user_template"]))
+        notice["uuid"], notice["parentUuid"] = str(uuid.uuid4()), result["uuid"]
+        notice["message"]["content"] = [{"type": "text", "text": "[Request interrupted by user for tool use]"}]
+        self.parent = notice["uuid"]
+        self.append([result, notice])
+        self.replies.setdefault(len(self.history) - 1, []).append("  " + self.INTERRUPTED)
+        self.call = None
+        self.state = "idle"
 
     def stand_in(self, index):
         return f"[Pasted text #{index + 1} +{self.pastes[index].count(chr(10))} lines]"
 
     def handle(self, action, value):
+        if self.state == "permission":
+            # 1 is Yes: the approved command runs on, and nothing is written until it ends; 3 (No) and Esc refuse it
+            if action == "text" and value == "1":
+                self.state = "working"
+            elif (action, value) in (("text", "3"), ("escape", None)):
+                self.stop_call()
+            self.draw()
+            return True
+        if action == "escape":
+            if self.state == "working" and self.call:
+                self.stop_call()
+                self.draw()
+            return True
         if action == "paste" and (value.count("\n") >= 3 or len(value) > 800):
             self.pastes.append(value)
             self.composer += self.stand_in(len(self.pastes) - 1)
@@ -381,23 +463,37 @@ class Standalone(Agent):
             shown = shown.replace(self.stand_in(index), paste)
         self.pastes = []
         self.write_prompt(written)
+        self.history.append(shown)
+        bash = self.BASH.fullmatch(written.strip())
+        if bash:
+            command = bash.group(1).strip()
+            self.replies[len(self.history) - 1] = [f"\u25cf Bash({command})"]
+            self.ask(command)
+            return True
         reply = {"parentUuid": self.parent, "isSidechain": False, "type": "assistant", "uuid": str(uuid.uuid4()),
                  "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
         self.parent = reply["uuid"]
         self.append([self.stamped(reply)])
-        self.history.append(shown)
+        self.replies[len(self.history) - 1] = ["\u25cf ok"]
         return True
 
     def draw(self):
         cols, rows = self.size()
         text = cols - 2
         said = []
-        for prompt in self.history:
+        for number, prompt in enumerate(self.history):
             lines = [part[at : at + text] for part in prompt.split("\n") for at in range(0, max(len(part), 1), text)]
             said += [("\u276f " if index == 0 else "  ") + line for index, line in enumerate(lines)]
-            said += ["", "\u25cf ok", ""]
+            said += ["", *self.replies.get(number, []), ""]
+        if self.state == "permission":
+            self.draw_dialog(said)
+            return
+        if self.state == "working":
+            said.append("  \u23bf  Running\u2026")
         typed = [self.composer[at : at + text] for at in range(0, max(len(self.composer), 1), text)]
-        box = ["\u2500" * (cols - len(self.name) - 3) + f" {self.name} \u2500"]
+        # a running turn's spinner sits right over the box
+        box = ["\u2722 Running\u2026 (esc to interrupt)", ""] if self.state == "working" else []
+        box += ["\u2500" * (cols - len(self.name) - 3) + f" {self.name} \u2500"]
         box += [("\u276f " if index == 0 else "  ") + line for index, line in enumerate(typed)]
         box += ["\u2500" * cols, "  \u23f5\u23f5 auto mode on (shift+tab to cycle)"]
         above = said[-max(rows - len(box), 0) :] if rows > len(box) else []
@@ -408,6 +504,25 @@ class Standalone(Agent):
         if not self.composer:
             frame += f"\x1b[{rows - 2};3H\x1b[2m{self.PLACEHOLDER[:text]}\x1b[0m"
         frame += f"\x1b[{rows - 2};{3 + len(typed[-1])}H"
+        out(frame.encode())
+
+    def draw_dialog(self, said):
+        """Claude Code's Bash permission dialog in place of the prompt box, as its named session draws it: a rule,
+        what it asks about (the command wrapped at the screen's edge), the question, the options, the footer and the
+        session's titled rule."""
+        cols, rows = self.size()
+        _, command = self.call
+        width = cols - 3
+        dialog = ["\u2500" * cols, " Bash command", ""]
+        dialog += ["   " + command[at : at + width] for at in range(0, max(len(command), 1), width)]
+        dialog += ["   An e2e command", "", " Do you want to proceed?", " \u276f 1. Yes",
+                   "   2. Yes, and don't ask again", "   3. No", "", " Esc to cancel \u00b7 Tab to amend",
+                   "\u2500" * (cols - len(self.name) - 3) + f" {self.name} \u2500"]
+        above = said[-max(rows - len(dialog), 0) :] if rows > len(dialog) else []
+        screen = above + [""] * (rows - len(dialog) - len(above)) + dialog
+        frame = "\x1b[?1049h\x1b[?2004h\x1b[0m\x1b[2J"
+        for index, line in enumerate(screen[-rows:]):
+            frame += f"\x1b[{index + 1};1H{line[:cols]}"
         out(frame.encode())
 
 
