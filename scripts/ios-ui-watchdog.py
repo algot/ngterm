@@ -48,22 +48,21 @@ VERDICT = "verdict.txt"
 
 # the animations on every layer of every window of the app, the system's own windows included (the keyboard's)
 ANIMATIONS_LLDB = """\
-expr -l objc -O -- NSMutableString *o = (NSMutableString *)[NSMutableString new]; \
+expr -l objc -- @import UIKit
+expr -l objc -O -- NSMutableArray *found = (NSMutableArray *)[NSMutableArray new]; \
 NSMutableArray *st = (NSMutableArray *)[NSMutableArray new]; \
-id ws = [(id)NSClassFromString(@"UIWindow") \
-performSelector:NSSelectorFromString(@"allWindowsIncludingInternalWindows:onlyVisibleWindows:") \
+id ws = (id)[(id)NSClassFromString(@"UIWindow") \
+performSelector:(SEL)NSSelectorFromString(@"allWindowsIncludingInternalWindows:onlyVisibleWindows:") \
 withObject:(id)1 withObject:(id)0]; \
-for (id w in (NSArray *)ws) { \
-[o appendFormat:@"window %@ hidden=%d scene=%@\\n", w, (int)[w isHidden], (id)[(id)[w windowScene] class]]; \
-[st addObject:(id)[w layer]]; } \
-int n = 0; \
-while ((unsigned long)[st count]) { id l = (id)[st lastObject]; [st removeLastObject]; n++; \
+for (id w in (NSArray *)ws) { (void)[found addObject:w]; (void)[st addObject:(id)[w layer]]; } \
+while ((unsigned long)[st count]) { id l = (id)[st lastObject]; (void)[st removeLastObject]; \
 for (id k in (NSArray *)[l animationKeys]) { id a = (id)[l animationForKey:k]; \
-[o appendFormat:@"animation key=%@ %@ duration=%f repeat=%f removedOnCompletion=%d delegate=%@ on %@ of %@\\n", k, a, \
-(double)[a duration], (float)[a repeatCount], (int)[a isRemovedOnCompletion], (id)[(id)[a delegate] class], l, \
-(id)[l delegate]]; } \
-id subs = (id)[l sublayers]; if (subs) [st addObjectsFromArray:(NSArray *)subs]; } \
-[o appendFormat:@"%d layers\\n", n]; o
+(void)[found addObject:(id)[NSArray arrayWithObjects:@"animation", k, a, \
+(id)[a valueForKey:@"keyPath"] ?: (id)@"-", (id)[a valueForKey:@"duration"], (id)[a valueForKey:@"repeatCount"], \
+(id)[a valueForKey:@"repeatDuration"], (id)[a valueForKey:@"speed"], (id)[a valueForKey:@"removedOnCompletion"], \
+(id)[a valueForKey:@"delegate"] ?: (id)@"no delegate", l, (id)[l delegate] ?: (id)@"no layer delegate", nil]]; } \
+id subs = (id)[l sublayers]; if (subs) (void)[st addObjectsFromArray:(NSArray *)subs]; } \
+found
 expr -l objc -O -- (id)[(id)[(id)NSClassFromString(@"UIApplication") sharedApplication] connectedScenes]
 detach
 """
@@ -117,7 +116,13 @@ def pids(*pgrep_args):
 
 
 def find_xcodebuild(parent):
-    """The xcodebuild build-ios.sh (`parent`) runs under caffeinate, or None."""
+    """The xcodebuild build-ios.sh (`parent`) runs under caffeinate, or None.
+
+    caffeinate runs its command in the process it was started as and holds the assertion from a child of that, so
+    xcodebuild is build-ios.sh's own child; a caffeinate that ran it as its child is looked under too.
+    """
+    for pid in pids("-P", str(parent), "-x", "xcodebuild"):
+        return pid
     for caffeinate in pids("-P", str(parent), "-x", "caffeinate"):
         for pid in pids("-P", str(caffeinate), "-x", "xcodebuild"):
             return pid
@@ -298,6 +303,23 @@ def self_test():
         status = watch(bundle, out, lambda: None, lambda: next(polls), poll=0.05, examine=examine)
         assert status == 0 and [label for label, _, _ in seen] == ["first-idle-timeout"], (status, seen)
         assert not os.path.exists(os.path.join(out, VERDICT))
+
+        # xcodebuild is found as the watched process's own child (Linux names a script's process after its file)
+        if sys.platform == "linux":
+            stand_in = os.path.join(temp, "xcodebuild")
+            with open(stand_in, "w", encoding="utf-8") as script:
+                script.write("#!/bin/sh\nsleep 600\n")
+            os.chmod(stand_in, 0o755)
+            assert find_xcodebuild(os.getpid()) is None
+            child = subprocess.Popen([stand_in], start_new_session=True)
+            try:
+                until = time.monotonic() + 10
+                while find_xcodebuild(os.getpid()) != child.pid and time.monotonic() < until:
+                    time.sleep(0.05)
+                assert find_xcodebuild(os.getpid()) == child.pid, find_xcodebuild(os.getpid())
+            finally:
+                os.killpg(child.pid, signal.SIGKILL)
+                child.wait()
 
         # diagnose never fails, whatever tools the host lacks
         diagnose(out, "here", None, "NoSuchAppOfThisName")
