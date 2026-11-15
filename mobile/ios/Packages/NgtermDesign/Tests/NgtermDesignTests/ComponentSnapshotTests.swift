@@ -113,7 +113,7 @@ internal struct ComponentSnapshotTests {
                 AgentStatusBadge(status: nil)
             }
         }
-        snapshot(list, named: "peer-badges", variant: variant, height: variant == .accessibility ? 1_600 : 560)
+        snapshot(list, named: "peer-badges", variant: variant, height: variant == .accessibility ? 1_400 : 560)
     }
 
     @Test("session rows", arguments: SnapshotVariant.allCases)
