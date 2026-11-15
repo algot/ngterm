@@ -27,6 +27,18 @@ internal final class SessionKeyboardTests: XCTestCase {
         FakeApp.expect(app.textViews.matching(focused).firstMatch, "the keyboard's focus on \(what), with no tap")
     }
 
+    // as `expectFocus(on:in:_:)`, for a pane that shares its name with another session's (`work`'s first pane and the
+    // new session's are both `P1`): the one that was not typed `other`
+    @MainActor
+    private static func expectFocus(on pane: String, notTyped other: String, in app: XCUIApplication, _ what: String) {
+        let focused = NSPredicate(
+            format: "value CONTAINS %@ AND NOT (value CONTAINS %@) AND hasKeyboardFocus == true",
+            "\(pane) ready",
+            other
+        )
+        FakeApp.expect(app.textViews.matching(focused).firstMatch, "the keyboard's focus on \(what), with no tap")
+    }
+
     // types `text` key by key on the hardware keyboard, to whatever has the focus
     @MainActor
     private static func type(_ text: String, in app: XCUIApplication) {
@@ -112,7 +124,7 @@ internal final class SessionKeyboardTests: XCTestCase {
         FakeApp.expect(newSession, "New session")
         newSession.tap()
         FakeApp.expect(Self.screen("P1", in: app), "the new session's pane")
-        Self.expectFocus(on: "P1", in: app, "the new session's pane")
+        Self.expectFocus(on: "P1", notTyped: "ls", in: app, "the new session's pane")
         Self.type("pwd", in: app)
         FakeApp.expect(Self.screen("P1", in: app, typed: "pwd"), "the typing on the new session's pane, with no tap")
         Self.expectNoSoftKeyboard(in: app, "on the new session")
@@ -120,13 +132,15 @@ internal final class SessionKeyboardTests: XCTestCase {
         // each opened again by its row takes the typing again: work, then the new session (`session 1`)
         Self.reopen("work", in: app)
         FakeApp.expect(Self.screen("P1", in: app), "work's first pane again")
-        Self.expectFocus(on: "P1", in: app, "work opened again")
+        Self.expectFocus(on: "P1", notTyped: "pwd", in: app, "work opened again")
         Self.type("cd", in: app)
-        let again = NSPredicate(format: "value CONTAINS 'P1 ready' AND value CONTAINS 'cd'")
+        let again = NSPredicate(
+            format: "value CONTAINS 'P1 ready' AND value CONTAINS 'cd' AND NOT (value CONTAINS 'pwd')"
+        )
         FakeApp.expect(app.textViews.matching(again).firstMatch, "the typing on work opened again, with no tap")
         Self.reopen("session 1", in: app)
         FakeApp.expect(Self.screen("P1", in: app, typed: "pwd"), "the new session's pane again")
-        Self.expectFocus(on: "P1", in: app, "the new session opened again")
+        Self.expectFocus(on: "P1", notTyped: "cd", in: app, "the new session opened again")
         Self.type("ls", in: app)
         FakeApp.expect(Self.screen("P1", in: app, typed: "pwdls"), "the typing on the new session opened again")
     }
