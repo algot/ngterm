@@ -8,7 +8,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use ngterm_mobile::{
     ChatEvent, ChatState, EventSink, HostKeyStore, KeyVault, Machine, MachineState, MobileCore, MobileEvent, Pane,
-    PaneEnd, PaneKey, PaneKeyAction, PaneRole, PaneSize, RemoteLayout, VaultError,
+    PaneEnd, PaneKey, PaneKeyAction, PaneRole, PaneSize, PeerKind, RemoteLayout, VaultError,
 };
 
 use crate::machine::{World, account};
@@ -106,6 +106,15 @@ impl Seen {
     }
 }
 
+/// A session as a phone's listing shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Listed {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    /// The app that listed it.
+    pub(crate) app: Option<PeerKind>,
+}
+
 /// One phone: a [`MobileCore`] over russh, with the test's key and the `sshd`'s host key pinned.
 pub(crate) struct Client {
     pub(crate) label: &'static str,
@@ -159,6 +168,19 @@ impl Client {
             .unwrap_or_else(|error| panic!("{}: list: {error:?}", self.label))
             .into_iter()
             .map(|session| (session.id, session.name))
+            .collect()
+    }
+
+    /// The machine's sessions over ssh in the listing's order, each with its name and the app that listed it.
+    pub(crate) fn sessions(&self) -> Vec<Listed> {
+        block_on(self.core.list_sessions(MACHINE_ID.to_owned()))
+            .unwrap_or_else(|error| panic!("{}: list: {error:?}", self.label))
+            .into_iter()
+            .map(|session| Listed {
+                id: session.id,
+                name: session.name,
+                app: session.peer,
+            })
             .collect()
     }
 

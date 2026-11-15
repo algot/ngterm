@@ -10,6 +10,9 @@
 # (crates/ngterm-mobile/tests/support/fake_agent.py), its files under agent/ there. The same test binary's second test
 # types into a session of a Mac running upstream agterm: the conformance suite's stand-in
 # (conformance/agterm_conformance/fake_agterm.py, on the system's python3) behind a second sshd, under agterm/ there.
+# Its third test has one machine that runs both apps (a second private instance with a stand-in agterm beside it, under
+# b/ there, behind a third sshd) and a server that views it (a third private instance with an ssh of its own, under v/):
+# the phone lists the sessions of both apps, and the server lists and attaches them with ngtermctl live tree and attach.
 #
 # The build and stage keep the caller's NGTERM_* build overrides (NGTERM_VENDOR, NGTERM_GHOSTTY_VT_PREFIX); the tests,
 # and so the instances and sshd they start, run with every NGTERM_* stripped, so nothing they start can reach an ngterm
@@ -129,32 +132,35 @@ WORK="$(mktemp -d "$ROOT/me2e.XXXXXX")"
 # the test runs from its crate's directory: hand it absolute paths
 WORK="$(cd "$WORK" && pwd)"
 
-# What the test leaves running when it dies without unwinding: every session of its private namespace, ended through
-# that namespace's own server (which then goes after its idle grace), and the instance and sshd, by the pids they
-# recorded and only while those pids still run this run's binary or config.
+# What the tests leave running when they die without unwinding: every session of each instance's private namespace,
+# ended through that namespace's own server (which then goes after its idle grace), and the instances and sshds, by
+# the pids they recorded and only while those pids still run this run's binary or config.
 reap() {
   local user
   user="$(id -un)"
-  local private=(env -i "NGTERM_STATE_DIR=$WORK/s" "HOME=$WORK/home" "PATH=$WORK/stage/bin:/usr/bin:/bin"
-    "USER=$user" "LOGNAME=$user" LANG=C.UTF-8)
-  local session="$WORK/stage/bin/ngterm-session" pid names
-  # an instrumented session client's profile goes to the pool, not to a default.profraw in the checkout
-  [[ -z "$PROFILES" ]] || private+=("LLVM_PROFILE_FILE=$PROFILES/headless-%4m.profraw")
-  if [[ -s "$WORK/live-dir" && -x "$session" ]]; then
-    private+=("NGTERM_LIVE_DIR=$(<"$WORK/live-dir")")
-    names="$("${private[@]}" "$session" list --short 2>/dev/null || true)"
-    # shellcheck disable=SC2086 # one session name per word
-    [[ -z "$names" ]] || "${private[@]}" "$session" kill --force $names >/dev/null 2>&1 || true
-  fi
-  if [[ -s "$WORK/headless.pid" ]]; then
-    pid="$(<"$WORK/headless.pid")"
-    if [[ "$(readlink -f "/proc/$pid/exe" 2>/dev/null)" == "$(readlink -f "$WORK/stage/bin/ngterm-headless")" ]]; then
-      kill -TERM "$pid" 2>/dev/null || true
+  local session="$WORK/stage/bin/ngterm-session" root pid names
+  # the first test's instance, the machine that runs both apps and the server that views it
+  for root in "$WORK" "$WORK/b" "$WORK/v"; do
+    local private=(env -i "NGTERM_STATE_DIR=$root/s" "HOME=$root/home" "PATH=$WORK/stage/bin:/usr/bin:/bin"
+      "USER=$user" "LOGNAME=$user" LANG=C.UTF-8)
+    # an instrumented session client's profile goes to the pool, not to a default.profraw in the checkout
+    [[ -z "$PROFILES" ]] || private+=("LLVM_PROFILE_FILE=$PROFILES/headless-%4m.profraw")
+    if [[ -s "$root/live-dir" && -x "$session" ]]; then
+      private+=("NGTERM_LIVE_DIR=$(<"$root/live-dir")")
+      names="$("${private[@]}" "$session" list --short 2>/dev/null || true)"
+      # shellcheck disable=SC2086 # one session name per word
+      [[ -z "$names" ]] || "${private[@]}" "$session" kill --force $names >/dev/null 2>&1 || true
     fi
-  fi
-  # the machine's sshd and the stand-in agterm Mac's
+    if [[ -s "$root/headless.pid" ]]; then
+      pid="$(<"$root/headless.pid")"
+      if [[ "$(readlink -f "/proc/$pid/exe" 2>/dev/null)" == "$(readlink -f "$WORK/stage/bin/ngterm-headless")" ]]; then
+        kill -TERM "$pid" 2>/dev/null || true
+      fi
+    fi
+  done
+  # the machine's sshd, the stand-in agterm Mac's and the both-apps machine's
   local sshd
-  for sshd in "$WORK/sshd" "$WORK/agterm/sshd"; do
+  for sshd in "$WORK/sshd" "$WORK/agterm/sshd" "$WORK/b/sshd"; do
     [[ -s "$sshd/sshd.pid" ]] || continue
     pid="$(<"$sshd/sshd.pid")"
     if tr '\0' ' ' 2>/dev/null <"/proc/$pid/cmdline" | grep -qF "$sshd/sshd_config"; then

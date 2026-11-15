@@ -22,6 +22,12 @@
 //! suite's stand-in, whose own window leads every pane it lists): the pane follows and is covered, what is typed while
 //! it follows never reaches the session, and Take control makes the typed line run.
 //!
+//! A third test has one machine that runs both apps (`support/both.rs`: a private `ngterm-headless` with the stand-in
+//! agterm beside it, in one login). The phone lists the sessions of both, each with the app that listed it; New
+//! Session goes to ngterm; an agterm session is typed into and ended through agterm, and has no chat. A second
+//! server of the user's, another private `ngterm-headless`, lists the machine with `ngtermctl live tree HOST` and
+//! attaches a session of each app with `ngtermctl live attach HOST ID`, each through its own app.
+//!
 //! Without `sshd` a test skips with a reason, unless `CI` is set: there it fails.
 //!
 //! Linux only, as the script is: the support code is Unix (file modes, an unprivileged `sshd`), and the other hosts'
@@ -34,6 +40,9 @@ mod agent;
 #[cfg(test)]
 #[path = "support/agterm.rs"]
 mod agterm;
+#[cfg(test)]
+#[path = "support/both.rs"]
+mod both;
 #[cfg(test)]
 #[path = "support/chat.rs"]
 mod chat;
@@ -54,15 +63,18 @@ mod sshd;
 mod steps;
 
 use std::path::PathBuf;
-use std::time::Duration;
 
-use ngterm_mobile::PaneRole;
+use ngterm_mobile::PeerKind;
 
 use self::agterm::AgtermMac;
+use self::both::{
+    AGTERM_SESSION, BothHost, HOST, Viewer, named, the_viewer_attaches_a_session_of_each_app,
+    the_viewer_lists_both_apps,
+};
 use self::chat::Scene;
 use self::machine::World;
-use self::phone::{Client, GRID, MACHINE_ID, block_on, enter};
-use self::steps::{assert_isolated, create_and_read, leadership, reconnect};
+use self::phone::{Client, MACHINE_ID, block_on, poll};
+use self::steps::{assert_isolated, create_and_read, leadership, reconnect, type_into_agterm_after_taking_control};
 
 /// The `sshd` to run a machine behind; `None` is a skip, marked for the script, and a failure on CI.
 fn sshd_or_skip() -> Option<PathBuf> {
@@ -82,10 +94,6 @@ fn sshd_or_skip() -> Option<PathBuf> {
     found
 }
 
-/// The line typed into the agterm pane, and what it prints, which the line itself doesn't hold.
-const AGTERM_TYPED: &str = "echo typed-$((6*7))-on-agterm";
-const AGTERM_PRINTED: &str = "typed-42-on-agterm";
-
 #[test]
 #[ignore = "needs sshd and python3: run scripts/test-mobile-e2e.sh"]
 fn typing_reaches_an_agterm_session_once_the_phone_takes_control_from_its_window() {
@@ -102,34 +110,7 @@ fn typing_reaches_an_agterm_session_once_the_phone_takes_control_from_its_window
     };
     assert_eq!(name, agterm::SESSION);
 
-    block_on(phone.core.attach_session(MACHINE_ID.to_owned(), session.clone())).expect("attach the session");
-    let pane = phone.wait_layout().primary;
-    let shown = block_on(
-        phone
-            .core
-            .show_pane(MACHINE_ID.to_owned(), session.clone(), pane.clone(), GRID),
-    )
-    .expect("show the pane");
-    phone.terminal = Some(shown.clone());
-    // agterm's own window leads: the pane must say so and be covered, where Take control is offered
-    phone.wait("the pane following agterm's window", |seen| {
-        seen.role == Some(PaneRole::Follower) && seen.covered
-    });
-    phone.wait_screen("agterm$");
-
-    // zmx drops what a follower sends
-    assert!(shown.type_text(AGTERM_TYPED.to_owned()).expect("type"));
-    assert!(shown.key(enter()).expect("press enter"));
-    let dropped = phone.screen_shows("typed", Duration::from_secs(2));
-    assert!(dropped.is_err(), "a follower's typing reached the agterm session");
-
-    phone.take_lead(session, &pane);
-    assert!(!phone.seen.covered, "the pane is still covered after it took the lead");
-    let leading = phone.terminal.clone().expect("the pane");
-    phone.wait_screen("agterm$");
-    assert!(leading.type_text(AGTERM_TYPED.to_owned()).expect("type"));
-    assert!(leading.key(enter()).expect("press enter"));
-    phone.wait_screen(AGTERM_PRINTED);
+    type_into_agterm_after_taking_control(&mut phone, session);
 
     let claims: Vec<bool> = mac
         .zmx_calls()
@@ -149,6 +130,7 @@ fn the_mobile_core_drives_a_real_headless_machine_over_ssh() {
     let Some(binary) = sshd_or_skip() else {
         return;
     };
+    let _alone = machine::one_at_a_time();
     let world = World::start(&binary);
     let mut first = Client::new("first", &world);
     first.connect(world.proxy.port());
@@ -181,4 +163,78 @@ fn the_mobile_core_drives_a_real_headless_machine_over_ssh() {
     );
     assert!(listed.iter().any(|(_, name)| *name == marker), "{listed:?}");
     assert!(world.headless.tree().iter().all(|(id, _)| *id != session));
+}
+
+#[test]
+#[ignore = "needs a staged ngterm-headless, sshd and python3: run scripts/test-mobile-e2e.sh"]
+fn a_machine_running_both_apps_lists_the_sessions_of_both_and_each_works_through_its_app() {
+    let Some(binary) = sshd_or_skip() else {
+        return;
+    };
+    let _alone = machine::one_at_a_time();
+    let host = BothHost::start(&binary);
+    let mut phone = Client::with_keys("both phone", &host.key.private_key, &host.host_key.fingerprint);
+    phone.connect(host.sshd.port());
+
+    // the listing: ngterm's own first session, then agterm's, each with its app
+    let listed = poll("the sessions of both apps", || {
+        let listed = phone.sessions();
+        (listed.len() >= 2).then_some(listed)
+    });
+    let agterm = named(&listed, AGTERM_SESSION).clone();
+    assert_eq!(agterm.app, Some(PeerKind::Agterm), "{listed:?}");
+    assert_eq!(listed.last(), Some(&agterm), "agterm's sessions follow ngterm's");
+    let own = &listed[..listed.len() - 1];
+    assert!(
+        own.iter().all(|session| session.app == Some(PeerKind::Ngterm)),
+        "{listed:?}"
+    );
+    assert_eq!(own.len(), host.headless.tree().len(), "{listed:?}");
+
+    // New Session on such a machine is ngterm's, and works as on an ngterm machine; agterm's stays listed beside it
+    let created = create_and_read(&mut phone);
+    let listed = phone.sessions();
+    let ngterm = listed
+        .iter()
+        .find(|session| session.id == created)
+        .unwrap_or_else(|| panic!("the new session is not listed: {listed:?}"))
+        .clone();
+    assert_eq!(ngterm.app, Some(PeerKind::Ngterm));
+    assert_eq!(named(&listed, AGTERM_SESSION), &agterm);
+    assert_eq!(
+        host.agterm.sessions(),
+        [AGTERM_SESSION],
+        "agterm got a session it never made"
+    );
+
+    // another server of the user's lists the machine and attaches a session of each app
+    let viewer = Viewer::start(&host);
+    the_viewer_lists_both_apps(&viewer, &ngterm, &agterm);
+    the_viewer_attaches_a_session_of_each_app(&viewer, &host, &ngterm, &agterm);
+
+    // the agterm session on a phone: no chat, typed into once control is taken, ended through agterm
+    let mut second = Client::with_keys("both phone 2", &host.key.private_key, &host.host_key.fingerprint);
+    second.connect(host.sshd.port());
+    assert_eq!(named(&second.sessions(), AGTERM_SESSION), &agterm);
+    type_into_agterm_after_taking_control(&mut second, &agterm.id);
+    let pane = second.wait_layout().primary;
+    let chat = block_on(second.core.open_chat(MACHINE_ID.to_owned(), agterm.id.clone(), pane));
+    assert!(chat.is_err(), "a chat opened on an agterm session");
+    block_on(second.core.end_session(MACHINE_ID.to_owned(), agterm.id.clone())).expect("end agterm's session");
+    assert!(host.agterm.sessions().is_empty(), "agterm still has the ended session");
+    let listed = second.sessions();
+    assert!(
+        listed.iter().all(|session| session.app == Some(PeerKind::Ngterm)),
+        "{listed:?}"
+    );
+    assert!(listed.contains(&ngterm), "{listed:?}");
+    // a listing of both where agterm has nothing left says so under ngterm's sessions
+    let text = viewer
+        .headless
+        .ctl(&["live", "tree", HOST])
+        .expect("the viewer's listing");
+    assert!(
+        text.contains(&format!("no attachable sessions on {HOST} (agterm)")) && text.contains(&ngterm.id),
+        "{text}"
+    );
 }

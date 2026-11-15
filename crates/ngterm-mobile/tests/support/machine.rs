@@ -6,6 +6,7 @@ use std::io::Write as _;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -21,6 +22,16 @@ pub(crate) const STAGE_VARIABLE: &str = "MOBILE_E2E_STAGE";
 pub(crate) const WORK_VARIABLE: &str = "MOBILE_E2E_WORK";
 /// The longest Unix socket path every Unix takes (macOS's `sun_path` holds 104 bytes with the NUL).
 pub(crate) const SOCKET_PATH_MAX: usize = 103;
+
+/// The tests that start instances run one at a time ([`one_at_a_time`]).
+static INSTANCES: Mutex<()> = Mutex::new(());
+
+/// Held by a test for as long as its instances run: the steps of one test are timed against a machine that is not
+/// also starting and serving another test's instances.
+pub(crate) fn one_at_a_time() -> MutexGuard<'static, ()> {
+    // a test that failed while it held the lock leaves nothing the next one shares
+    INSTANCES.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// The private instance, its `sshd` and the proxy in front of it; torn down in reverse on drop.
 pub(crate) struct World {
@@ -38,7 +49,7 @@ impl World {
         let stage = PathBuf::from(std::env::var_os(STAGE_VARIABLE).expect("MOBILE_E2E_STAGE: run the script"));
         let work = PathBuf::from(std::env::var_os(WORK_VARIABLE).expect("MOBILE_E2E_WORK: run the script"));
         let user = account();
-        let headless = Headless::start(&stage, &work, &user);
+        let headless = Headless::start(&stage, &work, &user, None);
         let key = generate_key("ngterm-mobile e2e".to_owned()).expect("a client key");
         let host = generate_key("ngterm-mobile e2e host".to_owned()).expect("a host key");
         let force_command = headless.write_force_command(&work);
@@ -83,6 +94,9 @@ pub(crate) struct Private {
     pub(crate) state: PathBuf,
     pub(crate) home: PathBuf,
     pub(crate) user: String,
+    /// A directory of the machine's further programs, found after the stage's: another app's CLI, an `ssh` of the
+    /// test's own.
+    pub(crate) more: Option<PathBuf>,
 }
 
 impl Private {
@@ -106,7 +120,12 @@ impl Private {
     }
 
     pub(crate) fn path(&self) -> String {
-        format!("{}:/usr/bin:/bin", self.stage.join("bin").display())
+        let more = self
+            .more
+            .as_ref()
+            .map(|directory| format!("{}:", directory.display()))
+            .unwrap_or_default();
+        format!("{}:{more}/usr/bin:/bin", self.stage.join("bin").display())
     }
 }
 
@@ -117,12 +136,15 @@ pub(crate) struct Headless {
 }
 
 impl Headless {
-    pub(crate) fn start(stage: &Path, work: &Path, user: &str) -> Self {
+    /// Starts an instance whose private directories, log and recorded pid go under `work`, with `more` on its `PATH`
+    /// ([`Private::more`]).
+    pub(crate) fn start(stage: &Path, work: &Path, user: &str, more: Option<&Path>) -> Self {
         let private = Private {
             stage: stage.to_owned(),
             state: work.join("s"),
             home: work.join("home"),
             user: user.to_owned(),
+            more: more.map(Path::to_owned),
         };
         for directory in [&private.state, &private.home] {
             fs::create_dir_all(directory).expect("create a private directory");
