@@ -43,7 +43,8 @@ would, so the origin's agent record, `ngtermctl agent chat` and the phone's chat
   Claude Code writes it; a shorter one shows as typed. Each prompt submitted shows above the box in full and gets the
   reply `ok`, except `Run this shell command with the Bash tool: COMMAND`: it writes the Bash call, tells the
   `PermissionRequest` hook, sets the pane `blocked` and draws Claude Code's permission dialog for COMMAND in place of
-  the box. `1` (Yes) goes back to the box with a turn's spinner over it, the approved command running on with
+  the box. `1` (Yes) draws an interim frame before returning to the box with a turn's spinner over it, the approved
+  command running on with
   nothing written and no status reported, as Claude Code does until the call ends (the stand-in never ends it); Esc
   then interrupts it. `3` (No) or Esc on the dialog refuses it. Either end writes the call's error result and the
   turn's interrupt, shows `Interrupted` under the call and brings the prompt back, again with no status reported.
@@ -64,6 +65,7 @@ import signal
 import subprocess
 import sys
 import termios
+import time
 import tty
 import uuid
 
@@ -435,6 +437,8 @@ class Standalone(Agent):
         if self.state == "permission":
             # 1 is Yes: the approved command runs on, and nothing is written until it ends; 3 (No) and Esc refuse it
             if action == "text" and value == "1":
+                out(b"\x1b[2J\x1b[HStarting command")
+                time.sleep(0.8)
                 self.state = "working"
             elif (action, value) in (("text", "3"), ("escape", None)):
                 self.stop_call()

@@ -21,6 +21,7 @@ mod account;
 mod answered;
 mod chat;
 mod commands;
+mod interrupted;
 mod mail;
 mod rerun;
 mod upload;
@@ -73,6 +74,7 @@ pub struct Agent {
 enum AgentCommand {
     Hook(Hook),
     Answered(answered::Answered),
+    Interrupted(interrupted::Interrupted),
     Chat(chat::Chat),
     Commands(commands::Commands),
     Mail(mail::Mail),
@@ -86,6 +88,7 @@ impl Agent {
         match &self.command {
             AgentCommand::Hook(command) => command.validate(),
             AgentCommand::Answered(command) => command.validate(),
+            AgentCommand::Interrupted(command) => command.validate(),
             AgentCommand::Chat(command) => command.validate(),
             AgentCommand::Commands(command) => command.validate(),
             AgentCommand::Mail(command) => command.validate(),
@@ -99,6 +102,7 @@ impl Agent {
         match &self.command {
             AgentCommand::Hook(command) => command.run(env),
             AgentCommand::Answered(command) => command.run(env),
+            AgentCommand::Interrupted(command) => command.run(env),
             AgentCommand::Chat(command) => command.run(env),
             AgentCommand::Commands(command) => command.run(env),
             AgentCommand::Mail(command) => command.run(env),

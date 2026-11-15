@@ -294,6 +294,30 @@ fn an_answer_for_the_split_pane_leaves_the_status_its_own() {
 }
 
 #[test]
+fn chat_stop_clears_only_the_working_status_its_pane_owns() {
+    let (mut fixture, session, _) = one_pane();
+    let _ = split(&mut fixture, session);
+    for (state, owner, stopping, expected) in [
+        ("active", "left", "left", AgentStatus::Idle),
+        ("active", "right", "right", AgentStatus::Idle),
+        ("active", "left", "right", AgentStatus::Active),
+        ("active", "right", "left", AgentStatus::Active),
+        ("completed", "left", "left", AgentStatus::Completed),
+        ("blocked", "left", "left", AgentStatus::Blocked),
+        ("idle", "left", "left", AgentStatus::Idle),
+    ] {
+        status(&mut fixture, session, state, owner);
+        let args = args(|a| a.pane = Some(stopping.to_owned()));
+        assert!(
+            fixture
+                .send(Command::Agent(AgentCmd::Interrupted), Some(&wire(session)), args)
+                .ok
+        );
+        assert_eq!(status_of(&fixture, session).0, expected, "{state} {owner} {stopping}");
+    }
+}
+
+#[test]
 fn an_answer_without_its_prompt_or_a_status_to_leave_is_refused() {
     let (mut fixture, session, token) = one_pane();
     let left = || pane_args(&token, "left");

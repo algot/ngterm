@@ -218,6 +218,11 @@ pub(crate) fn answered_tail(shell: OriginShell, session_id: &str, side: Side, ap
     agent_tail(shell, "", &words)
 }
 
+/// The remote command for the status clear that chat Stop's Escape carries.
+pub(crate) fn interrupted_tail(shell: OriginShell, session_id: &str, side: Side) -> String {
+    agent_tail(shell, "", &agent_words("interrupted", session_id, side))
+}
+
 /// How long the origin has to take an answered prompt's word.
 pub(crate) const ANSWERED_DEADLINE: Duration = Duration::from_secs(5);
 
@@ -1040,6 +1045,12 @@ impl<C: Connection> Chats<C> {
         let chat = &self.open[self.find(key)?];
         let connection = chat.connection.clone()?;
         let command = answered_tail(connection.origin_shell(), &key.session_id, chat.side, approval, working);
+        Some((connection, command))
+    }
+
+    pub(crate) fn interrupted(&self, key: &ChatKey, connection: Rc<C>) -> Option<(Rc<C>, String)> {
+        let side = self.side(key)?;
+        let command = interrupted_tail(connection.origin_shell(), &key.session_id, side);
         Some((connection, command))
     }
 

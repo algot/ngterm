@@ -332,7 +332,8 @@ and so does its capability's tests in the suite (`agent-chat` above). Today the 
 agent-status hooks fill and the Android chat view reads, and `agent.locate`, which answers the pane whose record
 holds a conversation or the one Claude Code moved it from, and `agent.answered`, a viewer's word that it answered
 the pane's permission dialog itself, which moves the pane's status off `blocked` while that prompt is still the
-live one (`ngterm-core`'s `commands::agent`). Its CLI side is
+live one, and `agent.interrupted`, which clears only the addressed pane's active status after a chat Stop
+(`ngterm-core`'s `commands::agent`). Its CLI side is
 `ngtermctl agent hook`, which the hooks run with the payload on stdin (`ngterm-ctl`'s `agent.rs`), and
 `ngtermctl agent chat`, which the phone runs on the origin to read the record's transcript as NDJSON chat events
 (`agent/chat.rs`), and `ngtermctl agent commands`, which prints the agent's slash commands and skills for the chat
@@ -340,7 +341,9 @@ composer's `/` dropdown (`agent/commands.rs`, over `ngterm-core`'s `agent_chat::
 `ngtermctl agent upload`, which stores a file the chat composer attaches from its stdin and prints its path
 (`agent/upload.rs`, over `ngterm-core`'s `agent_chat::upload`; no record or running instance needed), and
 `ngtermctl agent answered`, which the phone runs once its approval card's key closed the agent's dialog
-(`agent/answered.rs`, sending `agent.answered`), and
+(`agent/answered.rs`, sending `agent.answered`), and `ngtermctl agent interrupted`, which the phone runs after
+chat Stop sent Escape through the live attach (`agent/interrupted.rs`, sending `agent.interrupted`) to clear only
+that pane's active status, and
 `ngtermctl agent mail`, which the hooks run to hand the pane's `msg` mailbox to its agent over upstream's `msg.read`
 (`agent/mail.rs`; it adds no control command), and `ngtermctl agent rerun`, which the Claude hooks of a Claude Code
 background job run themselves through: it asks `agent.locate` for the pane of the payload's conversation and runs

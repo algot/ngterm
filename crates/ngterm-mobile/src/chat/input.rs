@@ -49,11 +49,13 @@
 //!   the origin's `approval_done`, or its next prompt, ends it. Once the dialog is seen gone the origin is told
 //!   (`ngtermctl agent answered`, [`super::answered_tail`]), with what the screen showed next, a turn running or
 //!   the prompt back: Claude Code has no hook for an answered prompt, so the pane would stay `blocked`, and the
-//!   prompt open, until the approved call ends. Best effort: an origin without the command, or a link lost, leaves
-//!   the status to the agent's next hook. Two calls a dialog shows alike (the same command, two
+//!   prompt open, until the approved call ends. A failed notification makes the action unconfirmed; no answer key
+//!   is retried. Two calls a dialog shows alike (the same command, two
 //!   edits of one file) can't be told apart on screen, so the prompt told of is the one the chat held open for the
 //!   card when the answer began, by its id: the agent's next prompt, alike and up before the dialog is seen gone, is
-//!   never named, and the origin ignores the word once it has replaced the answered one.
+//!   never named, and the origin ignores the word once it has replaced the answered one. The notification is kept
+//!   before input, even if the chat closes meanwhile; an unknown interim frame waits for the next readable prompt.
+//!   A sent answer is reported once even if confirmation times out, conservatively keeping the turn working.
 //! - **Question**: per question, its tab confirmed by its text and options (a picker taller than the screen by what
 //!   is left of its text, and only while no other question of the call lists the same options); a digit picks a
 //!   single-select option (the picker moves on), digits toggle a multi-select question's boxes to the answer and Tab moves on; free text goes
@@ -103,8 +105,8 @@ pub enum AgentInputOutcome {
     /// The lead could not be taken (another client claimed it, the attach was lost, or no answer in time): nothing
     /// was sent.
     LeadRefused,
-    /// Keys were sent, but then the screen was not what the action expected (the dialog stayed up, a step's result
-    /// did not show in time, the lead went): look at the terminal.
+    /// Keys were sent, but the resulting screen or origin status could not be confirmed (the dialog stayed up,
+    /// a step's result did not show in time, the lead went, or the status notification failed): look at the terminal.
     Unconfirmed,
 }
 
@@ -365,11 +367,10 @@ impl Plan {
     }
 
     /// The approval the plan answered, and whether the agent's turn ran on once its dialog went (its prompt back
-    /// otherwise): what the origin is told ([`crate::chat::answered_tail`]). `None` for any other action, an answer
-    /// not seen through, and a screen that says neither (the agent's next dialog, one the matchers can't read).
+    /// otherwise). A sent answer with no readable prompt yet conservatively keeps the turn working.
     pub(crate) fn answered(&self) -> Option<(&ChatApproval, bool)> {
         match (&self.action, self.resumed) {
-            (Action::Approval(card, _), Some(working)) => Some((card, working)),
+            (Action::Approval(card, _), working) if self.sent => Some((card, working.unwrap_or(true))),
             _ => None,
         }
     }
@@ -455,6 +456,7 @@ impl Plan {
             },
             // the dialog the key went to, still up
             (Step::Answered(answered), Screen::Permission(dialog)) if dialog == answered => Next::Wait,
+            (Step::Answered(_), Screen::Unknown) => Next::Wait,
             (Step::Answered(_), screen) => {
                 self.resumed = match screen {
                     Screen::Prompt { working, .. } => Some(*working),

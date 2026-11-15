@@ -1,4 +1,4 @@
-//! `agent.report`, `agent.get`, `agent.locate` and `agent.answered` (Rust-only, `conformance/docs/rust-build.md` > Rust-only
+//! `agent.report`, `agent.get`, `agent.locate`, `agent.answered` and `agent.interrupted` (Rust-only, `conformance/docs/rust-build.md` > Rust-only
 //! extensions): the origin's per-pane agent record, which the agent-status hooks fill through `ngtermctl agent hook`
 //! and the Android chat view reads (`docs/plans/20261103-android-agent-chat.md`).
 //!
@@ -25,6 +25,9 @@
 //! (the watcher reports `blocked` only for a prompt on screen): the command's `PostToolUse` writes `active` before a
 //! later, unrelated block (a question at `Stop`, a `request_user_input` prompt) could make it live. One case is left
 //! open: a call the guardian denies runs no tool, so a turn that ends at once with a question finds it still there.
+//!
+//! `agent.interrupted` clears the addressed pane's active status after chat Stop sent Escape through its live attach,
+//! as the origin's keyboard handler does. Another pane's status or a status the hooks advanced is left alone.
 //!
 //! `agent.answered` is a viewer's word that it answered the pane's dialog itself (the Android chat's approval card):
 //! Claude Code has no hook for an answered permission prompt, so the status would hold `blocked`, and the candidate
@@ -265,7 +268,22 @@ pub(crate) fn dispatch(core: &mut Core, cmd: AgentCmd, request: &Request) -> Out
         AgentCmd::Get => get(core, request),
         AgentCmd::Locate => locate_conversation(core, request),
         AgentCmd::Answered => answered(core, request),
+        AgentCmd::Interrupted => interrupted(core, request),
     }
+}
+
+/// A chat Stop sent Escape through the live attach, bypassing the origin's keyboard handler.
+fn interrupted(core: &mut Core, request: &Request) -> Outcome {
+    let pane = addressed(core, request)?;
+    let reset = core.settings().effective_status_reset();
+    if let Some(store) = core.library_mut().store_for_session_mut(pane.session)
+        && store
+            .session(pane.session)
+            .is_some_and(|session| session.agent_indicator.status == AgentStatus::Active)
+    {
+        store.clear_status_on_input(pane.session, pane.role, crate::model::StatusKeystroke::Interrupt, reset);
+    }
+    Ok(with_id(pane.session))
 }
 
 /// `agent.answered`: the addressed pane's live approval, named by its chat event's id, was answered on its dialog;

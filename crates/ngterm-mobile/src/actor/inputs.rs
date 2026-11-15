@@ -185,11 +185,8 @@ async fn act<T: Transport>(
     standing(state, &on).ok_or(PaneInputError::Closed)?;
     let agent = agent.ok_or_else(|| refused(NO_AGENT_TO_DRIVE))?;
     let _acting = Acting::take(state, &on.key)?;
-    // named before any key goes: once the dialog is gone the agent's next prompt may show the same card
-    let prompt = match &action {
-        Action::Approval(card, _) => state.chats.borrow().prompt(&on.key, card),
-        _ => None,
-    };
+    let notification = notification(state, &on, &action);
+    let can_answer = !matches!(action, Action::Approval(..)) || notification.is_some();
     let timing = state.wiring.timing;
     let Some(attach) = lead(state, &on, timing).await? else {
         return Ok(AgentInputOutcome::LeadRefused);
@@ -197,47 +194,66 @@ async fn act<T: Transport>(
     let mut plan = Plan::new(action, agent);
     let mut sent: Option<Went> = None;
     let mut busy = 0;
-    loop {
+    let outcome = loop {
         let step = match settle(state, &on, attach, timing).await {
-            Ok(true) => look(state, &on, attach, agent, (&mut plan, &mut sent), seen),
+            Ok(true) => look(state, &on, attach, agent, (&mut plan, &mut sent, can_answer), seen),
             Ok(false) => Ok(Looked::Done(plan.stopped(AgentInputOutcome::LeadRefused))),
             Err(error) => Err(error),
         };
         match step {
             Ok(Looked::Done(outcome)) => {
-                tell_answered(state, &on, &plan, prompt.as_deref()).await;
-                return Ok(outcome);
+                break Ok(outcome);
             }
             Ok(Looked::Again) => busy = 0,
             Ok(Looked::Pending) => {
                 busy = 0;
                 if sent.is_none_or(|went| went.at.elapsed() >= timing.confirm) {
-                    return Ok(plan.stopped(AgentInputOutcome::NotOnScreen));
+                    break Ok(plan.stopped(AgentInputOutcome::NotOnScreen));
                 }
             }
             Ok(Looked::Busy) => {
                 busy += 1;
                 if busy >= BUSY_LOOKS {
-                    return Ok(plan.stopped(AgentInputOutcome::NotOnScreen));
+                    break Ok(plan.stopped(AgentInputOutcome::NotOnScreen));
                 }
             }
             // hidden after keys went: they went
-            Err(_) if plan.sent() => return Ok(AgentInputOutcome::Unconfirmed),
-            Err(error) => return Err(error),
+            Err(_) if plan.sent() => break Ok(AgentInputOutcome::Unconfirmed),
+            Err(error) => break Err(error),
+        }
+    };
+    if plan.sent()
+        && let Some((connection, active, idle)) = notification
+    {
+        let working = plan.answered().is_none_or(|(_, working)| working);
+        let command = if working { active } else { idle };
+        if !matches!(sessions::run(&*connection, &command, ANSWERED_DEADLINE).await, Ok(result) if result.status == 0) {
+            return Ok(AgentInputOutcome::Unconfirmed);
         }
     }
+    outcome
 }
 
-/// Tells the origin the approval `plan` answered, its chat's `prompt` when the answer began, is over, and what the
-/// agent's screen showed next ([`Plan::answered`]). Best effort: whatever comes of it, the keys went.
-async fn tell_answered<T: Transport>(state: &State<T>, on: &On, plan: &Plan, prompt: Option<&str>) {
-    let (Some((_, working)), Some(prompt)) = (plan.answered(), prompt) else {
-        return;
-    };
-    let Some((connection, command)) = state.chats.borrow().answered(&on.key, prompt, working) else {
-        return;
-    };
-    let _ = sessions::run(&*connection, &command, ANSWERED_DEADLINE).await;
+fn notification<T: Transport>(
+    state: &State<T>,
+    on: &On,
+    action: &Action,
+) -> Option<(Rc<T::Connection>, String, String)> {
+    match action {
+        Action::Approval(card, _) => {
+            let chats = state.chats.borrow();
+            chats.prompt(&on.key, card).and_then(|prompt| {
+                let (connection, working) = chats.answered(&on.key, &prompt, true)?;
+                let (_, idle) = chats.answered(&on.key, &prompt, false)?;
+                Some((connection, working, idle))
+            })
+        }
+        Action::Interrupt => state.connections.borrow().get(&on.key.machine_id).and_then(|link| {
+            let (connection, command) = state.chats.borrow().interrupted(&on.key, Rc::clone(&link.connection))?;
+            Some((connection, command.clone(), command))
+        }),
+        _ => None,
+    }
 }
 
 /// The looks in a row that may find the terminal busy (its frame stale, or held by the program) before an action
@@ -371,7 +387,7 @@ fn look<T: Transport>(
     on: &On,
     attach: u64,
     agent: Agent,
-    (plan, sent): (&mut Plan, &mut Option<Went>),
+    (plan, sent, can_answer): (&mut Plan, &mut Option<Went>, bool),
     seen: &Cell<&'static str>,
 ) -> Result<Looked, PaneInputError> {
     drain(state, &on.key);
@@ -394,6 +410,11 @@ fn look<T: Transport>(
         Next::Done(outcome) => Ok(Looked::Done(outcome)),
         Next::Wait => Ok(Looked::Pending),
         Next::Send { keys, look } => {
+            if !can_answer {
+                return Err(refused(
+                    "The approval is no longer connected to its chat. Reopen the chat before answering.",
+                ));
+            }
             for (at, key) in keys.iter().enumerate() {
                 match key.send_if(terminal, generation) {
                     Ok(true) => {}

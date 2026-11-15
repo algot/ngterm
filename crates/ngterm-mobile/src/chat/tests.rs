@@ -53,6 +53,15 @@ fn far_words(tail: &str) -> String {
 
 #[cfg(unix)]
 #[test]
+fn the_interrupt_line_names_only_the_pane() {
+    assert_eq!(
+        far_words(&super::interrupted_tail(OriginShell::Posix, "S", Side::Right)),
+        "[agent][interrupted][--target=S][--pane][right]"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn the_answered_line_names_the_prompt_and_whether_the_turn_ran_on() {
     let session = "00000000-0000-0000-0000-0000000000A1";
     let answered = |working| {

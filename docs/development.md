@@ -1032,7 +1032,10 @@ every other viewer see as before; the chat is a second view of it, read from the
   its progress and Cancel shown, and its stored path goes into the prompt for the agent to read;
 - a permission prompt, Claude's `AskUserQuestion` or a Codex Plan-mode question, as a card pinned above the composer
   and answered with its buttons; once an approval's dialog is seen gone the app tells the origin (`ngtermctl agent
-  answered`), so the session reads Working, with Stop, while the approved command runs, not Waiting until it ends;
+  answered`), so the session reads Working, with Stop, while the approved command runs. Interim redraws are waited
+  out, and closing the chat cannot drop the notification. If the answer cannot be reported, the app shows it as
+  unconfirmed. Stop also tells the origin (`ngtermctl agent interrupted`) to clear that pane's active status, as
+  Escape in its own window does;
 - the account the agent is signed in with and how much of its weekly limit is used, over the rows: Claude Code's
   email from its global config and its limit from the usage endpoint its `/usage` asks, with its own sign-in
   (`.credentials.json`, or the macOS Keychain); Codex's from its `auth.json` and the rate limits its rollout records.

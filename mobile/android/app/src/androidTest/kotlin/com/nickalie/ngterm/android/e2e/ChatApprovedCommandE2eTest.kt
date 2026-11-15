@@ -141,6 +141,10 @@ class ChatApprovedCommandE2eTest {
         compose.onNode(barSwitch(R.string.session_show_chat)).performClick()
         compose.waitUntil(CONNECT_WAIT_MS) { nodes(composer()) > 0 }
 
+        compose.waitUntil(ANSWER_WAIT_MS) {
+            nodes(badge(R.string.agent_active)) == 0 && nodes(stop()) == 0
+        }
+
         // No: the session leaves Waiting and never shows Working
         ask("no")
         compose.onNode(option(NO)).performScrollTo().performClick()

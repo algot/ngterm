@@ -252,13 +252,16 @@ fn an_answered_approval_says_whether_the_turn_ran_on_once_its_dialog_went() {
         (&WORKING, Some(true)),
         (&IDLE, Some(false)),
         // the agent's next dialog, or a screen that can't be read: neither is known
-        (&other, None),
-        (&Screen::Unknown, None),
+        (&other, Some(true)),
     ] {
         let mut plan = Plan::new(Action::Approval(card.clone(), "Yes".to_owned()), Agent::Claude);
         assert_eq!(plan.answered(), None, "nothing answered yet");
         step(&mut plan, &claude);
-        assert_eq!(plan.answered(), None, "the dialog is not seen gone yet");
+        assert_eq!(
+            plan.answered(),
+            Some((&card, true)),
+            "a sent answer always reaches the origin"
+        );
         assert_eq!(step(&mut plan, after), Next::Done(AgentInputOutcome::Sent));
         assert_eq!(plan.answered(), resumed.map(|working| (&card, working)), "{after:?}");
     }
@@ -269,6 +272,17 @@ fn an_answered_approval_says_whether_the_turn_ran_on_once_its_dialog_went() {
     let mut stop = Plan::new(Action::Interrupt, Agent::Claude);
     step(&mut stop, &WORKING);
     assert_eq!(stop.answered(), None);
+}
+
+#[test]
+fn approval_waits_through_an_unknown_frame_before_classifying_the_running_turn() {
+    let dialog = screen("claude-100x40", Agent::Claude, "permission");
+    let card = asked("claude-100x40");
+    let mut plan = Plan::new(Action::Approval(card.clone(), "Yes".to_owned()), Agent::Claude);
+    step(&mut plan, &dialog);
+    assert_eq!(step(&mut plan, &Screen::Unknown), Next::Wait);
+    assert_eq!(step(&mut plan, &WORKING), Next::Done(AgentInputOutcome::Sent));
+    assert_eq!(plan.answered(), Some((&card, true)));
 }
 
 #[test]

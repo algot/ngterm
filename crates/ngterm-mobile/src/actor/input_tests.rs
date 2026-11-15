@@ -27,7 +27,7 @@ use crate::chat::input::{ACTION_IN_FLIGHT, AgentInputOutcome, InputTiming, NO_AG
 use crate::chat::matchers::{Agent, Screen};
 use crate::chat::tests::matchers::{Capture, approval_of, asked, draft_drawn, into_prompt};
 use crate::chat::{ChatQuestion, ChatQuestionItem, ChatQuestionOption, ChatToolStatus};
-use crate::chat::{Side, answered_tail, chat_tail, commands_tail};
+use crate::chat::{Side, answered_tail, chat_tail, commands_tail, interrupted_tail};
 use crate::pane::{PaneRole, without_escapes};
 use crate::transport::fake::{Opened, Script};
 use crate::transport::{ChannelInput, ChannelPeer};
@@ -116,6 +116,10 @@ impl Agents {
         send(&stream.peer, &frame(2, snapshot));
         send(&stream.peer, &frame(3, announced));
         fixture.next(|event| matches!(event, MobileEvent::PaneAgent { .. }).then_some(()));
+        fixture.transport.script(
+            &interrupted_tail(ngterm_core::remote::origin::OriginShell::Posix, SESSION, Side::Left),
+            Script::ok(""),
+        );
         let capture = Capture::load(capture);
         let pane = block_on(fixture.core.show_pane(
             MACHINE.to_owned(),
@@ -247,6 +251,7 @@ fn a_follower_claims_the_lead_waits_for_the_redraw_then_answers() {
     let mut agents = Agents::start("claude", "claude-44x36");
     agents.first_is("follower");
     agents.show(&agents.first.peer, "permission");
+    let _chat = approval_chat(&mut agents, "claude-44x36");
     let answer = agents.act(|pane| block_on(pane.answer_approval(asked("claude-44x36"), "No".to_owned())));
 
     let mut claim = claimed(&mut agents, "permission");
@@ -257,7 +262,7 @@ fn a_follower_claims_the_lead_waits_for_the_redraw_then_answers() {
         "option 4, No, once the claim's screen settled"
     );
     // the dialog goes: the answer is confirmed
-    send(&claim.peer, b"\x1b[2J\x1b[H");
+    agents.show(&claim.peer, "idle");
     assert_eq!(outcome(&answer), Ok(AgentInputOutcome::Sent));
     assert!(
         typed(&mut agents.first.peer).is_empty(),
@@ -270,12 +275,13 @@ fn a_leader_skips_the_claim() {
     let mut agents = Agents::start("codex", "codex-44x36");
     agents.first_is("leader");
     agents.show(&agents.first.peer, "permission");
+    let _chat = approval_chat(&mut agents, "codex-44x36");
     let answer = agents.act(|pane| block_on(pane.answer_approval(asked("codex-44x36"), "Yes, proceed".to_owned())));
     let (bytes, _) = inputs_until(&mut agents.first.peer, |bytes, _| {
         without_escapes(bytes).contains(&b'y')
     });
     assert_eq!(without_escapes(&bytes), b"y");
-    send(&agents.first.peer, b"\x1b[2J\x1b[H");
+    agents.show(&agents.first.peer, "idle");
     assert_eq!(outcome(&answer), Ok(AgentInputOutcome::Sent));
     assert!(!agents.fixture.attaches_soon(), "no claim");
 }
@@ -284,6 +290,7 @@ fn a_leader_skips_the_claim() {
 fn a_claim_refused_or_unanswered_sends_nothing() {
     let mut agents = Agents::start_timed("claude", "claude-44x36", expiring());
     agents.first_is("follower");
+    let _chat = approval_chat(&mut agents, "claude-44x36");
     let answer = agents.act(|pane| block_on(pane.answer_approval(asked("claude-44x36"), "Yes".to_owned())));
     let mut claim = agents.fixture.attach();
     let lead = lead_of(&claim.command);
@@ -306,6 +313,7 @@ fn a_dialog_gone_by_the_time_the_claim_lands_gets_nothing() {
     let mut agents = Agents::start("claude", "claude-44x36");
     agents.first_is("follower");
     agents.show(&agents.first.peer, "permission");
+    let _chat = approval_chat(&mut agents, "claude-44x36");
     let answer = agents.act(|pane| block_on(pane.answer_approval(asked("claude-44x36"), "Yes".to_owned())));
     // answered at the desktop while the claim was on its way: the leader's grid shows the prompt again
     let mut claim = claimed(&mut agents, "idle");
@@ -382,6 +390,7 @@ fn a_slow_round_trip_holds_the_next_key_until_the_screen_answers_and_never_repea
     let mut agents = Agents::start("claude", "claude-44x36");
     agents.first_is("leader");
     agents.show(&agents.first.peer, "permission");
+    let _chat = approval_chat(&mut agents, "claude-44x36");
     let answer = agents.act(|pane| block_on(pane.answer_approval(asked("claude-44x36"), "No".to_owned())));
     inputs_until(&mut agents.first.peer, |bytes, _| {
         without_escapes(bytes).contains(&b'4')
@@ -389,7 +398,7 @@ fn a_slow_round_trip_holds_the_next_key_until_the_screen_answers_and_never_repea
     thread::sleep(ROUND_TRIP);
     assert!(answer.try_recv().is_err(), "still waiting for the dialog to go");
     assert!(typed(&mut agents.first.peer).is_empty(), "the key is not sent again");
-    send(&agents.first.peer, b"\x1b[2J\x1b[H");
+    agents.show(&agents.first.peer, "idle");
     assert_eq!(outcome(&answer), Ok(AgentInputOutcome::Sent));
 }
 
@@ -427,12 +436,32 @@ fn stop_sends_escape_to_a_working_turn_and_nothing_to_an_idle_one() {
     agents.show(&agents.first.peer, "idle");
     assert_eq!(block_on(agents.pane.interrupt()), Ok(AgentInputOutcome::NotOnScreen));
     assert!(typed(&mut agents.first.peer).is_empty());
+    assert!(
+        !agents
+            .fixture
+            .transport
+            .execs()
+            .iter()
+            .any(|exec| exec.command.contains("interrupted"))
+    );
 
     agents.show(&agents.first.peer, "working");
     let stop = agents.act(|pane| block_on(pane.interrupt()));
     // Codex runs under the Kitty keyboard protocol: an unambiguous Escape
     inputs_until(&mut agents.first.peer, |bytes, _| contains(bytes, b"\x1b[27u"));
     assert_eq!(outcome(&stop), Ok(AgentInputOutcome::Sent));
+    let notified: Vec<_> = agents
+        .fixture
+        .transport
+        .execs()
+        .into_iter()
+        .filter(|exec| exec.command.contains("interrupted"))
+        .collect();
+    assert_eq!(notified.len(), 1);
+    assert_eq!(
+        notified[0].command,
+        interrupted_tail(ngterm_core::remote::origin::OriginShell::Posix, SESSION, Side::Left)
+    );
 }
 
 #[test]
@@ -497,6 +526,7 @@ fn a_handle_whose_pane_was_hidden_is_closed_even_once_the_pane_is_shown_again() 
     assert!(typed(&mut second.peer).is_empty());
 
     // the handle the pane was shown again with answers it
+    let _chat = approval_chat(&mut agents, "claude-44x36");
     let answer = {
         let (done, outcome) = mpsc::channel();
         thread::spawn(move || {
@@ -508,7 +538,7 @@ fn a_handle_whose_pane_was_hidden_is_closed_even_once_the_pane_is_shown_again() 
     };
     let (bytes, _) = inputs_until(&mut second.peer, |bytes, _| without_escapes(bytes).contains(&b'1'));
     assert_eq!(without_escapes(&bytes), b"1");
-    send(&second.peer, b"\x1b[2J\x1b[H");
+    send(&second.peer, agents.capture.at("idle"));
     assert_eq!(outcome(&answer), Ok(AgentInputOutcome::Sent));
 }
 
@@ -634,6 +664,23 @@ fn chat_with_prompts(agents: &mut Agents, ids: &[&str], card: &crate::chat::Chat
     chat
 }
 
+fn approval_chat(agents: &mut Agents, capture: &str) -> Opened {
+    let chat = chat_with_prompt(agents, "approval-7.5", &asked(capture));
+    for working in [false, true] {
+        agents.fixture.transport.script(
+            &answered_tail(
+                ngterm_core::remote::origin::OriginShell::Posix,
+                SESSION,
+                Side::Left,
+                "approval-7.5",
+                working,
+            ),
+            Script::ok(""),
+        );
+    }
+    chat
+}
+
 /// The `agent answered` commands the core ran.
 fn told(agents: &Agents) -> Vec<String> {
     agents
@@ -666,6 +713,85 @@ fn an_answered_approval_tells_the_origin_what_the_agents_screen_showed_next() {
         assert_eq!(outcome(&answer), Ok(AgentInputOutcome::Sent));
         assert_eq!(told(&agents), [expected], "{label}");
     }
+}
+
+#[test]
+fn an_interim_frame_between_the_dialog_and_running_turn_never_loses_the_answer() {
+    let mut agents = Agents::start("claude", "claude-44x36");
+    agents.first_is("leader");
+    agents.show(&agents.first.peer, "permission");
+    let card = asked("claude-44x36");
+    let _chat = chat_with_prompt(&mut agents, "approval-7.5", &card);
+    let expected = answered_tail(
+        ngterm_core::remote::origin::OriginShell::Posix,
+        SESSION,
+        Side::Left,
+        "approval-7.5",
+        true,
+    );
+    agents.fixture.transport.script(&expected, Script::ok(""));
+    let answer = agents.act(move |pane| block_on(pane.answer_approval(card, "Yes".to_owned())));
+    inputs_until(&mut agents.first.peer, |bytes, _| {
+        without_escapes(bytes).contains(&b'1')
+    });
+    agents.feed(&agents.first.peer, b"\x1b[2J\x1b[HStarting command");
+    assert_eq!(
+        answer.recv_timeout(Duration::from_secs(1)),
+        Err(mpsc::RecvTimeoutError::Timeout),
+        "an interim frame must not finish the answer without telling the origin"
+    );
+    agents.show(&agents.first.peer, "working");
+    assert_eq!(outcome(&answer), Ok(AgentInputOutcome::Sent));
+    assert_eq!(told(&agents), [expected]);
+    assert!(
+        typed(&mut agents.first.peer).is_empty(),
+        "the answer key goes only once"
+    );
+}
+
+#[test]
+fn closing_chat_after_answering_cannot_drop_the_origin_notification() {
+    let mut agents = Agents::start("claude", "claude-44x36");
+    agents.first_is("leader");
+    agents.show(&agents.first.peer, "permission");
+    let _chat = approval_chat(&mut agents, "claude-44x36");
+    let answer = agents.act(|pane| block_on(pane.answer_approval(asked("claude-44x36"), "Yes".to_owned())));
+    inputs_until(&mut agents.first.peer, |bytes, _| {
+        without_escapes(bytes).contains(&b'1')
+    });
+    agents
+        .fixture
+        .core
+        .close_chat(MACHINE.to_owned(), SESSION.to_owned(), PANE.to_owned())
+        .unwrap();
+    agents.show(&agents.first.peer, "working");
+    assert_eq!(outcome(&answer), Ok(AgentInputOutcome::Sent));
+    assert_eq!(
+        told(&agents),
+        [answered_tail(
+            ngterm_core::remote::origin::OriginShell::Posix,
+            SESSION,
+            Side::Left,
+            "approval-7.5",
+            true
+        )]
+    );
+}
+
+#[test]
+fn an_answer_whose_confirmation_times_out_still_notifies_the_origin_once() {
+    let mut agents = Agents::start_timed("claude", "claude-44x36", expiring());
+    agents.first_is("leader");
+    agents.show(&agents.first.peer, "permission");
+    let _chat = approval_chat(&mut agents, "claude-44x36");
+    let answer = agents.act(|pane| block_on(pane.answer_approval(asked("claude-44x36"), "Yes".to_owned())));
+    inputs_until(&mut agents.first.peer, |bytes, _| {
+        without_escapes(bytes).contains(&b'1')
+    });
+    agents.feed(&agents.first.peer, b"\x1b[2J\x1b[HStarting command");
+    assert_eq!(outcome(&answer), Ok(AgentInputOutcome::Unconfirmed));
+    assert_eq!(told(&agents).len(), 1);
+    assert!(typed(&mut agents.first.peer).is_empty());
 }
 
 #[test]
@@ -714,18 +840,18 @@ fn a_prompt_alike_raised_after_the_key_went_is_never_the_one_told_of() {
 }
 
 #[test]
-fn an_answer_the_origin_cant_be_told_of_is_still_sent() {
+fn an_answer_requires_its_origin_and_reports_an_unsupported_origin() {
     // a card the chat holds no open prompt for: nothing to name
     let mut agents = Agents::start("claude", "claude-44x36");
     agents.first_is("leader");
     agents.show(&agents.first.peer, "permission");
     let _chat = chat_with_prompt(&mut agents, "approval-7.5", &approval_of("another command"));
     let answer = agents.act(|pane| block_on(pane.answer_approval(asked("claude-44x36"), "Yes".to_owned())));
-    inputs_until(&mut agents.first.peer, |bytes, _| {
-        without_escapes(bytes).contains(&b'1')
-    });
-    agents.show(&agents.first.peer, "working");
-    assert_eq!(outcome(&answer), Ok(AgentInputOutcome::Sent));
+    assert!(matches!(outcome(&answer), Err(PaneInputError::Refused { reason }) if reason.contains("Reopen the chat")));
+    assert!(
+        typed(&mut agents.first.peer).is_empty(),
+        "no answer without its notification path"
+    );
     assert!(told(&agents).is_empty());
 
     // an origin without the command
@@ -745,7 +871,7 @@ fn an_answer_the_origin_cant_be_told_of_is_still_sent() {
         without_escapes(bytes).contains(&b'1')
     });
     agents.show(&agents.first.peer, "working");
-    assert_eq!(outcome(&answer), Ok(AgentInputOutcome::Sent));
+    assert_eq!(outcome(&answer), Ok(AgentInputOutcome::Unconfirmed));
     assert_eq!(told(&agents), [expected]);
 }
 
@@ -907,12 +1033,13 @@ fn an_approval_answers_the_live_dialog_never_one_scrolled_back_to() {
     let labels = block_on(agents.pane.approval_labels()).unwrap();
     assert_ne!(labels, Agent::Codex.fallback_labels(), "read from the live dialog");
     assert_eq!(labels[0], "Yes, proceed");
+    let _chat = approval_chat(&mut agents, "codex-44x36");
     let answer = agents.act(|pane| block_on(pane.answer_approval(asked("codex-44x36"), "Yes, proceed".to_owned())));
     let (bytes, _) = inputs_until(&mut agents.first.peer, |bytes, _| {
         without_escapes(bytes).contains(&b'y')
     });
     assert_eq!(without_escapes(&bytes), b"y");
-    send(&agents.first.peer, b"\x1b[2J\x1b[H");
+    agents.show(&agents.first.peer, "idle");
     assert_eq!(outcome(&answer), Ok(AgentInputOutcome::Sent));
 
     let mut agents = scrolled(
@@ -921,12 +1048,13 @@ fn an_approval_answers_the_live_dialog_never_one_scrolled_back_to() {
         ("idle", is_idle),
         ("permission", is_dialog),
     );
+    let _chat = approval_chat(&mut agents, "claude-44x36");
     let answer = agents.act(|pane| block_on(pane.answer_approval(asked("claude-44x36"), "No".to_owned())));
     let (bytes, _) = inputs_until(&mut agents.first.peer, |bytes, _| {
         without_escapes(bytes).contains(&b'4')
     });
     assert_eq!(without_escapes(&bytes), b"4");
-    send(&agents.first.peer, b"\x1b[2J\x1b[H");
+    agents.show(&agents.first.peer, "idle");
     assert_eq!(outcome(&answer), Ok(AgentInputOutcome::Sent));
 }
 
@@ -1051,12 +1179,14 @@ fn a_screen_resized_and_not_redrawn_yet_gets_no_key() {
     let mut redrawn = b"\x1b[0m\x1b[H\x1b[2J".to_vec();
     redrawn.extend(tablet.at("permission"));
     agents.feed(&agents.first.peer, &redrawn);
+    let _chat = approval_chat(&mut agents, "claude-44x36");
     let answer = agents.act(|pane| block_on(pane.answer_approval(asked("claude-44x36"), "No".to_owned())));
     let (bytes, _) = inputs_until(&mut agents.first.peer, |bytes, _| {
         without_escapes(bytes).contains(&b'4')
     });
     assert_eq!(without_escapes(&bytes), b"4");
-    send(&agents.first.peer, b"\x1b[2J\x1b[H");
+    agents.pane.resize(grid(&agents.capture)).unwrap();
+    agents.show(&agents.first.peer, "idle");
     assert_eq!(outcome(&answer), Ok(AgentInputOutcome::Sent));
 
     // inline, a grid two rows shorter: the reflow still shows the whole dialog, and still gets no key
@@ -1083,12 +1213,14 @@ fn a_screen_resized_and_not_redrawn_yet_gets_no_key() {
     assert!(typed(&mut agents.first.peer).is_empty());
     // the program writes again: its key goes
     agents.feed(&agents.first.peer, b"\x1b[0m");
+    let _chat = approval_chat(&mut agents, "claude-44x36");
     let answer = agents.act(|pane| block_on(pane.answer_approval(asked("claude-44x36"), "No".to_owned())));
     let (bytes, _) = inputs_until(&mut agents.first.peer, |bytes, _| {
         without_escapes(bytes).contains(&b'4')
     });
     assert_eq!(without_escapes(&bytes), b"4");
-    send(&agents.first.peer, b"\x1b[2J\x1b[H");
+    agents.pane.resize(grid(&agents.capture)).unwrap();
+    agents.show(&agents.first.peer, "idle");
     assert_eq!(outcome(&answer), Ok(AgentInputOutcome::Sent));
 }
 
@@ -1116,12 +1248,13 @@ fn a_grid_measured_again_or_new_cells_alone_leave_an_idle_screen_readable() {
         agents.reads(Agent::Claude, is_dialog, "permission");
         agents.pane.resize(size).unwrap();
         agents.pane.resize(size).unwrap();
+        let _chat = approval_chat(&mut agents, "claude-44x36");
         let answer = agents.act(|pane| block_on(pane.answer_approval(asked("claude-44x36"), "No".to_owned())));
         let (bytes, _) = inputs_until(&mut agents.first.peer, |bytes, _| {
             without_escapes(bytes).contains(&b'4')
         });
         assert_eq!(without_escapes(&bytes), b"4", "grid {at}: the dialog's key goes");
-        send(&agents.first.peer, b"\x1b[2J\x1b[H");
+        agents.show(&agents.first.peer, "idle");
         assert_eq!(outcome(&answer), Ok(AgentInputOutcome::Sent));
 
         // the idle prompt likewise: pasted, then entered once shown
