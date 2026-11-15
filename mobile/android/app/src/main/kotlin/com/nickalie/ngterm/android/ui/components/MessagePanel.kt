@@ -33,10 +33,12 @@ import com.nickalie.ngterm.android.ui.theme.NgtermTheme
 /**
  * What a screen shows instead of its content: an [icon] in [tint], a [title] saying what is the case, a [body] saying
  * what to do about it, and the one [action] that does it ([busy]: under way, taking no taps; not [enabled]: held by
- * work elsewhere), with at most one quieter [secondary] one under it (a text button: Retry after the fix the main
- * action points to). Every empty, error and offline state is one of these, so no screen is ever blank and none leaves
- * the user without a next step. Use [EmptyState], [ErrorState] or [OfflineState]. The panel scrolls itself when its
- * window is too short for it, so don't put it in a vertical scroller.
+ * work elsewhere; none only while the same action shows right beside the panel, as in a banner), with at most one
+ * quieter [secondary] one under it (a text button: Retry after the fix the main action points to). Every empty, error
+ * and offline state is one of these, so no screen is ever blank and none leaves
+ * the user without a next step. Use [EmptyState], [ErrorState] or [OfflineState]. [compact] is the panel for a window
+ * its host knows to be short (a chat over the soft keyboard): no icon, the words and the action set closer. The panel
+ * scrolls itself when its window is still too short for it, so don't put it in a vertical scroller.
  */
 @Composable
 fun MessagePanel(
@@ -44,24 +46,31 @@ fun MessagePanel(
     tint: Color,
     title: String,
     body: String,
-    action: PanelAction,
+    action: PanelAction?,
     modifier: Modifier = Modifier,
     secondary: PanelAction? = null,
     busy: Boolean = false,
     enabled: Boolean = !busy,
+    compact: Boolean = false,
 ) {
     val spacing = NgtermTheme.spacing
     Column(
         // scrolls when it is taller than its window (a landscape phone at a large font scale), so the action stays
         // reachable; centered by its host when it fits
-        modifier = modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(spacing.xl),
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = spacing.xl, vertical = if (compact) spacing.sm else spacing.xl),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(spacing.md),
+        verticalArrangement = Arrangement.spacedBy(if (compact) spacing.sm else spacing.md),
     ) {
-        Icon(painterResource(icon), contentDescription = null, tint = tint, modifier = Modifier.size(40.dp))
+        if (!compact) {
+            Icon(painterResource(icon), contentDescription = null, tint = tint, modifier = Modifier.size(40.dp))
+        }
         Text(
             text = title,
-            style = MaterialTheme.typography.headlineSmall,
+            style = if (compact) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineSmall,
             color = MaterialTheme.colorScheme.onSurface,
             textAlign = TextAlign.Center,
             modifier = Modifier.semantics { heading() },
@@ -73,13 +82,15 @@ fun MessagePanel(
             textAlign = TextAlign.Center,
             modifier = Modifier.widthIn(max = PANEL_TEXT_WIDTH.dp),
         )
-        Button(
-            onClick = action.onClick,
-            enabled = enabled,
-            modifier = Modifier.padding(top = spacing.sm),
-            contentPadding = ButtonDefaults.ButtonWithIconContentPadding,
-        ) {
-            ActionLabel(action, busy)
+        if (action != null) {
+            Button(
+                onClick = action.onClick,
+                enabled = enabled,
+                modifier = Modifier.padding(top = if (compact) 0.dp else spacing.sm),
+                contentPadding = ButtonDefaults.ButtonWithIconContentPadding,
+            ) {
+                ActionLabel(action, busy)
+            }
         }
         if (secondary != null) {
             TextButton(onClick = secondary.onClick) { ActionLabel(secondary) }
@@ -116,19 +127,31 @@ data class PanelAction(
 
 /**
  * Nothing here yet: [action] makes the first one (Add machine, New session), [busy] while it does, and takes no taps
- * unless [enabled].
+ * unless [enabled]; none while the same action shows right beside the panel; [compact] in a window its host knows to
+ * be short.
  */
 @Composable
 fun EmptyState(
     @DrawableRes icon: Int,
     title: String,
     body: String,
-    action: PanelAction,
+    action: PanelAction?,
     modifier: Modifier = Modifier,
     busy: Boolean = false,
     enabled: Boolean = !busy,
+    compact: Boolean = false,
 ) {
-    MessagePanel(icon, MaterialTheme.colorScheme.primary, title, body, action, modifier, busy = busy, enabled = enabled)
+    MessagePanel(
+        icon = icon,
+        tint = MaterialTheme.colorScheme.primary,
+        title = title,
+        body = body,
+        action = action,
+        modifier = modifier,
+        busy = busy,
+        enabled = enabled,
+        compact = compact,
+    )
 }
 
 /**

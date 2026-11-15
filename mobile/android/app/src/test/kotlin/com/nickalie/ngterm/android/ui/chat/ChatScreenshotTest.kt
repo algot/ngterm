@@ -1,12 +1,15 @@
 package com.nickalie.ngterm.android.ui.chat
 
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import com.github.takahirom.roborazzi.captureRoboImage
 import com.nickalie.ngterm.android.ui.Window
 import com.nickalie.ngterm.android.ui.WindowRule
@@ -24,7 +27,9 @@ import org.robolectric.annotation.GraphicsMode
 /**
  * The chat (src/test/screenshots/chat) on a phone (light, dark, font scale 2.0), an unfolded foldable and a landscape
  * tablet (light and dark): a long conversation, an open approval, a multi-select question, an expanded diff, the
- * empty and error states, the account and its weekly limit over the rows, the activity line open on a subagent and
+ * empty and error states, nothing said yet over the soft keyboard with a message that was not sent (the panel
+ * compact, the banner under it, the message in the composer), the account and its weekly limit over the rows, the
+ * activity line open on a subagent and
  * a command left running, the agent working over an empty composer (the line's Stop, the field's Commands), and the
  * composer's `/` menu open on every command, narrowed (the agent working), and matching nothing.
  */
@@ -42,6 +47,7 @@ class ChatScreenshotTest(
         scene: String,
         state: ChatUiState,
         composer: ChatComposer? = null,
+        keyboard: Dp = 0.dp,
         then: (() -> Unit)? = null,
     ) {
         compose.setContent {
@@ -50,7 +56,7 @@ class ChatScreenshotTest(
                     state,
                     "build-01",
                     ChatActions(),
-                    Modifier.fillMaxSize().safeDrawingPadding(),
+                    Modifier.fillMaxSize().safeDrawingPadding().padding(bottom = keyboard),
                     composer = composer,
                 )
             }
@@ -82,6 +88,19 @@ class ChatScreenshotTest(
 
     @Test
     fun empty() = capture("empty", ChatUiState(phase = ChatPhase.Live, conversation = ChatSamples.conversation))
+
+    @Test
+    fun unsentOverTheKeyboard() =
+        capture(
+            "unsent_keyboard",
+            ChatUiState(
+                phase = ChatPhase.Live,
+                conversation = ChatSamples.conversation,
+                problem = ChatProblem.PromptNotFound,
+            ),
+            ChatSamples.composer(UNSENT),
+            keyboard = KEYBOARD,
+        )
 
     @Test
     fun error() =
@@ -146,6 +165,16 @@ class ChatScreenshotTest(
     companion object {
         // noon UTC on 10 January 2036: the same date in every zone, and always more than a week out
         private const val RESETS_AT = 2_083_579_200uL
+
+        // the height a phone's session bar and soft keyboard take from the chat
+        private val KEYBOARD = 429.dp
+
+        // a message of enough lines that the composer stands at its tallest
+        private const val UNSENT =
+            "The sessions list on my phone shows every session of the Mac, but a session that runs an agent " +
+                "opens as a terminal and never as a chat.\n\nWhat I expected:\n- the chat view for a session with " +
+                "Claude Code\n- the same for Codex\n\nCheck why this happens and whether the last release changed " +
+                "it.\nTell me what you found before you change anything."
 
         @JvmStatic
         @ParameterizedRobolectricTestRunner.Parameters(name = "{0}")

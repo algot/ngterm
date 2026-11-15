@@ -22,6 +22,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nickalie.ngterm.android.R
 import com.nickalie.ngterm.android.ui.components.Banner
@@ -198,17 +199,21 @@ private fun ChatContent(
             }
         }
 
-        state.log.isEmpty && !state.log.switched && waiting -> {
+        state.nothingSaid && waiting -> {
             Centered(modifier) { ChatLoading(machine) }
         }
 
-        state.log.isEmpty && !state.log.switched -> {
-            Centered(modifier) {
+        state.nothingSaid -> {
+            // over the soft keyboard, with a banner at the foot, the window is short: the words alone, set closer.
+            // The banner of a message that stays has Show terminal just under them: one button for it, not two, and
+            // the banner's is the one a short window never cuts
+            BoxWithConstraints(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 EmptyState(
                     icon = R.drawable.ic_chat,
                     title = stringResource(R.string.chat_empty_title),
                     body = stringResource(R.string.chat_empty_body, name),
-                    action = terminal,
+                    action = terminal.takeUnless { state.problem?.showsTerminal == true },
+                    compact = maxHeight < EMPTY_FULL_HEIGHT,
                 )
             }
         }
@@ -218,6 +223,14 @@ private fun ChatContent(
         }
     }
 }
+
+// the chat has no rows and none are hidden behind a switch of conversation: what stands in for them shows
+private val ChatUiState.nothingSaid: Boolean
+    get() = log.isEmpty && !log.switched
+
+// the least height the whole Nothing said yet panel takes (its glyph, two lines of body and the button); under it
+// the panel is set compact
+private val EMPTY_FULL_HEIGHT = 264.dp
 
 @Composable
 private fun Centered(
@@ -322,6 +335,10 @@ private val ChatProblem.tone: StatusTone
 
             else -> StatusTone.Error
         }
+
+// the problem's banner has Show terminal, the button Nothing said yet has too
+private val ChatProblem.showsTerminal: Boolean
+    get() = offersTerminal && keepsMessage
 
 // the problem is about a message that is still in the composer
 private val ChatProblem.keepsMessage: Boolean

@@ -184,7 +184,7 @@ white on nothing, as Android masks it. The status glyphs are 16dp filled or stro
 | `PeerBadge` | the app a machine runs when it isn't ngterm ("agterm"): the word in `labelMedium`, on-surface-variant ink, inside a 1dp `outline` hairline at the badges' 6dp radius; no fill and no status color, since it is a fact about the machine, not a state or a place. With the app's note it takes a tap (48dp target) or a long press and shows the note in a rich tooltip under it, titled with the word; TalkBack reads "agterm. Attached from agterm: …" with the action "Show what it lacks". Without one it is a plain label |
 | `SessionRow` | a session: name, context or companion line (a machine's list indents every companion; Sessions only one under its attached parent), status slot, its app's `PeerBadge` as a plain label when the machine's own app is another, Attached mark, the bus bar when on screen, and an optional menu at the end (Attach or Detach, Duplicate session, Chat view, End session) |
 | `SectionHeader` | a group's heading with an optional count and one text action |
-| `MessagePanel` with `EmptyState`, `ErrorState`, `OfflineState` | what a screen shows instead of content: icon, title, what to do, and the one action that does it (busy while it runs: a small spinner, no taps); at most one quieter text-button action under it, for a retry after the fix the main one points to |
+| `MessagePanel` with `EmptyState`, `ErrorState`, `OfflineState` | what a screen shows instead of content: icon, title, what to do, and the one action that does it (busy while it runs: a small spinner, no taps); at most one quieter text-button action under it, for a retry after the fix the main one points to. The action is left out only while the same one shows right beside the panel (a banner's). Compact, for a window its host knows to be short: no icon, the title in `titleLarge`, 8dp between the parts; it scrolls itself when even that does not fit |
 | `Banner` | a strip about the whole screen while it stays usable, with an optional action and dismiss; announced politely |
 | `ConfirmDialog` | the confirmation before what can't be undone; the button repeats the action's words, in the error color |
 | `KeyPlate`, `CopyButton` | text compared or pasted character by character (a key line, a fingerprint, a command, a machine's sign-in message): mono, selectable, wrapping anywhere, on a `surfaceContainerLow` plate with an optional label above and Copy or Share under it; Copy says "Copied" for 2 s. A link in it is copper and underlined and opens on a tap; a long press still selects |
@@ -899,9 +899,12 @@ The plan, reviewed against the brief:
   gone, the core refused). When the terminal is the way on it offers **Answer in terminal**; it can be dismissed. A
   message that could not be sent says so in its own words (the agent's prompt isn't ready in the pane; or the message
   went into the prompt and the pane didn't show it), says that it stays in the composer, and offers **Show terminal**:
-  there is nothing to answer there, only something to look at.
+  there is nothing to answer there, only something to look at. Over Nothing said yet that banner's Show
+  terminal stands for the panel's own, which goes while the banner shows: one Show terminal on the screen, not two,
+  and it is the one a short window never cuts.
 - **States:** the backlog on its way with nothing yet: a spinner and "Reading the conversation from build-01"; nothing
-  said yet: the Chat glyph, "Nothing said yet", what will show, and Show terminal; the link reconnecting: a strip over
+  said yet: the Chat glyph, "Nothing said yet", what will show, and Show terminal (compact in a short window, as over
+  the soft keyboard with a banner at the foot, so its words show in full); the link reconnecting: a strip over
   the top of the rows (`surfaceContainerHigh`, 6dp corners, a 16dp spinner, "Reconnecting to build-01", "What's here
   stays; new messages follow once it's back."), the rows readable under it; the chat ended (the agent left, or the
   origin can't share its conversation): "This chat ended" and Show terminal, which the pane then does by itself.

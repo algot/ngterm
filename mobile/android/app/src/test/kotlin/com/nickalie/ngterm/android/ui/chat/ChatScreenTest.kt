@@ -1,6 +1,8 @@
 package com.nickalie.ngterm.android.ui.chat
 
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
@@ -9,6 +11,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.getBoundsInRoot
+import androidx.compose.ui.test.hasAnySibling
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasScrollToIndexAction
@@ -61,7 +64,7 @@ class ChatScreenTest {
     private var problemsShown = 0
     private var endsShown = 0
 
-    private fun show() {
+    private fun show(modifier: Modifier = Modifier) {
         val actions =
             ChatActions(
                 onLoadOlder = { if (!state.value.log.isEmpty) olderAsked++ },
@@ -80,7 +83,7 @@ class ChatScreenTest {
                     state.value = state.value.copy(toEnd = false)
                 },
             )
-        compose.setContent { NgtermTheme { ChatScreen(state.value, "build-01", actions) } }
+        compose.setContent { NgtermTheme { ChatScreen(state.value, "build-01", actions, modifier) } }
         compose.waitForIdle()
     }
 
@@ -290,6 +293,39 @@ class ChatScreenTest {
         compose.waitForIdle()
         compose.onNodeWithText("This chat ended").assertIsDisplayed()
         compose.onNodeWithText("Show terminal").performClick()
+        assertEquals(2, terminalShown)
+    }
+
+    @Test
+    fun aMessageNotSentInAChatWithNothingSaidLeavesItsWordsAndOneShowTerminalInFullOverTheKeyboard() {
+        state.value =
+            ChatUiState(
+                phase = ChatPhase.Live,
+                conversation = ChatSamples.conversation,
+                problem = ChatProblem.PromptNotFound,
+            )
+        // what a phone leaves over the soft keyboard and a composer holding a long message
+        show(Modifier.requiredSize(width = 411.dp, height = 282.dp))
+        val banner = compose.onNodeWithText("your message wasn't sent", substring = true)
+        for (text in listOf("Nothing said yet", "Claude Code's replies, the tools it runs")) {
+            val node = compose.onNodeWithText(text, substring = true).assertIsDisplayed().fetchSemanticsNode()
+            assertEquals("\"$text\" is cut", node.size.height, node.boundsInRoot.height.toInt())
+            assertTrue(
+                "\"$text\" runs under the banner",
+                node.boundsInRoot.bottom <= banner.fetchSemanticsNode().boundsInRoot.top,
+            )
+        }
+        // one Show terminal, the banner's: the chat's own over it would only repeat it
+        val terminal = compose.onNodeWithText("Show terminal").assertIsDisplayed()
+        terminal.assert(hasAnySibling(hasText("your message wasn't sent", substring = true)))
+        val button = terminal.fetchSemanticsNode()
+        assertEquals("Show terminal is cut", button.size.height, button.boundsInRoot.height.toInt())
+        terminal.performClick()
+        assertEquals(1, terminalShown)
+        // the banner gone, the chat's own Show terminal is back
+        state.value = state.value.copy(problem = null)
+        compose.waitForIdle()
+        compose.onNodeWithText("Show terminal").assert(hasAnySibling(hasText("Nothing said yet"))).performClick()
         assertEquals(2, terminalShown)
     }
 
