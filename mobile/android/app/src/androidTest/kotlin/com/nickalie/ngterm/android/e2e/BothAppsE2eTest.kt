@@ -25,13 +25,10 @@ import androidx.compose.ui.test.performTouchInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SdkSuppress
 import androidx.test.platform.app.InstrumentationRegistry
-import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
-import androidx.test.uiautomator.Until
 import com.nickalie.ngterm.android.MainActivity
 import com.nickalie.ngterm.android.R
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Rule
@@ -58,7 +55,7 @@ import java.io.File
  * ([BOTH_PORT]): its logins see the script's private `ngterm-headless` and, beside it, the conformance suite's stand-in
  * for agterm v0.41.1 (`conformance/agterm_conformance/fake_agterm.py`), seeded with the session [AGTERM_SESSION].
  * Without the script's arguments the test is skipped. No live agterm or ngterm. The keyboard is the test APK's own
- * ([QaKeyboard]), as in `SoftKeyboardSwitchE2eTest`.
+ * ([QaKeyboards]), as in `SoftKeyboardSwitchE2eTest`.
  */
 @RunWith(AndroidJUnit4::class)
 @SdkSuppress(minSdkVersion = Build.VERSION_CODES.P)
@@ -66,7 +63,6 @@ class BothAppsE2eTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val arguments = InstrumentationRegistry.getArguments()
     private val device = UiDevice.getInstance(instrumentation)
-    private val testPackage = instrumentation.context.packageName
     private val compose = createAndroidComposeRule<MainActivity>()
 
     private val stack =
@@ -89,42 +85,7 @@ class BothAppsE2eTest {
             }
         }
 
-    /**
-     * The test's keyboard on for the test, and the device's own input method back after it; the device's animations
-     * off meanwhile, so a key is tapped where it rests, not where it slides in from.
-     */
-    private val keyboard =
-        object : ExternalResource() {
-            private var before: String? = null
-            private val scales = mutableMapOf<String, String>()
-
-            override fun before() {
-                ANIMATION_SCALES.forEach { name ->
-                    scales[name] = shell("settings get global $name").trim()
-                    shell("settings put global $name 0")
-                }
-                before = shell("settings get secure default_input_method").trim().takeIf { it.contains('/') }
-                // a test APK installed a moment ago may not be listed as an input method yet: until it is, try again
-                val id = QaKeyboard.id(testPackage)
-                val deadline = System.currentTimeMillis() + KEY_WAIT_MS
-                while (current() != id && System.currentTimeMillis() < deadline) {
-                    val answers = listOf(shell("ime enable $id"), shell("ime set $id"))
-                    Log.i(TAG, "keyboard: ${answers.joinToString(" | ") { it.trim() }}")
-                    if (current() != id) Thread.sleep(RETRY_MS)
-                }
-                assertTrue("the test keyboard is the device's input method (now ${current()})", current() == id)
-            }
-
-            private fun current() = shell("settings get secure default_input_method").trim()
-
-            override fun after() {
-                before?.let { shell("ime set $it") } ?: shell("ime reset")
-                shell("ime disable ${QaKeyboard.id(testPackage)}")
-                scales.forEach { (name, value) ->
-                    shell(if (value == "null") "settings delete global $name" else "settings put global $name $value")
-                }
-            }
-        }
+    private val keyboards = QaKeyboards(instrumentation)
 
     private val evidence =
         object : TestWatcher() {
@@ -142,7 +103,7 @@ class BothAppsE2eTest {
         RuleChain
             .outerRule(stack)
             .around(freshInstall)
-            .around(keyboard)
+            .around(keyboards)
             .around(compose)
             .around(evidence)
 
@@ -262,10 +223,10 @@ class BothAppsE2eTest {
         val bounds = compose.onAllNodes(terminal())[0].fetchSemanticsNode().boundsInWindow
         device.click(bounds.center.x.toInt(), bounds.center.y.toInt())
         listOf("expr", "$ANSWER_BASE", "+", "$step").forEach { word ->
-            word.forEach { tapKey(QaKeyboard.keyDescription(it.toString())) }
-            tapKey(QaKeyboard.keyDescription(QaKeyboard.SPACE))
+            keyboards.tapKeys(word)
+            keyboards.tapKey(QaKeyboard.keyDescription(QaKeyboard.SPACE))
         }
-        tapKey(QaKeyboard.keyDescription(QaKeyboard.ENTER))
+        keyboards.tapKey(QaKeyboard.keyDescription(QaKeyboard.ENTER))
         val answer = "${ANSWER_BASE + step}"
         val came =
             runCatching {
@@ -283,13 +244,6 @@ class BothAppsE2eTest {
         screenshot("agterm-covered")
         compose.onNode(takeControl).performClick()
         compose.waitUntil(CONNECT_WAIT_MS) { nodes(takeControl) == 0 }
-    }
-
-    private fun tapKey(description: String) {
-        val key = device.wait(Until.findObject(By.desc(description)), KEY_WAIT_MS)
-        assertNotNull("the key $description on the soft keyboard", key)
-        device.waitForIdle()
-        key.click()
     }
 
     /** Every More menu of [session] on screen: Chat view disabled, with "agterm has no chat view" under it. */
@@ -426,14 +380,11 @@ class BothAppsE2eTest {
 
         /** Where screenshots go on the device; scripts/test-android-e2e.sh collects them. */
         const val EVIDENCE_DIR = "/data/local/tmp/ngterm-e2e"
-        const val KEY_WAIT_MS = 10_000L
         const val ANSWER_WAIT_MS = 10_000L
         const val CONNECT_WAIT_MS = 60_000L
         const val MENU_WAIT_MS = 5_000L
         const val COVER_WAIT_MS = 8_000L
         const val ASK_WAIT_MS = 5_000L
-        const val RETRY_MS = 500L
         const val SYSTEM_BACKS = 2
-        val ANIMATION_SCALES = listOf("window_animation_scale", "transition_animation_scale", "animator_duration_scale")
     }
 }
