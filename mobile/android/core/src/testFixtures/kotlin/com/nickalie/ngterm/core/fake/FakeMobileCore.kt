@@ -3,6 +3,8 @@ package com.nickalie.ngterm.core.fake
 import com.nickalie.ngterm.core.ffi.AgentCommand
 import com.nickalie.ngterm.core.ffi.AskReply
 import com.nickalie.ngterm.core.ffi.ChatEvent
+import com.nickalie.ngterm.core.ffi.ClipboardReadConsent
+import com.nickalie.ngterm.core.ffi.ClipboardReadFacts
 import com.nickalie.ngterm.core.ffi.ClipboardReply
 import com.nickalie.ngterm.core.ffi.ClipboardWriteStatus
 import com.nickalie.ngterm.core.ffi.EventSink
@@ -609,3 +611,15 @@ fun fakePeerCapabilities(kind: PeerKind?): PeerCapabilities {
         note = if (own) null else AGTERM_NOTE,
     )
 }
+
+/**
+ * What the core's `clipboard_read_consent` answers, for the app's tests, which run without the native library
+ * (`AndroidClipboardDeviceTest` holds it to the core's on a device).
+ */
+fun fakeClipboardReadConsent(facts: ClipboardReadFacts): ClipboardReadConsent =
+    when {
+        !facts.discloses -> ClipboardReadConsent.UNASKED
+        facts.sensitive -> ClipboardReadConsent.ASK_ONCE
+        facts.granted || facts.trusted -> ClipboardReadConsent.UNASKED
+        else -> ClipboardReadConsent.ASK
+    }

@@ -20,7 +20,6 @@ import com.nickalie.ngterm.android.data.PassphraseRule
 import com.nickalie.ngterm.android.data.SessionChatViews
 import com.nickalie.ngterm.android.data.SettingsStore
 import com.nickalie.ngterm.android.data.StoredMachine
-import com.nickalie.ngterm.android.data.fakeClipboardReadConsent
 import com.nickalie.ngterm.android.platform.KeyWrapper
 import com.nickalie.ngterm.android.platform.KeystoreKeyVault
 import com.nickalie.ngterm.android.platform.PinnedHostKeys
@@ -29,6 +28,7 @@ import com.nickalie.ngterm.android.ui.session.SessionPanes
 import com.nickalie.ngterm.android.update.AppUpdates
 import com.nickalie.ngterm.core.fake.FakeAppLog
 import com.nickalie.ngterm.core.fake.FakeMobileCore
+import com.nickalie.ngterm.core.fake.fakeClipboardReadConsent
 import com.nickalie.ngterm.core.fake.fakePeerCapabilities
 import com.nickalie.ngterm.core.ffi.ClipboardPart
 import com.nickalie.ngterm.core.ffi.ClipboardWriteStatus

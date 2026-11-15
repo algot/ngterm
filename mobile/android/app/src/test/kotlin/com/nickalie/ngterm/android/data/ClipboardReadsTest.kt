@@ -2,6 +2,7 @@ package com.nickalie.ngterm.android.data
 
 import com.nickalie.ngterm.android.testStore
 import com.nickalie.ngterm.core.fake.FakeMobileCore
+import com.nickalie.ngterm.core.fake.fakeClipboardReadConsent
 import com.nickalie.ngterm.core.ffi.ClipboardPart
 import com.nickalie.ngterm.core.ffi.ClipboardReply
 import com.nickalie.ngterm.core.ffi.MobileEvent
@@ -11,6 +12,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
@@ -465,6 +467,26 @@ class ClipboardReadsTest {
             runCurrent()
             assertEquals(emptyList<ClipboardRead>(), reads.pending.value)
             assertEquals(emptyList<Any>(), answers())
+        }
+
+    @Test
+    fun alwaysAllowTappedWhileASensitiveReadMovesToThePromptLeavesItAsking() =
+        runTest {
+            val reads = reads()
+            advanceUntilIdle()
+            request(1u)
+            val first = reads.pending.value.single()
+            val shown = reads.shown(first)
+            clipboard.sensitive = true
+            // the tap lands between settle's move of read 2 into the prompt and its end
+            backgroundScope.launch(Dispatchers.Unconfined) {
+                reads.pending.first { reads -> reads.any { it.readId == 2uL } }
+                reads.allowAlways(first, shown)
+            }
+            request(2u, PaneRef("m1", "s2", "P2"), granted = true)
+            runCurrent()
+            assertEquals(listOf(1uL to allowed(copied)), answers())
+            assertEquals("the sensitive read still asks", listOf(2uL), reads.pending.value.map { it.readId })
         }
 
     private companion object {

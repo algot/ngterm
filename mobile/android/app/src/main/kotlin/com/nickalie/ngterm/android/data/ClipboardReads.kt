@@ -243,8 +243,11 @@ class ClipboardReads(
         trustedState.update { it + machine }
         scope.launch { trust.allow(machine) }
         var answered = emptyList<ClipboardRead>()
+        // a read [settle] is still moving into [pending] (still in [unanswered]) stays: settle's end decides it, and
+        // a requeue would find its entry used up
         pendingState.update { reads ->
-            val (same, others) = reads.partition { it.pane.machineId == machine }
+            val (same, others) =
+                reads.partition { it == read || (it.pane.machineId == machine && it !in unanswered) }
             answered = same
             others
         }

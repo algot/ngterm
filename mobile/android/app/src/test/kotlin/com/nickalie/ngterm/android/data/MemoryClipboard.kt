@@ -1,8 +1,6 @@
 package com.nickalie.ngterm.android.data
 
 import com.nickalie.ngterm.core.ffi.ClipboardPart
-import com.nickalie.ngterm.core.ffi.ClipboardReadConsent
-import com.nickalie.ngterm.core.ffi.ClipboardReadFacts
 import com.nickalie.ngterm.core.ffi.ClipboardReply
 
 /**
@@ -37,18 +35,6 @@ class MemoryClipboard(
         )
     }
 }
-
-/**
- * What the core's `clipboard_read_consent` answers, for the app's tests, which run without the native library
- * (`AndroidClipboardDeviceTest` holds the same rule to the core's on a device).
- */
-fun fakeClipboardReadConsent(facts: ClipboardReadFacts): ClipboardReadConsent =
-    when {
-        !facts.discloses -> ClipboardReadConsent.UNASKED
-        facts.sensitive -> ClipboardReadConsent.ASK_ONCE
-        facts.granted || facts.trusted -> ClipboardReadConsent.UNASKED
-        else -> ClipboardReadConsent.ASK
-    }
 
 fun part(
     mime: String,

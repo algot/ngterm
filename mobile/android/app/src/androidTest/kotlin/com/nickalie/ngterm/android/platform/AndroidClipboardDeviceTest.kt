@@ -13,8 +13,8 @@ import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.nickalie.ngterm.android.MainActivity
+import com.nickalie.ngterm.core.fake.fakeClipboardReadConsent
 import com.nickalie.ngterm.core.ffi.ClipboardPart
-import com.nickalie.ngterm.core.ffi.ClipboardReadConsent
 import com.nickalie.ngterm.core.ffi.ClipboardReadFacts
 import com.nickalie.ngterm.core.ffi.ClipboardWriteStatus
 import com.nickalie.ngterm.core.ffi.clipboardReadConsent
@@ -138,18 +138,9 @@ class AndroidClipboardDeviceTest {
     fun theTestsConsentRuleIsTheCores() {
         for (bits in 0 until FACT_COMBINATIONS) {
             val facts = ClipboardReadFacts(bits and 1 != 0, bits and 2 != 0, bits and 4 != 0, bits and 8 != 0)
-            assertEquals("$facts", expectedConsent(facts), clipboardReadConsent(facts))
+            assertEquals("$facts", fakeClipboardReadConsent(facts), clipboardReadConsent(facts))
         }
     }
-
-    // the rule the app's JVM tests stand in for the core's (`fakeClipboardReadConsent`)
-    private fun expectedConsent(facts: ClipboardReadFacts) =
-        when {
-            !facts.discloses -> ClipboardReadConsent.UNASKED
-            facts.sensitive -> ClipboardReadConsent.ASK_ONCE
-            facts.granted || facts.trusted -> ClipboardReadConsent.UNASKED
-            else -> ClipboardReadConsent.ASK
-        }
 
     private companion object {
         const val BINARY = 2048
