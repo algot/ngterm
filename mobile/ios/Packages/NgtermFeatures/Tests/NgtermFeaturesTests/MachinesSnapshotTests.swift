@@ -46,9 +46,9 @@ internal struct MachinesSnapshotTests {
             connections.connect(machine.core).cancel()
         }
         connections.receive(.machineState(machineId: "connected", state: .connected))
-        connections.receive(.tree(machineId: "connected", sessions: Self.sessions))
+        connections.receive(.tree(machineId: "connected", sessions: Self.sessions, hint: nil))
         connections.receive(.machineState(machineId: "idle", state: .connected))
-        connections.receive(.tree(machineId: "idle", sessions: []))
+        connections.receive(.tree(machineId: "idle", sessions: [], hint: nil))
         // the countdown is told from the test's clock (screen(_:)): a retry 5 s off
         connections.receive(.machineState(machineId: "reconnecting", state: .reconnecting(nextInMs: 5_000)))
         connections.receive(
@@ -81,13 +81,13 @@ internal struct MachinesSnapshotTests {
             connections.connect(machine.core).cancel()
             connections.receive(.machineState(machineId: machine.id, state: .connected))
         }
-        connections.receive(.tree(machineId: "connected", sessions: Self.sessions))
+        connections.receive(.tree(machineId: "connected", sessions: Self.sessions, hint: nil))
         let agterm = Self.sessions.prefix(2).map { session in
             var marked = session
             marked.peer = .agterm
             return marked
         }
-        connections.receive(.tree(machineId: "agterm", sessions: agterm))
+        connections.receive(.tree(machineId: "agterm", sessions: agterm, hint: nil))
         ScreenSnapshot.check(screen(MachinesModel(graph: test.graph)), named: "machines-agterm", variant: variant)
     }
 

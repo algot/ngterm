@@ -128,6 +128,21 @@ internal final class AgtermTests: XCTestCase {
         XCTAssertFalse(Self.any("session-title", in: app).label.contains("agterm"), "work's title has a badge")
     }
 
+    // `studio-off` (the app's `FakeAgtermWorld`), whose agterm is not in Live sessions mode: its sessions screen says
+    // why it lists nothing, over the empty state, and New session is still offered
+    @MainActor
+    internal func testAnAgtermOutsideLiveSessionsModeSaysWhyItListsNothing() throws {
+        let app = FakeApp.launch(withKey: true, arguments: ["-ngterm-fake-agterm-not-live"], for: self)
+        FakeApp.showMachines(in: app)
+        FakeApp.expectRow("studio-off", reads: "Connected", in: app)
+        Self.any("machine-row-studio-off", in: app).tap()
+        FakeApp.expect(FakeApp.element(containing: "No sessions on studio-off", in: app), "the empty state")
+        let hint = FakeApp.element(containing: "agterm on studio-off is not in Live sessions mode", in: app)
+        FakeApp.expect(hint, "why agterm lists nothing")
+        XCTAssertTrue(hint.label.contains("Set Settings > General > Restore sessions to Live sessions"), hint.label)
+        try FakeApp.audit(app)
+    }
+
     deinit {
         // nothing to release: XCTest owns the app it launched
     }

@@ -66,5 +66,29 @@
                 return FakePane(paneId: pane, frames: frames)
             }
         }
+
+        /// The id, and label, of a Mac whose agterm is not in Live sessions mode: it lists no session.
+        internal static let notLiveId = "studio-off"
+        /// What the core says of it, as its listing's hint.
+        internal static let notLiveHint =
+            "agterm on studio-off is not in Live sessions mode: set Settings > General > Restore sessions to Live "
+            + "sessions and restart agterm; only sessions started after that can be attached"
+
+        /// Saves `studio-off` at `studio-off.lan` in `machines`, signing in with `keyId`: no session, and its listing
+        /// says why.
+        @MainActor
+        internal static func seedNotLive(_ machines: MachineStore, core: FakeMobileCore, keyId: String) {
+            let machine = StoredMachine(
+                id: notLiveId,
+                label: notLiveId,
+                host: "studio-off.lan",
+                port: StoredMachine.sshPort,
+                user: "nick",
+                keyId: keyId
+            )
+            try? machines.save(machine)
+            core.sessions[notLiveId] = []
+            core.hints[notLiveId] = notLiveHint
+        }
     }
 #endif

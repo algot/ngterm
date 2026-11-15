@@ -68,21 +68,21 @@
             try await abandoningOnCancel { [self] in
                 let call = recordHeld("endSession", [machineId, sessionId])
                 try await call.pass()
-                let (listed, tree) = try state.withLock { state throws(MobileError) in
+                let (listed, tree, hint) = try state.withLock { state throws(MobileError) in
                     let sessions = try state.sessionsOf(machineId)
                     guard sessions.contains(where: { $0.id == sessionId }) else {
                         throw MobileError.Remote(reason: "no session \(sessionId)")
                     }
                     state.sessions[machineId] = sessions.filter { $0.id != sessionId }
                     guard let listing = state.listings[machineId] else {
-                        return (false, [RemoteSession]())
+                        return (false, [RemoteSession](), String?.none)
                     }
                     let kept = listing.filter { $0.id != sessionId }
                     state.listings[machineId] = kept
-                    return (true, kept)
+                    return (true, kept, state.hints[machineId])
                 }
                 if listed {
-                    emit(.tree(machineId: machineId, sessions: tree))
+                    emit(.tree(machineId: machineId, sessions: tree, hint: hint, hint: nil))
                 }
             }
         }
@@ -217,8 +217,10 @@
 
         /// Keeps the machine's sessions as its listing and delivers them, as the real core does with a fresh listing.
         private func keepListing(_ machineId: String) throws(MobileError) -> [RemoteSession] {
-            let listing = try state.withLock { state throws(MobileError) in try state.keepListing(machineId) }
-            emit(.tree(machineId: machineId, sessions: listing))
+            let (listing, hint) = try state.withLock { state throws(MobileError) in
+                (try state.keepListing(machineId), state.hints[machineId])
+            }
+            emit(.tree(machineId: machineId, sessions: listing, hint: hint, hint: nil))
             return listing
         }
     }

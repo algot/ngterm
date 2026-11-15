@@ -291,7 +291,7 @@ public struct SessionsView: View {
     }
 
     private func banners(_ state: MachineSessions, failure: String?) -> SessionsBanners {
-        SessionsBanners(isOffline: state.isOffline, failure: failure, onRetry: refresh)
+        SessionsBanners(isOffline: state.isOffline, failure: failure, hint: state.hint, onRetry: refresh)
     }
 
     private func refresh() {

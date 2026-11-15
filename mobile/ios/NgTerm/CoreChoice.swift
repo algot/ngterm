@@ -33,6 +33,9 @@ internal struct CoreChoice {
     /// With the fake core, the launch argument that saves a Mac running agterm with one session
     /// (``FakeAgtermWorld``).
     internal static let fakeAgtermArgument = "-ngterm-fake-agterm"
+    /// With the fake core, the launch argument that saves a Mac whose agterm is not in Live sessions mode
+    /// (``FakeAgtermWorld/seedNotLive(_:core:keyId:)``).
+    internal static let fakeAgtermNotLiveArgument = "-ngterm-fake-agterm-not-live"
     /// With the fake session, the launch argument that has the first Duplicate fail.
     internal static let fakeDuplicateFailsArgument = "-ngterm-fake-duplicate-fails"
     /// With the fake core, the launch argument that holds each Duplicate a while once it is under way.

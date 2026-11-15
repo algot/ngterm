@@ -24,7 +24,7 @@ internal struct FakeMobileCoreSessionTests {
         #expect(copy.paneCount == 2)
         let ids = ["s0", "s1", "fake-1", "s2"]
         #expect(core.sessions["m1"]?.map(\.id) == ids)
-        guard case .tree(_, let listed) = core.emitted.last else {
+        guard case .tree(_, let listed, _) = core.emitted.last else {
             Issue.record("no listing after the duplicate")
             return
         }

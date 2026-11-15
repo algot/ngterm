@@ -37,6 +37,7 @@
         internal var sessions: [String: [RemoteSession]] = [:]
         // each machine's last listing: what listSessions or createSession last answered
         internal var listings: [String: [RemoteSession]] = [:]
+        internal var hints: [String: String] = [:]
         internal var panes: [String: Set<String>] = [:]
         // each machine's sessions' panes at its last listing, by machine id then session id
         internal var listedPanes: [String: [String: Set<String>]] = [:]

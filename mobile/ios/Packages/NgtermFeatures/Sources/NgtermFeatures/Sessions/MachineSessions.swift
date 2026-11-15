@@ -28,10 +28,13 @@ public struct MachineSessions: Hashable, Sendable {
     public var duplicating: String?
     /// Whether a create (a New session, a Duplicate) is under way on this device, from any screen: none takes another.
     public var isCreating: Bool
+    /// Why the machine's agterm lists no session, as its last listing said.
+    public var hint: String?
 
     /// The screen's facts: `machine` with its `link`, its `sessions` when it `isListed`, why the last listing
     /// `failure`d, what is `attached`, whether the device `isOffline`, a refresh is under way, which sessions are
-    /// `ending`, the app it runs (`peer`), which session is `duplicating`, and whether a create `isCreating`.
+    /// `ending`, the app it runs (`peer`), which session is `duplicating`, whether a create `isCreating`, and why its
+    /// agterm lists nothing (`hint`).
     public init(
         machine: StoredMachine,
         link: Link,
@@ -44,7 +47,8 @@ public struct MachineSessions: Hashable, Sendable {
         ending: Set<String> = [],
         peer: MachinePeer? = nil,
         duplicating: String? = nil,
-        isCreating: Bool = false
+        isCreating: Bool = false,
+        hint: String? = nil
     ) {
         self.machine = machine
         self.link = link
@@ -58,5 +62,6 @@ public struct MachineSessions: Hashable, Sendable {
         self.peer = peer
         self.duplicating = duplicating
         self.isCreating = isCreating
+        self.hint = hint
     }
 }

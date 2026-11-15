@@ -463,6 +463,14 @@ session** is the toolbar's `+` while the machine is connected.
   Safari's view, **Retry** under it), and a first listing that failed (**Retry**). Over the list or the empty state, a
   banner says the device is offline, and another that the list may be out of date (with Retry). An End or an attach
   that failed is a dismissible failed banner at the list's end.
+- **agterm outside Live sessions mode:** agterm lists only the sessions started in its Live sessions mode, so when a
+  machine's agterm lists none and runs another mode, an `attention` banner over the empty state (or over ngterm's
+  sessions on a machine that runs both, under the other banners) says why in the core's words: the message is what is
+  wrong ("agterm on build-01 is not in Live sessions mode"), the note what to change there ("Set Settings > General >
+  Restore sessions to Live sessions and restart agterm; only sessions started after that can be attached"). No action,
+  as the fix is on the machine; the next listing (pull to refresh) drops it once agterm runs Live sessions. The empty
+  state under it keeps **New session**. An agterm in Live sessions mode with no session yet shows the plain empty
+  state.
 - **New session** lands in the session in one tap: the `+` (and the empty state's New session) creates one the
   machine names, attaches it and opens it in this device's control. The origin's own window leads a session it
   started, so the pane's first report as a follower takes the lead at once, with no Take control cover to tap; a pane

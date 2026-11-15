@@ -29,14 +29,31 @@ internal struct FakeMobileCoreTests {
         #expect(
             core.emitted == [
                 .machineState(machineId: "m1", state: .connected),
-                .tree(machineId: "m1", sessions: [session]),
-                .tree(machineId: "m1", sessions: [session]),
-                .tree(machineId: "m1", sessions: []),
-                .tree(machineId: "m1", sessions: []),
+                .tree(machineId: "m1", sessions: [session], hint: nil),
+                .tree(machineId: "m1", sessions: [session], hint: nil),
+                .tree(machineId: "m1", sessions: [], hint: nil),
+                .tree(machineId: "m1", sessions: [], hint: nil),
             ]
         )
         #expect(
             core.calls.map(\.method) == ["connect", "createSession", "listSessions", "endSession", "listSessions"]
+        )
+    }
+
+    @Test("a listing and an end carry the machine's hint")
+    internal func aListingAndAnEndCarryTheHint() async throws {
+        let core = FakeMobileCore()
+        let hint = "agterm on build-01 is not in Live sessions mode"
+        try await core.connect(machine: Self.machine)
+        core.hints["m1"] = hint
+        let session = try await core.createSession(machineId: "m1", name: "work")
+        try await core.endSession(machineId: "m1", sessionId: session.id)
+        let trees = core.emitted.filter { if case .tree = $0 { true } else { false } }
+        #expect(
+            trees == [
+                .tree(machineId: "m1", sessions: [session], hint: hint),
+                .tree(machineId: "m1", sessions: [], hint: hint),
+            ]
         )
     }
 

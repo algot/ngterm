@@ -85,6 +85,9 @@
             if arguments.contains(CoreChoice.fakeAgtermArgument) {
                 FakeAgtermWorld.seed(machines, core: core, keyId: key.id)
             }
+            if arguments.contains(CoreChoice.fakeAgtermNotLiveArgument) {
+                FakeAgtermWorld.seedNotLive(machines, core: core, keyId: key.id)
+            }
             if arguments.contains(CoreChoice.fakeDuplicateSlowArgument) {
                 holdDuplicates(core, pause: duplicatePause)
             }

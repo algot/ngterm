@@ -108,6 +108,12 @@
             set { state.withLock { $0.sessions = newValue } }
         }
 
+        /// What each machine's listing says about why its agterm lists nothing, by machine id (the real core's hint).
+        public var hints: [String: String] {
+            get { state.withLock { $0.hints } }
+            set { state.withLock { $0.hints = newValue } }
+        }
+
         /// Each session's panes, by session id, for the sessions a test gives them (see the type's rules).
         public var panes: [String: Set<String>] {
             get { state.withLock { $0.panes } }

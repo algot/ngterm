@@ -52,6 +52,34 @@ internal struct SessionsModelTests {
         #expect(lists() == before + 1)
     }
 
+    @Test("why the machine's agterm lists nothing comes with its listing and goes with the next one")
+    internal func hint() async throws {
+        defer { test.remove() }
+        test.core.hints["m1"] = "agterm on build-01 is not in Live sessions mode"
+        try await connected()
+        let model = model()
+        #expect(model.state?.hint == "agterm on build-01 is not in Live sessions mode")
+        test.core.hints = [:]
+        await test.connections.listSessions(machineId: "m1")
+        await test.settled()
+        #expect(model.state?.hint == nil)
+        test.core.hints["m1"] = "agterm on build-01 is not in Live sessions mode"
+        await test.connections.listSessions(machineId: "m1")
+        await test.settled()
+        test.connections.disconnect(machineId: "m1")
+        #expect(model.state?.hint == nil)
+    }
+
+    @Test("the hint reads as a banner's message over its note")
+    internal func hintSplits() {
+        let (message, note) = SessionsBanners.split(hint: "agterm on mac is not in Live sessions mode: set it and restart")
+        #expect(message == "agterm on mac is not in Live sessions mode")
+        #expect(note == "Set it and restart")
+        let whole = SessionsBanners.split(hint: "agterm could not start")
+        #expect(whole.message == "agterm could not start")
+        #expect(whole.note == nil)
+    }
+
     @Test("a machine not connected is listed by its connect")
     internal func connectLists() async throws {
         defer { test.remove() }

@@ -25,6 +25,9 @@ public final class Connections {
     public private(set) var trees: [String: [RemoteSession]] = [:]
     /// Why a machine's last listing failed (the core's words), by id, until a listing lands.
     public private(set) var treeFailures: [String: String] = [:]
+    /// Why a machine's agterm lists no session (the core's words: it is not in Live sessions mode, and what to change
+    /// there), by id, as its last listing said.
+    public private(set) var hints: [String: String] = [:]
     /// The app each machine runs, by id, as its connection's last listing with a session named it; a machine not here
     /// runs ngterm or hasn't said.
     public private(set) var peers: [String: MachinePeer] = [:]
@@ -207,6 +210,7 @@ public final class Connections {
         listings[machineId] = nil
         trees[machineId] = nil
         treeFailures[machineId] = nil
+        hints[machineId] = nil
         attached[machineId] = nil
         peers[machineId] = nil
         streamNames = streamNames.filter { $0.key.machineId != machineId }
@@ -262,8 +266,8 @@ public final class Connections {
             let isReconnecting = links[machineId]?.isReconnect ?? false
             links[machineId] = .signIn(message: message, url: url, isReconnecting: isReconnecting)
 
-        case .tree(let machineId, let sessions):
-            listed(machineId, sessions)
+        case .tree(let machineId, let sessions, let hint):
+            listed(machineId, sessions, hint: hint)
 
         case .sessionName(let machineId, let sessionId, let name):
             named(machineId, sessionId, name)
@@ -341,11 +345,12 @@ public final class Connections {
 
     // a listing replaces the last one and its failure; an attached session it no longer has has ended there, so its
     // stream is let go
-    private func listed(_ machineId: String, _ sessions: [RemoteSession]) {
+    private func listed(_ machineId: String, _ sessions: [RemoteSession], hint: String?) {
         bump(machineId)
         listings[machineId] = sessions
         trees[machineId] = withStreamNames(machineId, sessions)
         treeFailures[machineId] = nil
+        hints[machineId] = hint
         learnPeer(machineId, sessions)
         let gone = (attached[machineId] ?? []).subtracting(sessions.map(\.id))
         for sessionId in gone.sorted() {

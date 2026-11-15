@@ -32,7 +32,7 @@ internal struct LateEventsTests {
         core.emit(.hostKeyUnknown(machineId: "m1", fingerprint: "SHA256:new"))
         core.emit(.hostKeyChanged(machineId: "m1", pinned: "SHA256:old", offered: "SHA256:new"))
         core.emit(.signInRequested(machineId: "m1", message: "sign in", url: "https://login.example/a"))
-        core.emit(.tree(machineId: "m1", sessions: [fakeSession(id: "s1")]))
+        core.emit(.tree(machineId: "m1", sessions: [fakeSession(id: "s1")], hint: nil))
         await Wait.settled(connections, core)
         #expect(connections.links["m1"] == nil)
         #expect(connections.trees["m1"] == nil)

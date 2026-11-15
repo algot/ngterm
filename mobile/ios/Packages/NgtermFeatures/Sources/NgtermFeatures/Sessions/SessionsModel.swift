@@ -56,7 +56,8 @@ public final class SessionsModel {
             ending: ending,
             peer: connections.peers[machineId],
             duplicating: create?.machineId == machineId ? create?.source : nil,
-            isCreating: create != nil
+            isCreating: create != nil,
+            hint: connections.hints[machineId]
         )
     }
 

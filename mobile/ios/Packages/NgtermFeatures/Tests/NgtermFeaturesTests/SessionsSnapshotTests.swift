@@ -53,7 +53,7 @@ internal struct SessionsSnapshotTests {
     private func listed(_ sessions: [RemoteSession], attached: Set<String> = []) throws -> SessionsModel {
         let model = try machine()
         test.connections.receive(.machineState(machineId: "m1", state: .connected))
-        test.connections.receive(.tree(machineId: "m1", sessions: sessions))
+        test.connections.receive(.tree(machineId: "m1", sessions: sessions, hint: nil))
         test.connections.attached["m1"] = attached.isEmpty ? nil : attached
         return model
     }
@@ -145,6 +145,18 @@ internal struct SessionsSnapshotTests {
     internal func empty(variant: ScreenVariant) throws {
         defer { test.remove() }
         ScreenSnapshot.check(screen(try listed([])), named: "sessions-empty", variant: variant)
+    }
+
+    @Test("an agterm outside Live sessions mode: why it lists nothing", arguments: ScreenVariant.allCases)
+    internal func notLive(variant: ScreenVariant) throws {
+        defer { test.remove() }
+        let model = try machine()
+        test.connections.receive(.machineState(machineId: "m1", state: .connected))
+        let hint =
+            "agterm on build-01 is not in Live sessions mode: set Settings > General > Restore sessions to Live "
+            + "sessions and restart agterm; only sessions started after that can be attached"
+        test.connections.receive(.tree(machineId: "m1", sessions: [], hint: hint))
+        ScreenSnapshot.check(screen(model), named: "sessions-not-live", variant: variant)
     }
 
     @Test("New session under way: a spinner in the +'s place, over the list or no sessions", arguments: [false, true])
