@@ -27,19 +27,23 @@ import org.junit.Assume.assumeTrue
 import org.junit.rules.ExternalResource
 import org.junit.rules.RuleChain
 import java.io.File
+import java.util.UUID
 import java.util.regex.Pattern
 
 /**
  * What the key export's end-to-end tests do as a person would: the app's own screens through Compose, the system's
  * screen-lock prompt and file screen through UiAutomator. A test starts at the first run on a device with no screen
  * lock (one that has its own is skipped, since the test can't unlock it) and leaves it with none, an empty clipboard
- * and no exported file. Each test needs an app process of its own, as `KeyExportImportE2eTest` says: without
- * `scripts/test-android-e2e.sh`'s arguments it is skipped.
+ * and without the file it exported. That file gets a name of this run's own, so a key a person saved under the app's
+ * proposed name is never touched. Each test needs an app process of its own, as `KeyExportImportE2eTest` says:
+ * without `scripts/test-android-e2e.sh`'s arguments it is skipped.
  */
 internal class KeyExportDriver {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     val device: UiDevice = UiDevice.getInstance(instrumentation)
     val compose = createAndroidComposeRule<MainActivity>()
+    private val exportedName = "ngterm-e2e-key-${UUID.randomUUID()}"
+    private val exportedFile = "/sdcard/Download/$exportedName"
 
     private val ownRun =
         object : ExternalResource() {
@@ -65,18 +69,17 @@ internal class KeyExportDriver {
             override fun before() {
                 val keyguard = instrumentation.targetContext.getSystemService(KeyguardManager::class.java)
                 assumeFalse("the device has a screen lock of its own", keyguard.isDeviceSecure)
-                clean()
+                clearClipboard()
             }
 
             override fun after() {
                 shell("locksettings clear --old $PIN")
-                clean()
+                clearClipboard()
+                shell("rm -f $exportedFile")
             }
 
-            private fun clean() {
+            private fun clearClipboard() =
                 instrumentation.targetContext.getSystemService(ClipboardManager::class.java).clearPrimaryClip()
-                shell("rm -f $EXPORTED_FILE")
-            }
         }
 
     val rules: RuleChain =
@@ -146,21 +149,29 @@ internal class KeyExportDriver {
         assertEquals("the file screen is left", false, device.hasObject(By.pkg(FILES)))
     }
 
-    /** Saves the document the system's file screen offers, under the name and in the place it proposes. */
+    /** Saves the document the system's file screen offers, in the place it proposes, under this run's own name. */
     fun saveInFileScreen() {
         awaitFileScreen()
+        val name = device.wait(Until.findObject(By.pkg(FILES).clazz("android.widget.EditText")), WAIT_MS)
+        assertNotNull("the system's file screen takes a name for the document", name)
+        assertEquals("the name the app proposes for the file", PROPOSED_NAME, name.text)
+        name.text = exportedName
+        assertTrue(
+            "the file screen holds this run's own name",
+            device.wait(Until.hasObject(By.pkg(FILES).clazz("android.widget.EditText").text(exportedName)), WAIT_MS),
+        )
         device.findObject(saveButton()).click()
     }
 
     /** Picks the exported file in the system's file screen. */
     fun pickExportedFile() {
-        val file = device.wait(Until.findObject(By.pkg(FILES).text(EXPORTED_NAME)), WAIT_MS)
+        val file = device.wait(Until.findObject(By.pkg(FILES).text(exportedName)), WAIT_MS)
         assertNotNull("the system's file screen lists the exported file", file)
         file.click()
     }
 
     /** What the exported file holds; nothing when there is none. */
-    fun exportedFile(): String = shell("cat $EXPORTED_FILE")
+    fun exportedFile(): String = shell("cat $exportedFile")
 
     fun publicKeyLine(): String =
         compose
@@ -222,8 +233,7 @@ internal class KeyExportDriver {
         private const val BACKS = 3
         private const val PIN = "1379"
         private const val SYSTEM_UI = "com.android.systemui"
-        private const val EXPORTED_NAME = "ngterm-private-key"
-        private const val EXPORTED_FILE = "/sdcard/Download/$EXPORTED_NAME"
+        private const val PROPOSED_NAME = "ngterm-private-key"
 
         // the system's file screen: com.android.documentsui, or Google's build of it
         private val FILES: Pattern = Pattern.compile(".*\\.documentsui")
