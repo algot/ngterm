@@ -506,6 +506,7 @@ it no longer does:
 |---|---|
 | `--width/--height are not supported for an overlay this Mac shows for another Mac; resize it on that Mac` | the same refusal naming “this computer”, “another computer” and “that computer” on every ngterm platform |
 | `infocmp exited N: …` (`terminfo install`, the local dump failing) | `could not read <file>: <reason>`: the CLI decompiles the staged compiled entry itself on every OS (`ngterm-ctl`'s `terminfo/source.rs`, a port of ncurses' entry reader and `infocmp -x`'s layout), since Windows has no `infocmp` |
+| `catalog.subscribe is served only by agterm-server`, `catalog.op is served only by agterm-server`, `operation receipts are served only by agterm-server` | the same refusals naming `ngterm-headless`, this build's server (`ngterm-core`'s `commands/catalog.rs` and `dispatch.rs`) |
 
 Texts with no upstream counterpart, each the build's own: `live.reset is not supported on this platform` (above),
 and on Windows an HTML page's refusal without the WebView2 Runtime, `the Microsoft Edge WebView2 Runtime is not

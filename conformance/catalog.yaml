@@ -534,6 +534,24 @@ exemptions:
     ssh; the origin side is tested through live.present
   event:remote.opened: emitted when a session attached over ssh opens, excluded with live.attach
   event:remote.closed: emitted when a session attached over ssh closes, excluded with live.attach
+  field:result.headless: reported only by agterm-server (`version` from a headless host), which no suite host runs; a Mac
+    app omits it
+  field:result.versions: reported only by agterm-server, exempted with field:result.headless
+  field:tree.remote: set only on a remote window's tree, which mirrors an agterm-server over ssh, excluded by the suite's
+    no-network constraints; window.remote.open's refusals are still tested
+  field:window.remote: set only on a remote window, exempted with field:tree.remote
+  field:tree.session.pending: a remote window row's operation state, exempted with field:tree.remote
+  field:tree.session.scratchBacked: set only on a remote window's row, exempted with field:tree.remote
+  field:tree.session.ended: set only by agterm-server for a session left with no live pane, exempted with
+    field:result.headless
+  field:tree.session.interactions: lists what a session holds for a presenter, which needs a viewer attached over ssh
+    (live.attach) or a headless host; neither is within the suite's no-network constraints
+  field:tree.session.remoteSessionID: set only on a session attached from another machine, exempted with
+    field:tree.session.remoteHost
+  field:tree.session.liveHostStale: true only for a pane whose session host was started by an earlier helper build or
+    login session, which needs an app update or a second login under the running panes; the harness starts one build in
+    one login
+  field:tree.session.splitLiveHostStale: the split pane's form of field:tree.session.liveHostStale, exempted with it
   cli:session paste: a successful paste reads the desktop clipboard, exempted with session.paste; its refusals are still tested
   cli:session overlay copy: no command makes a selection inside an overlay terminal, exempted with session.overlay.copy; its
     refusals are still tested
@@ -547,3 +565,9 @@ exemptions:
     flag or focus mark); the ui test of the session editor reads its toggle back from the tree instead
   ui:remote-reconnect-note-{pane}: shows what ssh said when probing the remote host of an attached session failed, which needs
     live.attach over ssh, excluded by the suite's no-network constraints
+  ui:htmlOverlay.loading: shown only on a page this app shows for another machine while its first load is under way,
+    which needs live.attach over ssh, excluded by the suite's no-network constraints
+  ui:remote-connection: the connection strip of a remote window, which mirrors an agterm-server over ssh, excluded by
+    the suite's no-network constraints
+  ui:remote-unknown: a remote window's strip for actions whose outcome it could not learn, exempted with
+    ui:remote-connection

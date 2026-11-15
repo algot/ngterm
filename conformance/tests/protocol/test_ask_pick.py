@@ -469,3 +469,25 @@ def test_result_and_cancel_need_a_known_id(ctl, cmd):
     noun = cmd.split(".")[0]
     assert_error(ctl.request(cmd), f"{cmd} requires {'an ask' if noun == 'ask' else 'a pick'} id")
     assert_error(ctl.request(cmd, UNKNOWN), f"unknown {noun}: {UNKNOWN}")
+
+
+# -- a session-bound pick
+
+
+@pytest.mark.since("0.42.0")
+@pytest.mark.covers("pick.open", "pick.result", "pick.cancel", "field:tree.session.pick")
+def test_a_pick_bound_to_a_session_waits_on_its_session(ctl):
+    """A pick opened with a session as its target shows wherever that session is presented: it is the session's, not
+    the window's."""
+    sid = _new(ctl)
+    assert_absent(_node(ctl, sid), "pick")
+    opened = assert_ok(ctl.request("pick.open", sid, items=ITEMS, prompt="Branch"))
+    with _cancelled(ctl, "pick.cancel", opened["id"]) as pick_id:
+        assert _node(ctl, sid)["pick"] == {"id": pick_id}
+        assert _pick_result(ctl, pick_id) == {"result": "pending"}
+
+        assert_ok(ctl.request("pick.cancel", pick_id))
+        assert_absent(_node(ctl, sid), "pick")
+        assert _pick_result(ctl, pick_id) == {"result": "cancelled"}
+    assert_error(ctl.request("pick.open", UNKNOWN, items=ITEMS), f"no such session: {UNKNOWN}")
+    assert_ok(ctl.request("session.close", sid))

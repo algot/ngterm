@@ -499,3 +499,21 @@ def test_background_rejects(ctl, args, error):
 )
 def test_unknown_session_target(ctl, cmd, args):
     assert_error(ctl.request(cmd, UNKNOWN, **args), f"no such session: {UNKNOWN}")
+
+
+@pytest.mark.since("0.42.1")
+@pytest.mark.covers("session.scratch", "field:tree.session.scratchCwd")
+def test_scratch_cwd_reads_back_while_the_session_has_a_scratch(ctl):
+    sid = _mounted(ctl)
+    try:
+        assert_absent(_node(ctl, sid), "scratchCwd")
+        assert_ok(ctl.request("session.scratch", sid, mode="on"))
+        # the scratch shell starts in the session's directory
+        node = ctl.wait_tree(lambda tree: "scratchCwd" in find_session(tree, sid) and find_session(tree, sid))
+        assert node["scratchCwd"] == node["cwd"], node
+        # a hidden scratch keeps its shell, so its directory stays
+        assert_ok(ctl.request("session.scratch", sid, mode="off"))
+        node = _node(ctl, sid)
+        assert node["scratch"] is False and node["scratchCwd"] == node["cwd"], node
+    finally:
+        ctl.request("session.close", sid)

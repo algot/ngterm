@@ -478,7 +478,7 @@ fn a_page_companion_refuses_terminal_commands_and_keeps_ordinary_ones() {
     let id = wire(page);
     let surface = format!("surface:{id}:left");
     let session = |cmd| Command::Session(cmd);
-    for refused in [
+    for refused in vec![
         request(session(SessionCmd::Type), Some(&id), |a| a.text = Some("ls".into())),
         request(session(SessionCmd::Split), Some(&id), |_| {}),
         request(session(SessionCmd::HudOpen), Some(&id), |_| {}),

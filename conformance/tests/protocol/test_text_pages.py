@@ -1,6 +1,7 @@
 """Text pages (`session.overlay.open` with `textFile`) and what control does to them: a log page follows its file or
 pauses (`session.overlay.follow`), a text page searches (`session.overlay.search`), and a diff page steps between its
-changes (`session.overlay.changes`). Each reads back under the page's `htmlOverlays[].text` node."""
+changes (`session.overlay.changes`), and any of them wraps its long lines (`session.overlay.wrap`). Each reads back
+under the page's `htmlOverlays[].text` node."""
 
 import time
 
@@ -377,5 +378,39 @@ def test_overlay_changes_refusals(ctl):
         _open_text(ctl, sid, _file(ctl, "empty.diff", "nothing changed here\n"))
         _text(ctl, sid)
         assert_error(_once_loaded(ctl, "session.overlay.changes", sid, to="next"), "no changes")
+    finally:
+        ctl.request("session.close", sid)
+
+
+# -- session.overlay.wrap
+
+
+@pytest.mark.since("0.42.0")
+@pytest.mark.covers("session.overlay.wrap", "session.overlay.open", "field:tree.session.htmlOverlays")
+def test_wrap_answers_the_state_it_left(ctl):
+    path = _file(ctl, "wrap.txt", "short\n" + "long " * 400 + "\n")
+    sid = _new(ctl)
+    try:
+        _open_text(ctl, sid, path)
+        # a page opens unwrapped, which reads back as no `wrap` at all
+        assert_absent(_text(ctl, sid), "wrap")
+        # an absent mode toggles; on and off are idempotent
+        for mode, state in [("on", "wrapped"), ("on", "wrapped"), ("toggle", "unwrapped"), (None, "wrapped"),
+                            ("off", "unwrapped"), ("off", "unwrapped")]:
+            response = ctl.request("session.overlay.wrap", sid, **({} if mode is None else {"mode": mode}))
+            assert assert_ok(response) == {"id": sid, "text": state}, mode
+            assert _text(ctl, sid).get("wrap") is (True if state == "wrapped" else None), mode
+    finally:
+        ctl.request("session.close", sid)
+
+
+@pytest.mark.since("0.42.0")
+@pytest.mark.covers("session.overlay.wrap")
+def test_wrap_refuses_a_bad_mode_and_a_session_without_a_page(ctl):
+    # the mode is checked before anything is looked up
+    assert_error(ctl.request("session.overlay.wrap", UNKNOWN, mode="sideways"), "invalid overlay wrap mode: sideways")
+    sid = _new(ctl)
+    try:
+        assert_error(ctl.request("session.overlay.wrap", sid, mode="on"), "no overlay")
     finally:
         ctl.request("session.close", sid)

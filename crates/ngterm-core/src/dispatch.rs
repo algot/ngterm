@@ -199,6 +199,10 @@ struct TreeResult {
 /// syntax error; upstream's socket answers it for a line that is not JSON at all.
 const NOT_JSON: &str = "The given data was not valid JSON.";
 
+/// The refusal of a command sent with an operation id (upstream's dispatcher, naming this build's headless server:
+/// conformance/docs/rust-build.md > renamed strings). Only that server keeps receipts.
+pub const OPERATION_RECEIPTS_ERROR: &str = "operation receipts are served only by ngterm-headless";
+
 /// Decodes one request line (newline excluded), as upstream's `handleConnection` decodes a `ControlRequest`
 /// (`agterm/Control/ControlServer.swift`).
 ///
@@ -750,6 +754,10 @@ impl Core {
 
     /// Answers one request, or starts a command that waits on the frontend and hands back its next step.
     pub fn begin(&mut self, request: &Request) -> Dispatched {
+        // a receipt this host never keeps would read as a durable answer
+        if request.args.as_ref().is_some_and(|args| args.op_id.is_some()) {
+            return Dispatched::Done(ControlError::rejected(OPERATION_RECEIPTS_ERROR).into());
+        }
         // a page companion refuses the terminal commands before any of them runs
         if let Some(refusal) = commands::companion_page::refusal(self, request) {
             return Dispatched::Done(refusal.into());
@@ -780,6 +788,8 @@ impl Core {
         VersionResult {
             app: self.app.clone(),
             installed: self.installed.as_ref().and_then(InstalledSource::read),
+            headless: None,
+            versions: None,
             conformance: ConformanceProfile {
                 parity_level: PARITY_LEVEL.to_owned(),
                 capabilities: self.capabilities.clone(),
@@ -909,6 +919,7 @@ impl Core {
             Command::Recent(cmd) => result_or_success(commands::recent::dispatch(self, cmd, request)?),
             Command::Agent(cmd) => result_of(&commands::agent::dispatch(self, cmd, request)?),
             // `browser.clear` and `config.reload` start through `deferred`
+            Command::Catalog(cmd) => Err(commands::catalog::refusal(cmd, request)),
             cmd @ (Command::Browser(BrowserCmd::Clear) | Command::Config(_) | Command::Live(_)) => {
                 Err(ControlError::NotSupported(cmd))
             }
@@ -919,8 +930,8 @@ impl Core {
 #[cfg(test)]
 mod tests {
     use ngterm_proto::command::{
-        BrowserCmd, ConfigCmd, EventsCmd, HooksCmd, KeymapCmd, LiveCmd, RecentCmd, RestoreCmd, SidebarCmd, ThemeCmd,
-        WindowCmd, WorkspaceCmd,
+        BrowserCmd, CatalogCmd, ConfigCmd, EventsCmd, HooksCmd, KeymapCmd, LiveCmd, RecentCmd, RestoreCmd, SidebarCmd,
+        ThemeCmd, WindowCmd, WorkspaceCmd,
     };
     use serde_json::json;
 
@@ -965,6 +976,80 @@ mod tests {
         Command::Recent(RecentCmd::List),
         Command::Recent(RecentCmd::Clear),
     ];
+
+    /// v0.42's commands are registered ahead of their handlers and refused by name until those land.
+    #[test]
+    fn registered_v042_commands_refuse_until_their_feature_handlers_land() {
+        for name in [
+            "session.page",
+            "session.companion.convert",
+            "session.overlay.wrap",
+            "window.remote.open",
+            "window.remote.dismiss",
+            "session.detach",
+            "session.reattach",
+            "workspace.detach",
+            "workspace.reattach",
+        ] {
+            let response = core().dispatch(&Request::new(name.parse().unwrap()));
+            assert!(!response.ok, "{name}");
+            assert_eq!(
+                response.error.as_deref(),
+                Some(format!("{name} is not supported by this host").as_str())
+            );
+            assert!(response.result.is_none(), "{name}");
+        }
+    }
+
+    /// Upstream's `aMacAppRefusesAnOperationIdOnAnyCommand`: the refusal comes before the command runs.
+    #[test]
+    fn an_operation_id_is_refused_before_the_command_runs() {
+        let mut core = core();
+        let before = core.dispatch(&Request::new(Command::Tree));
+        for cmd in [
+            Command::Workspace(WorkspaceCmd::New),
+            Command::Tree,
+            Command::Catalog(CatalogCmd::Op),
+        ] {
+            let request = Request {
+                cmd,
+                target: None,
+                args: Some(Args {
+                    op_id: Some("op-1".to_owned()),
+                    epoch: Some("E".to_owned()),
+                    ..Args::default()
+                }),
+            };
+            let response = core.dispatch(&request);
+            assert_eq!(
+                (response.ok, response.error.as_deref()),
+                (false, Some("operation receipts are served only by ngterm-headless")),
+                "{cmd}"
+            );
+        }
+        assert_eq!(core.dispatch(&Request::new(Command::Tree)), before);
+    }
+
+    /// Only a headless server owns a catalog: an app with windows refuses both commands by that reason.
+    #[test]
+    fn catalog_commands_are_the_headless_servers_alone() {
+        let subscribe = core().dispatch(&Request::new(Command::Catalog(CatalogCmd::Subscribe)));
+        assert_eq!(
+            (subscribe.ok, subscribe.error.as_deref()),
+            (false, Some("catalog.subscribe is served only by ngterm-headless"))
+        );
+        let operation = Request {
+            cmd: Command::Catalog(CatalogCmd::Op),
+            target: Some("op-1".to_owned()),
+            args: None,
+        };
+        let response = core().dispatch(&operation);
+        assert_eq!(
+            (response.ok, response.error.as_deref()),
+            (false, Some("catalog.op is served only by ngterm-headless"))
+        );
+        assert!(response.result.is_none());
+    }
 
     #[test]
     fn version_reports_app_and_profile() {

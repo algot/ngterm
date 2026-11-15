@@ -147,18 +147,43 @@ CLI `session convert`, `session overlay wrap`, `session overlay open` variant `-
 `session detach|reattach`, `workspace detach|reattach`, `catalog subscribe|op`, `server install`; ui
 `htmlOverlay.loading`, `settings-badge-reset`, `remote-connection`, `remote-unknown`.
 
-- [ ] Register the 11 commands with their request args and the dispatcher's established not-implemented refusal
+- [x] Register the 11 commands with their request args and the dispatcher's established not-implemented refusal
   until their tasks land; add the 14 fields as optional, omitted while unset, in upstream's key order; update the
   key-order tests.
-- [ ] Add the 11 CLI leaves with upstream's help and parse-time refusals (`--page cannot be combined with
+- [x] Add the 11 CLI leaves with upstream's help and parse-time refusals (`--page cannot be combined with
   --companion`, `--op-id requires --companion or --page`, `--navigation requires --html, --url or --markdown`, `mode
   must be on, off or toggle`); no success stubs. `server install` is local-only and refuses until Task 33.
-- [ ] Write the reference conformance tests that cover the keys, `since`-marked, each asserting its named behavior
+- [x] Write the reference conformance tests that cover the keys, `since`-marked, each asserting its named behavior
   or field (the feature tasks give the cases). A key the macOS reference can only refuse (`catalog.*`, an `opID`:
   `operation receipts are served only by agterm-server`) is covered by that refusal; a key no suite host can reach
   is exempted with its reason, as the catalog allows.
-- [ ] Both catalog cargo tests, the command-tree test, the host-free selftests and the coverage gate pass; existing
+- [x] Both catalog cargo tests, the command-tree test, the host-free selftests and the coverage gate pass; existing
   ratchet ids unchanged.
+
+What Task 1 left for the feature tasks:
+
+- Nine commands answer `NAME is not supported by this host` (`session.page`, `session.companion.convert`,
+  `session.overlay.wrap`, `window.remote.open|dismiss`, `session|workspace.detach|reattach`); the task that builds
+  one replaces its arm and makes the `since`-marked tests of it pass on Rust.
+- `catalog.subscribe`, `catalog.op` and any `opID` already answer upstream's refusals of an app with windows, in
+  ngterm's words (`… served only by ngterm-headless`, rust-build.md > Other strings of the build's own): the suite's
+  vocabulary selftest holds every translated text to a Rust literal, so the texts came with their tests.
+  `ngterm-headless` shares the dispatcher and answers the same until Tasks 27 and 28 give the core its headless form.
+- The `ngtermctl` leaves send upstream's requests. `session overlay open` already takes `--page`, `--op-id`,
+  `--epoch` and `--expect-panes`, and a markdown page's `--navigation` reaches the app, which still refuses it
+  (Task 17). The other commands' `--op-id` (upstream's `OperationOptions`), `--expect-scratch`, `pick --session`,
+  `pick --timeout` and `ask open --timeout` are Tasks 26 and 28.
+- Exempted in `catalog.yaml` until a suite host can reach them: `result.headless`, `result.versions`,
+  `tree.session.ended`, `tree.session.interactions` (Task 27 covers them against `ngterm-headless` and removes the
+  exemptions); `tree.remote`, `window.remote`, `tree.session.pending`, `tree.session.scratchBacked`,
+  `tree.session.remoteSessionID`, `ui:remote-connection`, `ui:remote-unknown`, `ui:htmlOverlay.loading` (ssh);
+  `tree.session.liveHostStale`, `splitLiveHostStale` (Task 25).
+- The reference tests of this task were written from upstream's sources and have not run on the macOS reference
+  yet: the first `reference-macos.yml` run after this lands checks them, and the feature task of a test that fails
+  there corrects it.
+- Upstream reworded three app-side refusals of `session.overlay.open` (`--navigation requires --html, --url or
+  --markdown`, and the `--markdown` option list without `--navigation`); the ratcheted tests that assert the old
+  texts move with the Rust strings in Task 17.
 
 ### Task 2: Renderer resources to v0.42.3
 
@@ -578,6 +603,9 @@ new build, so no host is stale after an update on any OS; what remains is a serv
 session on macOS.
 **Conformance:** `field:tree.session.liveHostStale`, `splitLiveHostStale` in `tests/protocol/test_live_sessions.py`,
 or a recorded deviation where no host here can produce them.
+**Decided (team lead, 2026-11-15):** the deviation is accepted as recorded here: no Linux or Windows host produces
+`liveHostStale`, and the two fields stay exempted in `catalog.yaml` unless the macOS work gives the suite a way to
+reach them.
 
 - [ ] One device-attributes answer during attach: no stray `62;22c` at a new pane's prompt (a PTY test in
   `ngterm-session`). Check what `0005-detached-create` changes for a detached create and port what applies.
@@ -773,6 +801,9 @@ surface, `ServerHookInstall.swift`, `scripts/server-host-install.sh`); design
 **Apps:** the command runs on a desktop of any OS (upstream: macOS only). Host: a Linux host with a systemd user
 manager, as upstream's; a macOS or Windows host keeps the manual install of docs/development.md > A server without a
 display, left open with that reason.
+**Decided (team lead, 2026-11-15):** `server install` supports a Linux host only; macOS and Windows hosts keep the
+manual install, and the docs state that reason. The release-packaging change (the archive's checksum sealed into
+the build) is in scope of this sync.
 **ngterm's own:** the installed server is ngterm's release archive (`ngterm-headless`, `ngtermctl`,
 `ngterm-session`), verified as `ngterm-update` verifies a release; the hooks step is `ngterm-headless
 --install-agent-hooks`.

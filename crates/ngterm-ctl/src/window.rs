@@ -37,6 +37,7 @@ impl Window {
             WindowCommand::Zoom(command) => command,
             WindowCommand::Fullscreen(command) => command,
             WindowCommand::Minimize(command) => command,
+            WindowCommand::Remote(group) => group.command(),
         }
     }
 }
@@ -56,6 +57,7 @@ enum WindowCommand {
     Zoom(Zoom),
     Fullscreen(Fullscreen),
     Minimize(Minimize),
+    Remote(Remote),
 }
 
 /// The help of every positional window address.
@@ -339,6 +341,63 @@ impl RequestCommand for Minimize {
             ..Args::default()
         };
         window_request(WindowCmd::Minimize, Some(target), Some(args))
+    }
+}
+
+/// `ngtermctl window remote <subcommand>`.
+#[derive(Debug, clap::Args)]
+#[command(
+    about = "Windows mirroring an ngterm-headless.",
+    subcommand_required = true,
+    arg_required_else_help = true
+)]
+pub struct Remote {
+    #[command(subcommand)]
+    command: RemoteCommand,
+}
+
+impl Remote {
+    fn command(&self) -> &dyn RequestCommand {
+        match &self.command {
+            RemoteCommand::Open(command) => command,
+            RemoteCommand::Dismiss(command) => command,
+        }
+    }
+}
+
+/// The subcommands, in upstream's `Window.Remote.configuration.subcommands` order.
+#[derive(Debug, clap::Subcommand)]
+enum RemoteCommand {
+    Open(RemoteOpen),
+    Dismiss(crate::detach::RemoteDismiss),
+}
+
+/// `ngtermctl window remote open HOST`: echoes the id of the window showing the host's catalog.
+#[derive(Debug, clap::Args)]
+#[command(about = "Open a window mirroring HOST's ngterm-headless, or raise the one already showing it.")]
+pub struct RemoteOpen {
+    #[arg(help = "The ssh destination running ngterm-headless.")]
+    host: String,
+
+    #[command(flatten)]
+    options: BasicOptions,
+}
+
+impl RequestCommand for RemoteOpen {
+    fn options(&self) -> &BasicOptions {
+        &self.options
+    }
+
+    fn echoes_result_id(&self) -> bool {
+        true
+    }
+
+    fn make_request(&self) -> Request {
+        let args = Args {
+            host: Some(self.host.clone()),
+            ..Args::default()
+        };
+        window_request(WindowCmd::RemoteOpen, None, Some(args))
     }
 }
 

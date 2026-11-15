@@ -3,6 +3,8 @@
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
+use crate::result::CatalogVersions;
+
 /// The upstream version whose behavior this build claims.
 pub const PARITY_LEVEL: &str = "0.41.1";
 
@@ -49,6 +51,13 @@ pub struct VersionResult {
     /// differs from `app` once the install is replaced under a running app. Absent when it cannot be read, which means
     /// unknown, never "same as `app`". On `version` only, never on `tree`.
     pub installed: Option<AppIdentity>,
+    /// True from a headless server, where a pane's own untargeted pick belongs to its session; absent from an app with
+    /// windows.
+    #[serde(default)]
+    pub headless: Option<bool>,
+    /// What a headless server advertises; absent from an app with windows.
+    #[serde(default)]
+    pub versions: Option<CatalogVersions>,
     pub conformance: ConformanceProfile,
 }
 
@@ -63,6 +72,8 @@ mod tests {
         VersionResult {
             app: AppIdentity::from_recorded("0.1.0", Some("abc1234")),
             installed: None,
+            headless: None,
+            versions: None,
             conformance: ConformanceProfile {
                 parity_level: PARITY_LEVEL.to_owned(),
                 capabilities: vec!["posix-shell".to_owned(), "live-sessions".to_owned()],
@@ -101,6 +112,35 @@ mod tests {
         let without = serde_json::to_string(&sample()).unwrap();
         assert!(!without.contains("installed"), "{without}");
         assert_eq!(serde_json::from_str::<VersionResult>(&without).unwrap().installed, None);
+    }
+
+    /// Upstream's order: `headless` and `versions` ride after `installed`; an app with windows sends neither.
+    #[test]
+    fn a_headless_servers_fields_ride_after_installed_and_are_omitted_when_absent() {
+        let headless = VersionResult {
+            installed: Some(AppIdentity::from_recorded("0.2.0", None)),
+            headless: Some(true),
+            versions: Some(CatalogVersions {
+                server: "0.2.0".to_owned(),
+                protocol: 1,
+                catalog: 1,
+            }),
+            ..sample()
+        };
+        let text = serde_json::to_string(&headless).unwrap();
+        assert!(
+            text.contains(
+                r#""installed":{"version":"0.2.0"},"headless":true,"versions":{"server":"0.2.0","protocol":1,"catalog":1},"conformance""#
+            ),
+            "{text}"
+        );
+        assert_eq!(serde_json::from_str::<VersionResult>(&text).unwrap(), headless);
+
+        let without = serde_json::to_string(&sample()).unwrap();
+        assert!(
+            !without.contains("headless") && !without.contains("versions"),
+            "{without}"
+        );
     }
 
     #[test]

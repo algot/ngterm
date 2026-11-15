@@ -35,7 +35,9 @@ def test_cli_document_sources_resolve_relative_paths(cli, ctl, source, filename,
 
 
 ONE_SOURCE = "provide exactly one of COMMAND, --html, --url, --image, --markdown or --text"
-TEXT_OPTIONS = "--text takes no --companion, --block, --wait, --navigation, --js, --chromeless, --persistent, --browse or --cwd"
+TEXT_OPTIONS = (
+    "--text takes no --companion, --page, --block, --wait, --navigation, --js, --chromeless, --persistent, --browse or --cwd"
+)
 
 
 def _usage(result, message=None):
@@ -47,7 +49,11 @@ def _usage(result, message=None):
 @pytest.mark.covers("cli:session overlay open")
 @pytest.mark.parametrize("source", ["--image", "--markdown", pytest.param("--text", marks=pytest.mark.since("0.41.0"))])
 def test_cli_document_sources_reject_incompatible_flags_before_connecting(cli, source):
-    for flag in ["--companion", "--block", "--wait", "--navigation", "--js", "--chromeless", "--persistent", "--browse"]:
+    flags = ["--companion", "--block", "--wait", "--navigation", "--js", "--chromeless", "--persistent", "--browse"]
+    if source == "--markdown":
+        # a markdown page takes --navigation: it follows links to markdown files in its folder
+        flags.remove("--navigation")
+    for flag in flags:
         _usage(cli("session", "overlay", "open", source, "local-file", flag))
     result = cli("session", "overlay", "open", "--image", "image.png", "--markdown", "doc.md")
     assert (result.returncode, result.stdout) == (64, ""), result

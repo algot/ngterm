@@ -136,6 +136,9 @@ NAME_TEXTS: Mapping[str, str] = {
         "incomplete pane identity: AGTERM_SESSION_ID and AGTERM_PANE_ID must both be set; pass --as SESSION:PANE-ID"
     ),
     "restart ngterm to apply the configured mode": "restart agterm to apply the configured mode",
+    "catalog.subscribe is served only by ngterm-headless": "catalog.subscribe is served only by agterm-server",
+    "catalog.op is served only by ngterm-headless": "catalog.op is served only by agterm-server",
+    "operation receipts are served only by ngterm-headless": "operation receipts are served only by agterm-server",
 }
 
 # Platform-neutral replica ownership wording, where upstream names its two Macs.

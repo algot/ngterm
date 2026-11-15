@@ -5,11 +5,13 @@
 mod agent;
 mod ask;
 mod browser;
+mod catalog;
 mod client;
 mod clipboard;
 mod companions;
 mod config;
 mod dashboard;
+mod detach;
 mod events;
 mod font;
 mod hooks;
@@ -29,6 +31,7 @@ mod quick;
 mod read_wake;
 mod recent;
 mod restore;
+mod server;
 mod session;
 mod session_background;
 mod session_hud;
@@ -79,7 +82,7 @@ struct Ngtermctl {
 }
 
 /// The subcommands, in upstream's `Ngtermctl.configuration.subcommands` order, this build's Rust-only `agent` before
-/// `version`. A command's abstract is an `about` attribute (clap derive drops a doc comment's final period), as
+/// `version`. `server` is on every OS here, where upstream has it on macOS only. A command's abstract is an `about` attribute (clap derive drops a doc comment's final period), as
 /// upstream's `abstract:`.
 #[derive(Debug, Subcommand)]
 enum Command {
@@ -105,7 +108,9 @@ enum Command {
     Restore(restore::Restore),
     Recent(recent::Recent),
     Live(live::Live),
+    Catalog(catalog::Catalog),
     Terminfo(terminfo::Terminfo),
+    Server(server::Server),
     Clipboard(clipboard::Clipboard),
     Agent(agent::Agent),
     Version(version::Version),
@@ -136,9 +141,10 @@ impl Command {
             Self::Restore(command) => command.check(),
             Self::Recent(command) => command.check(),
             Self::Live(command) => command.check(),
+            Self::Catalog(command) => command.check(),
             Self::Terminfo(command) => command.check(),
             Self::Agent(command) => command.check(),
-            Self::Pick(_) | Self::Clipboard(_) | Self::Version(_) => Ok(()),
+            Self::Pick(_) | Self::Server(_) | Self::Clipboard(_) | Self::Version(_) => Ok(()),
         }
     }
 
@@ -166,7 +172,9 @@ impl Command {
             Self::Restore(command) => command.execute(env),
             Self::Recent(command) => command.execute(env),
             Self::Live(command) => command.execute(env),
+            Self::Catalog(command) => command.execute(env),
             Self::Terminfo(command) => command.execute(),
+            Self::Server(command) => command.execute(),
             Self::Clipboard(command) => command.execute(),
             Self::Agent(command) => command.execute(env),
             Self::Version(command) => command.run(env),
@@ -453,10 +461,14 @@ mod tests {
         for argv in [
             &["ngtermctl", "clipboard", "set", "hello"][..],
             &["ngtermctl", "terminfo", "install", "buildbox"],
+            &["ngtermctl", "server", "install", "buildbox"],
         ] {
             let parsed = Ngtermctl::try_parse_from(argv).unwrap();
             assert!(
-                matches!(parsed.command, Command::Clipboard(_) | Command::Terminfo(_)),
+                matches!(
+                    parsed.command,
+                    Command::Clipboard(_) | Command::Terminfo(_) | Command::Server(_)
+                ),
                 "{argv:?}"
             );
             assert_eq!(parsed.command.validate(), Ok(()));

@@ -9,7 +9,7 @@
 //! off the main actor; here it is computed on dispatch.
 
 use ngterm_proto::command::WindowCmd;
-use ngterm_proto::{Args, ControlResult, ControlWindowNode, Request};
+use ngterm_proto::{Args, Command, ControlResult, ControlWindowNode, Request};
 use uuid::Uuid;
 
 use super::{Outcome, ToggleMode, args_of, with_id};
@@ -45,6 +45,8 @@ pub(crate) fn dispatch(core: &mut Core, cmd: WindowCmd, request: &Request) -> Ou
         WindowCmd::Zoom => toggle(core, target, WindowRequest::ToggleZoom),
         WindowCmd::Fullscreen => toggle(core, target, WindowRequest::ToggleFullscreen),
         WindowCmd::Minimize => minimize(core, target, args),
+        // registered ahead of their handlers: refused by name until those land
+        WindowCmd::RemoteOpen | WindowCmd::RemoteDismiss => Err(ControlError::NotSupported(Command::Window(cmd))),
     }
 }
 
@@ -77,6 +79,7 @@ pub(crate) fn window_nodes(core: &Core) -> Vec<ControlWindowNode> {
                 fullscreen: live.map(|state| state.fullscreen),
                 zoomed: live.map(|state| state.zoomed),
                 minimized: live.map(|state| state.minimized.unwrap_or(false)),
+                remote: None,
             }
         })
         .collect()

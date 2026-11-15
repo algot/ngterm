@@ -61,6 +61,54 @@ impl RequestCommand for Follow {
     }
 }
 
+/// `ngtermctl session overlay wrap on|off|toggle [--pane PANE]`.
+#[derive(Debug, clap::Args)]
+#[command(
+    about = "Wrap a text page's long lines, unwrap them, or toggle between the two.",
+    long_about = "Acts on a text, log or diff page. Prints the state left behind, wrapped or unwrapped; tree reads it \
+                  as htmlOverlays[].text.wrap."
+)]
+pub struct Wrap {
+    #[arg(help = "on, off or toggle.")]
+    mode: String,
+
+    #[arg(long, help = PANE_HELP)]
+    pane: Option<String>,
+
+    #[command(flatten)]
+    target: TargetOptions,
+
+    #[command(flatten)]
+    options: ClientOptions,
+}
+
+impl RequestCommand for Wrap {
+    fn options(&self) -> &BasicOptions {
+        &self.options.basic
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if !["on", "off", "toggle"].contains(&self.mode.as_str()) {
+            return Err("mode must be on, off or toggle".to_owned());
+        }
+        validate_overlay_pane(self.pane.as_deref())
+    }
+
+    fn make_request(&self) -> Request {
+        let args = Args {
+            mode: Some(self.mode.clone()),
+            pane: self.pane.clone(),
+            ..Args::default()
+        };
+        session_request(
+            SessionCmd::OverlayWrap,
+            Some(self.target.target.clone()),
+            Some(args),
+            &self.options,
+        )
+    }
+}
+
 /// `ngtermctl session overlay search [TEXT] [--next|--prev|--close]`: exactly one of a query and a step, which rides
 /// the wire as `to`.
 #[derive(Debug, clap::Args)]
@@ -236,6 +284,27 @@ mod tests {
             request(&["follow", "on"]),
             json!({"cmd": "session.overlay.follow", "target": "active", "args": {"mode": "on"}})
         );
+    }
+
+    /// Upstream's `wrapSendsItsModePaneAndTarget` and `wrapRefusesABadModeOrPane`.
+    #[test]
+    fn wrap_sends_its_mode_pane_and_target_and_refuses_a_bad_one() {
+        for mode in ["on", "off", "toggle"] {
+            assert_eq!(
+                request(&["wrap", mode, "--pane", "right", "--target", "s"]),
+                json!({"cmd": "session.overlay.wrap", "target": "s", "args": {"mode": mode, "pane": "right"}})
+            );
+        }
+        assert_eq!(
+            request(&["wrap", "on", "--window", "w"]),
+            json!({"cmd": "session.overlay.wrap", "target": "active", "args": {"mode": "on", "window": "w"}})
+        );
+        assert_eq!(
+            outcome(&["wrap", "maybe"]),
+            Err("mode must be on, off or toggle".to_owned())
+        );
+        assert!(outcome(&["wrap"]).is_err());
+        assert!(outcome(&["wrap", "on", "--pane", "scratch"]).is_err());
     }
 
     /// Upstream's `followRefusesABadModeOrPane`.

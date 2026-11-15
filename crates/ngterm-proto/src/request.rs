@@ -90,6 +90,15 @@ impl Request {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(remote = "Self", rename_all = "camelCase")]
 pub struct Args {
+    /// Names a structural command for the headless server's operation receipts; only that server takes one.
+    #[serde(rename = "opID")]
+    pub op_id: Option<String>,
+    /// The catalog epoch the caller last saw, sent with `opID`.
+    pub epoch: Option<String>,
+    /// The catalog revision the caller had when it sent an operation, given to `catalog.op` with `epoch`.
+    pub rev: Option<i64>,
+    /// The target session's pane identities when the operation was decided.
+    pub panes: Option<Vec<String>>,
     pub name: Option<String>,
     pub cwd: Option<String>,
     pub targets: Option<Vec<String>>,
@@ -515,6 +524,29 @@ mod tests {
         let keys: Vec<&str> = map.keys().map(String::as_str).collect();
         assert_eq!(keys, ["targets", "undoable", "collapsed", "tint", "tintOn", "mode"]);
         assert_eq!(serde_json::to_string(&Args::default()).unwrap(), "{}");
+    }
+
+    /// Upstream's `ControlArgs` declares the operation fields first.
+    #[test]
+    fn operation_args_round_trip_first_in_upstreams_order() {
+        let wire = json!({
+            "cmd": "catalog.op",
+            "target": "op-1",
+            "args": {"opID": "op-1", "epoch": "E", "rev": 4, "panes": ["P"], "name": "n"}
+        });
+        let request: Request = serde_json::from_value(wire.clone()).unwrap();
+        let args = request.args.clone().unwrap();
+        assert_eq!(
+            (args.op_id.as_deref(), args.epoch.as_deref(), args.rev),
+            (Some("op-1"), Some("E"), Some(4))
+        );
+        assert_eq!(args.panes, Some(vec!["P".to_owned()]));
+        assert_eq!(serde_json::to_value(&request).unwrap(), wire);
+        let Value::Object(map) = serde_json::to_value(args).unwrap() else {
+            panic!("args is not an object")
+        };
+        let keys: Vec<&str> = map.keys().map(String::as_str).collect();
+        assert_eq!(keys, ["opID", "epoch", "rev", "panes", "name"]);
     }
 
     #[test]

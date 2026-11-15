@@ -41,6 +41,7 @@ pub enum Group {
     Window,
     Workspace,
     Live,
+    Catalog,
     Agent,
 }
 
@@ -145,7 +146,10 @@ group_commands!(
         Collapse = "session.collapse",
         CompanionNew = "session.companion.new",
         CompanionPage = "session.companion.page",
+        // a top-level page session: its own command, so an older app refuses it
+        Page = "session.page",
         CompanionDuplicate = "session.companion.duplicate",
+        CompanionConvert = "session.companion.convert",
         // a viewer asking for one attachment of a page companion: a single-use token for `session.overlay.page.serve`
         // plus what the page shows
         CompanionPageAttach = "session.companion.page.attach",
@@ -179,11 +183,15 @@ group_commands!(
         OverlayFollow = "session.overlay.follow",
         OverlaySearch = "session.overlay.search",
         OverlayChanges = "session.overlay.changes",
+        OverlayWrap = "session.overlay.wrap",
         OverlayJobRun = "session.overlay.job.run",
         OverlayPageServe = "session.overlay.page.serve",
         HudOpen = "session.hud.open",
         HudUpdate = "session.hud.update",
         HudClose = "session.hud.close",
+        // a remote window's rows: hidden here, left running on its server, and shown again
+        Detach = "session.detach",
+        Reattach = "session.reattach",
     }
 );
 
@@ -225,6 +233,8 @@ group_commands!(
         Zoom = "window.zoom",
         Fullscreen = "window.fullscreen",
         Minimize = "window.minimize",
+        RemoteOpen = "window.remote.open",
+        RemoteDismiss = "window.remote.dismiss",
     }
 );
 
@@ -243,6 +253,8 @@ group_commands!(
         Expand = "workspace.expand",
         Flag = "workspace.flag",
         Tint = "workspace.tint",
+        Detach = "workspace.detach",
+        Reattach = "workspace.reattach",
     }
 );
 
@@ -259,6 +271,11 @@ group_commands!(
         Present = "live.present",
         Screen = "live.screen",
     }
+);
+
+group_commands!(
+    /// `catalog.*`: the headless server's catalog stream and its operation receipts.
+    CatalogCmd { Subscribe = "catalog.subscribe", Op = "catalog.op" }
 );
 
 group_commands!(
@@ -294,6 +311,7 @@ pub enum Command {
     Window(WindowCmd),
     Workspace(WorkspaceCmd),
     Live(LiveCmd),
+    Catalog(CatalogCmd),
     Agent(AgentCmd),
 }
 
@@ -326,6 +344,7 @@ impl Command {
             Self::Window(c) => c.into(),
             Self::Workspace(c) => c.into(),
             Self::Live(c) => c.into(),
+            Self::Catalog(c) => c.into(),
             Self::Agent(c) => c.into(),
         }
     }
@@ -358,6 +377,7 @@ impl Command {
             Self::Window(_) => Group::Window,
             Self::Workspace(_) => Group::Workspace,
             Self::Live(_) => Group::Live,
+            Self::Catalog(_) => Group::Catalog,
             Self::Agent(_) => Group::Agent,
         }
     }
@@ -386,6 +406,7 @@ impl Command {
         all.extend(WindowCmd::iter().map(Self::Window));
         all.extend(WorkspaceCmd::iter().map(Self::Workspace));
         all.extend(LiveCmd::iter().map(Self::Live));
+        all.extend(CatalogCmd::iter().map(Self::Catalog));
         all.extend(AgentCmd::iter().map(Self::Agent));
         all
     }
@@ -444,6 +465,7 @@ impl FromStr for Command {
             Group::Window => WindowCmd::from_str(name).ok().map(Self::Window),
             Group::Workspace => WorkspaceCmd::from_str(name).ok().map(Self::Workspace),
             Group::Live => LiveCmd::from_str(name).ok().map(Self::Live),
+            Group::Catalog => CatalogCmd::from_str(name).ok().map(Self::Catalog),
             Group::Agent => AgentCmd::from_str(name).ok().map(Self::Agent),
         };
         command.ok_or_else(|| UnknownCommand(name.to_owned()))
@@ -509,6 +531,16 @@ mod tests {
     }
 
     #[test]
+    fn parses_the_v042_wire_names() {
+        assert_eq!("session.page".parse(), Ok(Command::Session(SessionCmd::Page)));
+        assert_eq!(
+            "window.remote.dismiss".parse(),
+            Ok(Command::Window(WindowCmd::RemoteDismiss))
+        );
+        assert_eq!("catalog.op".parse(), Ok(Command::Catalog(CatalogCmd::Op)));
+    }
+
+    #[test]
     fn refuses_names_outside_the_protocol() {
         for name in [
             "",
@@ -535,7 +567,7 @@ mod tests {
     #[test]
     fn every_command_round_trips_through_its_wire_name() {
         let all = Command::all();
-        assert_eq!(all.len(), 138);
+        assert_eq!(all.len(), 149);
         for command in all {
             assert_eq!(command.wire_name().parse(), Ok(command));
             assert_eq!(
@@ -546,8 +578,8 @@ mod tests {
     }
 
     #[test]
-    fn has_twenty_five_groups() {
-        assert_eq!(Group::iter().count(), 25);
+    fn has_twenty_six_groups() {
+        assert_eq!(Group::iter().count(), 26);
     }
 
     #[test]

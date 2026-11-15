@@ -628,3 +628,76 @@ def test_a_duplicated_program_pane_closes_when_the_program_exits(shells):
     ctl.wait_tree(lambda tree: copy not in session_ids(tree, wid))
     assert session_ids(ctl.tree(), wid) == [parent]
     assert_ok(ctl.request("workspace.delete", wid))
+
+
+# -- page sessions
+
+PAGE_SESSION_FULL_SIZE = "a page session is full size: it takes no --pane, --size-percent, --width or --height"
+
+
+@pytest.mark.since("0.42.0")
+@pytest.mark.covers("session.page", "field:result.pageID", "field:tree.session.content", "field:tree.session.htmlOverlays")
+def test_page_session_opens_a_top_level_page_row_after_its_targets_group(ctl):
+    wid, (target, after) = _workspace(ctl, sessions=2)
+    companion = _companion(ctl, target)
+    path, _ = _page_file(ctl)
+    created = assert_ok(ctl.request("session.page", target, html=str(path)))
+    page = created["id"]
+    assert created["pageID"]
+    # a row of its own, not under the target
+    assert_absent(created, "parent")
+
+    tree = _loaded(ctl, page)
+    assert session_ids(tree, wid) == [target, companion, page, after]
+    node = find_session(tree, page)
+    assert_subset(node, {"content": "page", "name": path.name, "realized": False, "overlay": True})
+    assert_absent(node, "parent")
+    (shown,) = node["htmlOverlays"]
+    assert_subset(shown, {"id": created["pageID"], "file": str(path)})
+    # it opened in the background, and it can hold companions
+    assert node["active"] is False
+    held = _companion(ctl, page)
+    assert find_session(ctl.tree(), held)["parent"] == page
+    assert_ok(ctl.request("workspace.delete", wid))
+
+
+@pytest.mark.since("0.42.0")
+@pytest.mark.covers("session.page")
+def test_page_session_refusals(ctl):
+    wid, (target,) = _workspace(ctl)
+    path, _ = _page_file(ctl)
+    # a program is no page
+    assert_error(ctl.request("session.page", target, command="top"), "a page session needs --html or --url")
+    for size in ({"pane": "right"}, {"sizePercent": 50}, {"width": 300}, {"height": 300}):
+        assert_error(ctl.request("session.page", target, html=str(path), **size), PAGE_SESSION_FULL_SIZE)
+    assert_error(ctl.request("session.page", UNKNOWN, html=str(path)), f"no such session: {UNKNOWN}")
+    assert session_ids(ctl.tree(), wid) == [target]
+    assert_ok(ctl.request("workspace.delete", wid))
+
+
+# -- Convert to Companion
+
+
+@pytest.mark.since("0.42.0")
+@pytest.mark.covers("session.companion.convert", "field:result.parent", "field:tree.session.parent")
+def test_convert_nests_a_session_with_its_companions_under_a_fresh_session_in_its_slot(ctl):
+    wid, (before, converted, after) = _workspace(ctl, sessions=3)
+    companion = _companion(ctl, converted)
+    result = assert_ok(ctl.request("session.companion.convert", converted))
+    fresh = result["parent"]
+    assert result["id"] == converted and fresh not in (before, converted, companion, after)
+
+    tree = ctl.tree()
+    # the fresh session takes the slot; the converted one and its companions follow it as its companions
+    assert session_ids(tree, wid) == [before, fresh, converted, companion, after]
+    assert_absent(find_session(tree, fresh), "parent")
+    assert find_session(tree, converted)["parent"] == fresh
+    assert find_session(tree, companion)["parent"] == fresh
+    assert find_session(tree, fresh)["cwd"] == find_session(tree, converted)["cwd"]
+    assert_ok(ctl.request("workspace.delete", wid))
+
+
+@pytest.mark.since("0.42.0")
+@pytest.mark.covers("session.companion.convert")
+def test_convert_resolves_its_target(ctl):
+    assert_error(ctl.request("session.companion.convert", UNKNOWN), f"no such session: {UNKNOWN}")

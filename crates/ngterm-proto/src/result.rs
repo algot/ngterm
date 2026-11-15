@@ -81,6 +81,9 @@ pub struct ControlResult {
     /// `surface.cursor`: the cursor's column.
     #[serde(default)]
     pub cursor: Option<ControlCursor>,
+    /// The answer to a command sent with an operation id, and to `catalog.op`.
+    #[serde(default)]
+    pub receipt: Option<CatalogReceipt>,
     /// `restore.mode`: the restore-mode policy (`live.list` repeats it as its header).
     #[serde(default)]
     pub restore: Option<ControlRestoreStatus>,
@@ -713,6 +716,81 @@ pub struct ControlWindowNode {
     pub zoomed: Option<bool>,
     #[serde(default)]
     pub minimized: Option<bool>,
+    /// The server a remote window mirrors; its `state` is absent for a closed window, which has no stream.
+    #[serde(default)]
+    pub remote: Option<ControlRemoteWindow>,
+}
+
+/// What became of an operation the headless server ran under an id (upstream's `CatalogReceipt`). The outcome
+/// travels as a raw string (`applied`, `noop`, `refused`, `fenced`, `unknown`), so one a newer server adds still
+/// prints.
+#[skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogReceipt {
+    #[serde(rename = "opID")]
+    pub op_id: String,
+    pub epoch: String,
+    pub outcome: String,
+    /// The revision an applied operation's changes reached.
+    #[serde(default)]
+    pub rev: Option<i64>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+impl CatalogReceipt {
+    /// Whether `op_id` is 1 to 128 ASCII letters, digits, `.`, `_`, `:` and `-` (upstream's `isValidOpID`), so an id
+    /// echoed in an error cannot carry a control sequence.
+    #[must_use]
+    pub fn is_valid_op_id(op_id: &str) -> bool {
+        (1..=128).contains(&op_id.len())
+            && op_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"._:-".contains(&byte))
+    }
+}
+
+/// What a headless server advertises on `version` (upstream's `CatalogVersions`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogVersions {
+    pub server: String,
+    pub protocol: i64,
+    pub catalog: i64,
+}
+
+/// The server a remote window mirrors and its connection (upstream's `ControlRemoteWindow`). `state` is `connecting`,
+/// `connected`, `disconnected` or `refused`, the last two with a `reason`.
+#[skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ControlRemoteWindow {
+    pub host: String,
+    #[serde(default, rename = "catalogID")]
+    pub catalog_id: Option<String>,
+    #[serde(default)]
+    pub state: Option<String>,
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub detached_sessions: Option<Vec<String>>,
+    #[serde(default)]
+    pub detached_workspaces: Option<Vec<String>>,
+    #[serde(default)]
+    pub operations: Option<Vec<ControlRemoteOperation>>,
+}
+
+/// A remote window's operation on its way to the server (`pending`) or with an outcome it could not learn
+/// (`unknown`); upstream's `ControlRemoteOperation`.
+#[skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ControlRemoteOperation {
+    pub id: String,
+    pub action: String,
+    #[serde(default)]
+    pub session: Option<String>,
+    #[serde(default)]
+    pub workspace: Option<String>,
+    pub state: String,
 }
 
 /// A message queued in a pane's mailbox (upstream's `BusMessage` in `MessageBus.swift`).
@@ -953,6 +1031,7 @@ mod tests {
             fullscreen: Some(false),
             zoomed: Some(false),
             minimized: Some(false),
+            remote: None,
         };
         let text = serde_json::to_string(&ControlResult::windows(vec![node.clone()])).unwrap();
         assert_eq!(
@@ -964,6 +1043,95 @@ mod tests {
         assert_eq!(closed.sidebar_visible, None);
         let back: ControlResult = serde_json::from_str(&text).unwrap();
         assert_eq!(back.windows, Some(vec![node]));
+    }
+
+    /// Upstream's order: a window's `remote` rides last, a result's `receipt` before `restore`; both absent when unset.
+    #[test]
+    fn a_remote_window_and_a_receipt_keep_upstreams_order() {
+        let remote = ControlRemoteWindow {
+            host: "box".to_owned(),
+            catalog_id: Some("C".to_owned()),
+            state: Some("disconnected".to_owned()),
+            reason: Some("gone".to_owned()),
+            detached_sessions: Some(vec!["S".to_owned()]),
+            detached_workspaces: Some(vec!["W".to_owned()]),
+            operations: Some(vec![ControlRemoteOperation {
+                id: "op".to_owned(),
+                action: "Close".to_owned(),
+                session: Some("S".to_owned()),
+                workspace: None,
+                state: "pending".to_owned(),
+            }]),
+        };
+        let node = ControlWindowNode {
+            id: "W".to_owned(),
+            name: "w".to_owned(),
+            open: true,
+            active: false,
+            auto_follow_ms: None,
+            sidebar_visible: None,
+            geometry: None,
+            fullscreen: None,
+            zoomed: None,
+            minimized: Some(false),
+            remote: Some(remote.clone()),
+        };
+        let text = serde_json::to_string(&node).unwrap();
+        assert_eq!(
+            text,
+            concat!(
+                r#"{"id":"W","name":"w","open":true,"active":false,"minimized":false,"remote":{"host":"box","#,
+                r#""catalogID":"C","state":"disconnected","reason":"gone","detachedSessions":["S"],"#,
+                r#""detachedWorkspaces":["W"],"operations":[{"id":"op","action":"Close","session":"S","#,
+                r#""state":"pending"}]}}"#
+            )
+        );
+        assert_eq!(serde_json::from_str::<ControlWindowNode>(&text).unwrap(), node);
+        let closed: ControlRemoteWindow = serde_json::from_value(json!({"host": "box"})).unwrap();
+        assert_eq!(serde_json::to_value(&closed).unwrap(), json!({"host": "box"}));
+
+        let result = ControlResult {
+            id: Some("S".to_owned()),
+            receipt: Some(CatalogReceipt {
+                op_id: "op".to_owned(),
+                epoch: "E".to_owned(),
+                outcome: "applied".to_owned(),
+                rev: Some(7),
+                error: None,
+            }),
+            restore: Some(ControlRestoreStatus {
+                configured: "live".to_owned(),
+                requested_at_launch: "live".to_owned(),
+                active: "live".to_owned(),
+                restart_required: false,
+                unavailable_reason: None,
+            }),
+            ..ControlResult::default()
+        };
+        let text = serde_json::to_string(&result).unwrap();
+        assert!(
+            text.starts_with(
+                r#"{"id":"S","receipt":{"opID":"op","epoch":"E","outcome":"applied","rev":7},"restore":{"#
+            ),
+            "{text}"
+        );
+        assert_eq!(serde_json::from_str::<ControlResult>(&text).unwrap(), result);
+        assert!(
+            !serde_json::to_string(&ControlResult::id("S"))
+                .unwrap()
+                .contains("receipt")
+        );
+    }
+
+    /// Upstream's `CatalogReceipt.isValidOpID` cases.
+    #[test]
+    fn an_operation_id_is_short_plain_ascii() {
+        for good in ["a", "A-1", "a.b_c:d-9", &"z".repeat(128)] {
+            assert!(CatalogReceipt::is_valid_op_id(good), "{good}");
+        }
+        for bad in ["", "a b", "a/b", "é", "a\u{1b}[0m", &"z".repeat(129)] {
+            assert!(!CatalogReceipt::is_valid_op_id(bad), "{bad:?}");
+        }
     }
 
     /// The close and companion receipts ride after `recentOpen` in upstream's order, each absent when unset.

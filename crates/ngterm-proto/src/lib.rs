@@ -26,12 +26,14 @@ pub use request::{
 };
 pub use response::Response;
 pub use result::{
-    BusMessage, ControlAgent, ControlAgentApproval, ControlAskOutcome, ControlAskResult, ControlCursor,
-    ControlHtmlPageOutcome, ControlHtmlPageOutcomeState, ControlLiveEndpoint, ControlLiveEntry, ControlLiveInventory,
-    ControlLiveResetStatus, ControlPickOutcome, ControlPickResult, ControlRemoteGroup, ControlRemoteGroupMember,
-    ControlRemoteMember, ControlRemotePane, ControlRemoteSession, ControlRemoteTree, ControlRestartReceipt,
-    ControlRestoreStatus, ControlResult, ControlWindowFrame, ControlWindowNode, MessageRejection,
-    MessageRejectionReason, RemotePeer,
+    BusMessage, CatalogReceipt, CatalogVersions, ControlAgent, ControlAgentApproval, ControlAskOutcome,
+    ControlAskResult, ControlCursor, ControlHtmlPageOutcome, ControlHtmlPageOutcomeState, ControlLiveEndpoint,
+    ControlLiveEntry, ControlLiveInventory, ControlLiveResetStatus, ControlPickOutcome, ControlPickResult,
+    ControlRemoteGroup, ControlRemoteGroupMember, ControlRemoteMember, ControlRemoteOperation, ControlRemotePane,
+    ControlRemoteSession, ControlRemoteTree, ControlRemoteWindow, ControlRestartReceipt, ControlRestoreStatus,
+    ControlResult, ControlWindowFrame, ControlWindowNode, MessageRejection, MessageRejectionReason, RemotePeer,
 };
-pub use tree::{ControlSessionNode, ControlSurfaceNode, ControlTree, ControlWorkspaceNode};
+pub use tree::{
+    ControlInteraction, ControlSessionNode, ControlSessionPick, ControlSurfaceNode, ControlTree, ControlWorkspaceNode,
+};
 pub use version::{AppIdentity, ConformanceProfile, PARITY_LEVEL, VersionResult};

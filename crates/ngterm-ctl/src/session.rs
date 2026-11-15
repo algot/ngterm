@@ -36,6 +36,8 @@ impl Session {
             SessionCommand::New(command) => command,
             SessionCommand::Duplicate(command) => command,
             SessionCommand::Close(command) => command,
+            SessionCommand::Detach(command) => command,
+            SessionCommand::Reattach(command) => command,
             SessionCommand::Select(command) => command,
             SessionCommand::Go(command) => command,
             SessionCommand::Rename(command) => command,
@@ -67,6 +69,7 @@ impl Session {
             SessionCommand::Wait(command) => command,
             SessionCommand::Collapse(command) => command,
             SessionCommand::Expand(command) => command,
+            SessionCommand::Convert(command) => command,
         }
     }
 }
@@ -77,6 +80,8 @@ enum SessionCommand {
     New(New),
     Duplicate(Duplicate),
     Close(Close),
+    Detach(crate::detach::SessionDetach),
+    Reattach(crate::detach::SessionReattach),
     Select(Select),
     Go(Go),
     Rename(Rename),
@@ -108,6 +113,7 @@ enum SessionCommand {
     Wait(session_wait::Wait),
     Collapse(Collapse),
     Expand(Expand),
+    Convert(Convert),
 }
 
 /// A request for `cmd` on `target` with `args` (`--window` folded in).
@@ -633,12 +639,111 @@ fold_command!(
     "Unfold a parent session's companions in the sidebar tree."
 );
 
+/// `ngtermctl session convert --companion`: prints the fresh session's id. `--companion` is required so the verb
+/// names what the session becomes, the CLI form of Convert to Companion.
+#[derive(Debug, clap::Args)]
+#[command(
+    about = "Convert a session into a companion of a fresh session opened in its place; prints the fresh session's id."
+)]
+pub struct Convert {
+    #[arg(
+        long,
+        help = "Nest the session, with its companions, under a fresh session in its directory and slot."
+    )]
+    companion: bool,
+
+    #[command(flatten)]
+    target: TargetOptions,
+
+    #[command(flatten)]
+    options: ClientOptions,
+}
+
+impl RequestCommand for Convert {
+    fn options(&self) -> &BasicOptions {
+        &self.options.basic
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if self.companion {
+            Ok(())
+        } else {
+            Err("session convert needs --companion".to_owned())
+        }
+    }
+
+    fn make_request(&self) -> Request {
+        session_request(
+            SessionCmd::CompanionConvert,
+            Some(self.target.target.clone()),
+            None,
+            &self.options,
+        )
+    }
+
+    /// Prints the fresh parent's id, where a plain run would print the converted session's (upstream's
+    /// `Convert.run`).
+    fn invoke(&self, env: &dyn Env) -> Result<(), Failure> {
+        let reply = companions::send(self, env, companions::TOO_OLD_FOR_CONVERT)?;
+        let json = self.options.basic.json;
+        match convert_line(&reply.response) {
+            Some(parent) if !json => println!("{parent}"),
+            None if !json && reply.response.ok => {}
+            _ => crate::output::print_response(&reply, json, false),
+        }
+        if reply.response.ok {
+            Ok(())
+        } else {
+            Err(Failure::Exit(std::process::ExitCode::FAILURE))
+        }
+    }
+}
+
+/// What a successful convert prints: `result.parent`, the fresh session.
+fn convert_line(response: &ngterm_proto::Response) -> Option<&str> {
+    response
+        .result
+        .as_ref()
+        .filter(|_| response.ok)
+        .and_then(|result| result.get("parent"))
+        .and_then(serde_json::Value::as_str)
+}
+
 #[cfg(test)]
 mod tests {
     use clap::Parser;
     use serde_json::{Value, json};
 
     use crate::Ngtermctl;
+
+    /// Upstream's `SessionCompanionsCommandsTests` convert cases.
+    #[test]
+    fn convert_needs_companion_and_sends_the_target() {
+        assert_eq!(refusal(&["convert"]), "session convert needs --companion");
+        assert_eq!(
+            request(&["convert", "--companion"]),
+            json!({"cmd": "session.companion.convert", "target": "active"})
+        );
+        assert_eq!(
+            request(&["convert", "--companion", "--target", "ab12", "--window", "w"]),
+            json!({"cmd": "session.companion.convert", "target": "ab12", "args": {"window": "w"}})
+        );
+    }
+
+    #[test]
+    fn convert_prints_the_fresh_parent_of_a_successful_reply_only() {
+        use ngterm_proto::Response;
+        let converted = Response::with_result(json!({"id": "S", "parent": "P"}));
+        assert_eq!(super::convert_line(&converted), Some("P"));
+        assert_eq!(super::convert_line(&Response::with_result(json!({"id": "S"}))), None);
+        assert_eq!(super::convert_line(&Response::success()), None);
+        let refused = Response {
+            ok: false,
+            result: Some(json!({"parent": "P"})),
+            error: Some("no".to_owned()),
+        };
+        assert_eq!(super::convert_line(&refused), None);
+    }
 
     fn parsed(argv: &[&str]) -> super::Session {
         let command_line = ["ngtermctl", "session"].iter().chain(argv).copied();

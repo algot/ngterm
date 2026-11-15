@@ -9,7 +9,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use serde_with::skip_serializing_none;
 
-use crate::{keymap::null_as_default, version::AppIdentity};
+use crate::{keymap::null_as_default, result::ControlRemoteWindow, version::AppIdentity};
 
 /// The payload of a `tree` response (`result.tree`).
 #[skip_serializing_none]
@@ -72,6 +72,9 @@ pub struct ControlTree {
     /// The serving app, the same value `version` reports.
     #[serde(default)]
     pub app: Option<AppIdentity>,
+    /// The server a remote window mirrors and its connection; absent for a local window.
+    #[serde(default)]
+    pub remote: Option<ControlRemoteWindow>,
     /// The live-sessions reset state (`live.reset`'s read-back), app-wide.
     #[serde(default)]
     pub live_reset: Option<Value>,
@@ -122,6 +125,9 @@ pub struct ControlSessionNode {
     pub cwd: String,
     #[serde(default)]
     pub split_cwd: Option<String>,
+    /// The scratch shell's last reported or start directory, a hidden scratch included; absent without one.
+    #[serde(default)]
+    pub scratch_cwd: Option<String>,
     #[serde(default)]
     pub title: Option<String>,
     /// The window's selected session.
@@ -137,6 +143,11 @@ pub struct ControlSessionNode {
     pub live_attribution: Option<String>,
     #[serde(default)]
     pub split_live_attribution: Option<String>,
+    /// True when the pane's session host is from an earlier helper build or login session; absent otherwise.
+    #[serde(default)]
+    pub live_host_stale: Option<bool>,
+    #[serde(default)]
+    pub split_live_host_stale: Option<bool>,
     #[serde(default)]
     pub split_axis: Option<String>,
     #[serde(default)]
@@ -160,8 +171,24 @@ pub struct ControlSessionNode {
     pub hud: Option<ControlHudNode>,
     #[serde(default)]
     pub ask: Option<ControlSessionAsk>,
+    /// The session-bound pick in flight; a window's own pick is the tree's top-level `pickPending`.
+    #[serde(default)]
+    pub pick: Option<ControlSessionPick>,
     pub scratch: bool,
     pub flagged: bool,
+    /// True for a headless origin's session left with no live pane; absent otherwise.
+    #[serde(default)]
+    pub ended: Option<bool>,
+    /// A remote window row's operation state: `pending` while one is on its way to the server, `unknown` when one's
+    /// outcome could not be learned; absent otherwise.
+    #[serde(default)]
+    pub pending: Option<String>,
+    /// True while a remote window row's scratch is the server's; absent otherwise.
+    #[serde(default)]
+    pub scratch_backed: Option<bool>,
+    /// The asks, picks, pages and jobs the session holds for a presenter; absent when there are none.
+    #[serde(default)]
+    pub interactions: Option<Vec<ControlInteraction>>,
     #[serde(default)]
     pub context: Option<String>,
     #[serde(default)]
@@ -238,6 +265,9 @@ pub struct ControlSessionNode {
     pub realized: Option<bool>,
     #[serde(default)]
     pub remote_host: Option<String>,
+    /// The origin's id for the session an attached row shows; absent for a local one.
+    #[serde(default, rename = "remoteSessionID")]
+    pub remote_session_id: Option<String>,
     #[serde(default)]
     pub presentation: Option<ControlPresentationNode>,
     #[serde(default)]
@@ -261,6 +291,7 @@ impl ControlSessionNode {
             name,
             cwd,
             split_cwd: None,
+            scratch_cwd: None,
             title: None,
             active: false,
             split: false,
@@ -268,6 +299,8 @@ impl ControlSessionNode {
             backed_by_live: None,
             live_attribution: None,
             split_live_attribution: None,
+            live_host_stale: None,
+            split_live_host_stale: None,
             split_axis: None,
             split_ratio: None,
             split_focused: None,
@@ -278,8 +311,13 @@ impl ControlSessionNode {
             pane_overlays: None,
             hud: None,
             ask: None,
+            pick: None,
             scratch: false,
             flagged: false,
+            ended: None,
+            pending: None,
+            scratch_backed: None,
+            interactions: None,
             context: None,
             info: None,
             info_markdown: None,
@@ -313,6 +351,7 @@ impl ControlSessionNode {
             surfaces: None,
             realized: None,
             remote_host: None,
+            remote_session_id: None,
             presentation: None,
             presenters: None,
             remote_overlays: None,
@@ -557,6 +596,32 @@ pub struct ControlPresentationNode {
     pub error: Option<String>,
 }
 
+/// A session's session-bound pick (upstream's `ControlSessionPick`).
+#[skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ControlSessionPick {
+    pub id: String,
+    /// True while a viewer presenting the session draws the pick.
+    #[serde(default)]
+    pub remote: Option<bool>,
+    /// True on a viewer for a replica of a pick its origin owns.
+    #[serde(default)]
+    pub replica: Option<bool>,
+}
+
+/// Something a session holds for a presenter (upstream's `ControlInteraction`): `kind` is `ask`, `pick`, `page` or
+/// `job`, `state` is `unpresented`, `offered` or `claimed`.
+#[skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ControlInteraction {
+    pub kind: String,
+    pub id: String,
+    pub state: String,
+    /// When it ends unless answered or claimed, in epoch seconds; absent while nothing expires it.
+    #[serde(default)]
+    pub deadline: Option<f64>,
+}
+
 /// The viewers of an origin session.
 #[skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -593,6 +658,7 @@ mod tests {
     fn every_session_field_serializes_in_upstream_order() {
         let mut node = ControlSessionNode::new("S".to_owned(), "n".to_owned(), "/".to_owned());
         node.split_cwd = Some(String::new());
+        node.scratch_cwd = Some(String::new());
         node.title = Some(String::new());
         node.has_split = Some(true);
         node.backed_by_live = Some(false);
@@ -627,6 +693,7 @@ mod tests {
             remote: None,
             replica: None,
         });
+        set_v042_fields(&mut node);
         node.context = Some(String::new());
         node.command_wait = Some(true);
         node.split_command_wait = Some(true);
@@ -670,6 +737,28 @@ mod tests {
         assert_eq!(back, node);
     }
 
+    /// The v0.42 fields: the host marks after `splitLiveAttribution`, `pick` after `ask`, the server row's four after
+    /// `flagged` and the origin's id after `remoteHost`.
+    fn set_v042_fields(node: &mut ControlSessionNode) {
+        node.live_host_stale = Some(true);
+        node.split_live_host_stale = Some(true);
+        node.pick = Some(ControlSessionPick {
+            id: String::new(),
+            remote: None,
+            replica: None,
+        });
+        node.ended = Some(true);
+        node.pending = Some("pending".to_owned());
+        node.scratch_backed = Some(true);
+        node.interactions = Some(vec![ControlInteraction {
+            kind: "ask".to_owned(),
+            id: String::new(),
+            state: "unpresented".to_owned(),
+            deadline: None,
+        }]);
+        node.remote_session_id = Some(String::new());
+    }
+
     /// The v0.39 fields between `statusChangedAt` and `background`.
     fn set_selection_tint_and_companion_fields(node: &mut ControlSessionNode) {
         node.last_selected_at = Some(2.0);
@@ -681,11 +770,12 @@ mod tests {
     }
 
     /// The catalog's `field:tree.session.*` order (upstream's `backedByZmx` is `backedByLive` here).
-    const SESSION_FIELDS: [&str; 58] = [
+    const SESSION_FIELDS: [&str; 67] = [
         "id",
         "name",
         "cwd",
         "splitCwd",
+        "scratchCwd",
         "title",
         "active",
         "split",
@@ -693,6 +783,8 @@ mod tests {
         "backedByLive",
         "liveAttribution",
         "splitLiveAttribution",
+        "liveHostStale",
+        "splitLiveHostStale",
         "splitAxis",
         "splitRatio",
         "splitFocused",
@@ -703,8 +795,13 @@ mod tests {
         "paneOverlays",
         "hud",
         "ask",
+        "pick",
         "scratch",
         "flagged",
+        "ended",
+        "pending",
+        "scratchBacked",
+        "interactions",
         "context",
         "commandWait",
         "splitCommandWait",
@@ -735,6 +832,7 @@ mod tests {
         "surfaces",
         "realized",
         "remoteHost",
+        "remoteSessionID",
         "presentation",
         "presenters",
         "remoteOverlays",
@@ -767,6 +865,15 @@ mod tests {
             pick_pending: Some(String::new()),
             ask_pending: Some(String::new()),
             app: Some(AppIdentity::from_recorded("1", None)),
+            remote: Some(ControlRemoteWindow {
+                host: "box".to_owned(),
+                catalog_id: None,
+                state: Some("connecting".to_owned()),
+                reason: None,
+                detached_sessions: None,
+                detached_workspaces: None,
+                operations: None,
+            }),
             live_reset: Some(json!({})),
             index_unsaved: Some(true),
             snapshot_unsaved: Some(true),
@@ -797,6 +904,7 @@ mod tests {
                 "pickPending",
                 "askPending",
                 "app",
+                "remote",
                 "liveReset",
                 "indexUnsaved",
                 "snapshotUnsaved",

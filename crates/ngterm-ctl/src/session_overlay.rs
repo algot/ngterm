@@ -67,6 +67,7 @@ impl Overlay {
             OverlayCommand::Follow(command) => command,
             OverlayCommand::Search(command) => command,
             OverlayCommand::Changes(command) => command,
+            OverlayCommand::Wrap(command) => command,
             OverlayCommand::Resize(command) => command,
             OverlayCommand::Reload(command) => command,
             OverlayCommand::Navigate(command) => command,
@@ -93,6 +94,7 @@ enum OverlayCommand {
     Follow(overlay_text::Follow),
     Search(overlay_text::Search),
     Changes(overlay_text::Changes),
+    Wrap(overlay_text::Wrap),
     Resize(Resize),
     Reload(overlay_page::Reload),
     Navigate(overlay_page::Navigate),
@@ -180,7 +182,7 @@ pub struct Open {
     #[arg(
         long,
         help = "With --html or --url, add back, forward, reload, open in browser, and Show in Finder or Copy Link \
-                buttons."
+                buttons. With --markdown, follow links to markdown files in its folder, with back and forward."
     )]
     navigation: bool,
 
@@ -225,7 +227,15 @@ pub struct Open {
 
     #[arg(
         long,
-        help = "Select (switch to) the target session after opening the overlay (default: open without switching)."
+        help = "Open the --html/--url page as a top-level page session placed after the target session's group: a \
+                sidebar row of its own that can hold companions. Refuses --pane, --size-percent, --width and --height."
+    )]
+    page: bool,
+
+    #[arg(
+        long,
+        help = "Select (switch to) the target session after opening the overlay; with --companion or --page, the new \
+                row (default: open without switching)."
     )]
     follow: bool,
 
@@ -256,6 +266,9 @@ pub struct Open {
     pane: Option<String>,
 
     #[command(flatten)]
+    operation: crate::catalog::OperationOptions,
+
+    #[command(flatten)]
     target: TargetOptions,
 
     #[command(flatten)]
@@ -269,6 +282,17 @@ fn names_another_host(url: &str) -> bool {
 }
 
 impl Open {
+    /// The flag that opens the page as a sidebar row of its own (upstream's `rowFlag`).
+    const fn row_flag(&self) -> Option<&'static str> {
+        if self.companion {
+            Some("--companion")
+        } else if self.page {
+            Some("--page")
+        } else {
+            None
+        }
+    }
+
     /// Exactly one of COMMAND, `--html`, `--url`, `--image`, `--markdown` or `--text`, `--line` with a `--text` only,
     /// and that source's allowed options.
     fn validate_content(&self) -> Result<(), &'static str> {
@@ -291,37 +315,36 @@ impl Open {
             return Err("--line must be 1 or more");
         }
         self.validate_log()?;
-        let page_options = self.companion
+        // a markdown page takes `--navigation`: it follows links to markdown files in its folder
+        let markdown_options = self.row_flag().is_some()
             || self.block
             || self.wait
-            || self.navigation
             || self.javascript
             || self.chromeless
             || self.persistent
             || self.browse
             || self.cwd.is_some();
-        if page_options {
-            if self.image.is_some() {
-                return Err(
-                    "--image takes no --companion, --block, --wait, --navigation, --js, --chromeless, --persistent, --browse or --cwd",
-                );
-            }
-            if self.markdown.is_some() {
-                return Err(
-                    "--markdown takes no --companion, --block, --wait, --navigation, --js, --chromeless, --persistent, --browse or --cwd",
-                );
-            }
-            if self.text.is_some() {
-                return Err(
-                    "--text takes no --companion, --block, --wait, --navigation, --js, --chromeless, --persistent, --browse or --cwd",
-                );
-            }
+        let page_options = markdown_options || self.navigation;
+        if self.image.is_some() && page_options {
+            return Err(
+                "--image takes no --companion, --page, --block, --wait, --navigation, --js, --chromeless, --persistent, --browse or --cwd",
+            );
+        }
+        if self.markdown.is_some() && markdown_options {
+            return Err(
+                "--markdown takes no --companion, --page, --block, --wait, --js, --chromeless, --persistent, --browse or --cwd",
+            );
+        }
+        if self.text.is_some() && page_options {
+            return Err(
+                "--text takes no --companion, --page, --block, --wait, --navigation, --js, --chromeless, --persistent, --browse or --cwd",
+            );
         }
         if !program && (self.wait || (self.url.is_some() && self.block)) {
             return Err("a page takes no --wait, and a --url page no --block");
         }
         let refusal = if self.navigation && program {
-            "--navigation requires --html or --url"
+            "--navigation requires --html, --url or --markdown"
         } else if self.javascript && program {
             "--js requires --html or --url"
         } else {
@@ -435,20 +458,30 @@ impl RequestCommand for Open {
         &self.options.basic
     }
 
-    // a page companion's open prints the new row's id, as `session new` does
+    // a page companion's or a page session's open prints the new row's id, as `session new` does
     fn echoes_result_id(&self) -> bool {
-        self.companion
+        self.row_flag().is_some()
     }
 
     // the mutually exclusive combinations and a malformed color are refused before any connection
     fn validate(&self) -> Result<(), String> {
-        if self.companion && self.html.is_none() && self.url.is_none() {
-            return Err("--companion requires --html or --url".to_owned());
+        self.operation.validate()?;
+        if self.companion && self.page {
+            return Err("--page cannot be combined with --companion".to_owned());
         }
-        if self.companion
-            && (self.pane.is_some() || self.size_percent.is_some() || self.width.is_some() || self.height.is_some())
-        {
-            return Err("--companion is full size: it takes no --pane, --size-percent, --width or --height".to_owned());
+        let row = self.row_flag();
+        if self.operation.is_set() && row.is_none() {
+            return Err("--op-id requires --companion or --page".to_owned());
+        }
+        if let Some(row) = row {
+            if self.html.is_none() && self.url.is_none() {
+                return Err(format!("{row} requires --html or --url"));
+            }
+            if self.pane.is_some() || self.size_percent.is_some() || self.width.is_some() || self.height.is_some() {
+                return Err(format!(
+                    "{row} is full size: it takes no --pane, --size-percent, --width or --height"
+                ));
+            }
         }
         if self.block && self.wait {
             return Err("--block cannot be combined with --wait".to_owned());
@@ -477,12 +510,13 @@ impl RequestCommand for Open {
         Ok(())
     }
 
-    /// The open request; `--block` changes the run, not the request, and `--companion` sends the same arguments as
-    /// `session.companion.page`. A page's file and `--cwd` are made absolute against the caller's directory, since the
+    /// The open request; `--block` changes the run, not the request, `--companion` sends the same arguments as
+    /// `session.companion.page` and `--page` as `session.page`. A page's file and `--cwd` are made absolute against the caller's directory, since the
     /// app never learns it (a companion's as [`overlay_page::companion_path`] says); a program's `--cwd` goes as typed.
     fn make_request(&self) -> Request {
         let page = self.html.is_some();
-        let absolute = if self.companion {
+        let row = self.row_flag().is_some();
+        let absolute = if row {
             overlay_page::companion_path
         } else {
             overlay_page::absolute_path
@@ -514,7 +548,7 @@ impl RequestCommand for Open {
             chromeless: flag(self.chromeless),
             persistent: flag(self.persistent),
             browse: flag(self.browse),
-            caller_drive: if self.companion && page {
+            caller_drive: if row && page {
                 overlay_page::companion_drive([self.html.as_deref(), self.cwd.as_deref()])
             } else {
                 None
@@ -523,15 +557,27 @@ impl RequestCommand for Open {
         };
         let cmd = if self.companion {
             SessionCmd::CompanionPage
+        } else if self.page {
+            SessionCmd::Page
         } else {
             SessionCmd::OverlayOpen
         };
-        session_request(cmd, Some(self.target.target.clone()), Some(args), &self.options)
+        self.operation.stamp(session_request(
+            cmd,
+            Some(self.target.target.clone()),
+            Some(args),
+            &self.options,
+        ))
     }
 
     fn invoke(&self, env: &dyn Env) -> Result<(), Failure> {
-        if self.companion && !self.block {
-            return crate::companions::run(self, env);
+        if self.row_flag().is_some() && !self.block {
+            let too_old = if self.page {
+                crate::companions::TOO_OLD_FOR_PAGES
+            } else {
+                crate::companions::TOO_OLD
+            };
+            return crate::companions::run_naming(self, env, too_old);
         }
         if !self.block {
             return self.default_run(env);
@@ -1358,7 +1404,7 @@ mod tests {
             ),
             (
                 &["open", "--text", "/tmp/a.go", "--line", "3", "--block"],
-                "--text takes no --companion, --block, --wait, --navigation, --js, --chromeless, --persistent, --browse or --cwd",
+                "--text takes no --companion, --page, --block, --wait, --navigation, --js, --chromeless, --persistent, --browse or --cwd",
             ),
         ];
         for (argv, message) in cases {
@@ -1456,9 +1502,9 @@ mod tests {
             assert!(rejects(&["open", "command", source, "doc.png"]));
             for flag in [
                 "--companion",
+                "--page",
                 "--block",
                 "--wait",
-                "--navigation",
                 "--js",
                 "--chromeless",
                 "--persistent",
@@ -1467,11 +1513,80 @@ mod tests {
                 assert!(rejects(&["open", source, "doc.png", flag]), "{source}/{flag}");
             }
             assert!(rejects(&["open", source, "doc.png", "--cwd", "/tmp"]));
+            // a markdown page takes `--navigation`: it follows links to markdown files in its folder
+            assert_eq!(
+                rejects(&["open", source, "doc.png", "--navigation"]),
+                source != "--markdown",
+                "{source}"
+            );
         }
         assert!(rejects(&["open", "--image", "a.png", "--width", "400"]));
         assert_eq!(
             refusal(&["open", "--markdown", "doc.md", "--block"]),
-            "--markdown takes no --companion, --block, --wait, --navigation, --js, --chromeless, --persistent, --browse or --cwd"
+            "--markdown takes no --companion, --page, --block, --wait, --js, --chromeless, --persistent, --browse or --cwd"
+        );
+        assert_eq!(
+            refusal(&["open", "--image", "a.png", "--navigation"]),
+            "--image takes no --companion, --page, --block, --wait, --navigation, --js, --chromeless, --persistent, --browse or --cwd"
+        );
+        assert_eq!(
+            request(&["open", "--markdown", "/tmp/doc.md", "--navigation"])["args"]["navigation"],
+            json!(true)
+        );
+        assert_eq!(
+            refusal(&["open", "revdiff", "--navigation"]),
+            "--navigation requires --html, --url or --markdown"
+        );
+    }
+
+    /// Upstream's `pageSendsThePageSessionCommandWithItsSourceAndFollow` and the `--page` refusals.
+    #[test]
+    fn open_with_page_sends_the_page_session_command() {
+        let html = "/tmp/p.html";
+        let mut sent = json!({"html": html});
+        if let Some(drive) = overlay_page::companion_drive([Some(html)]) {
+            sent["callerDrive"] = json!(drive);
+        }
+        assert_eq!(
+            request(&["open", "--html", html, "--page", "--target", "p1"]),
+            json!({"cmd": "session.page", "target": "p1", "args": sent})
+        );
+        assert!(open(&["--html", html, "--page"]).echoes_result_id());
+        assert_eq!(
+            refusal(&["open", "--html", html, "--page", "--companion"]),
+            "--page cannot be combined with --companion"
+        );
+        assert_eq!(refusal(&["open", "top", "--page"]), "--page requires --html or --url");
+        let full = "--page is full size: it takes no --pane, --size-percent, --width or --height";
+        for extra in [
+            ["--pane", "right"],
+            ["--size-percent", "50"],
+            ["--width", "300"],
+            ["--height", "300"],
+        ] {
+            let argv = [&["open", "--html", html, "--page"][..], &extra[..]].concat();
+            assert_eq!(refusal(&argv), full, "{extra:?}");
+        }
+    }
+
+    /// Upstream's `aPlainOverlayOpenRefusesAnOperationId`: a plain overlay keeps no receipt.
+    #[test]
+    fn an_operation_id_rides_only_on_a_companion_or_a_page_session() {
+        let operation = ["--op-id", "op-1", "--epoch", "E"];
+        for (row, cmd) in [("--companion", "session.companion.page"), ("--page", "session.page")] {
+            let argv = [&["open", "--url", "http://localhost:1/", row][..], &operation[..]].concat();
+            let sent = request(&argv);
+            assert_eq!(sent["cmd"], json!(cmd));
+            assert_eq!(
+                (&sent["args"]["opID"], &sent["args"]["epoch"]),
+                (&json!("op-1"), &json!("E"))
+            );
+        }
+        let plain = [&["open", "--url", "http://localhost:1/"][..], &operation[..]].concat();
+        assert_eq!(refusal(&plain), "--op-id requires --companion or --page");
+        assert_eq!(
+            refusal(&["open", "--url", "http://localhost:1/", "--page", "--op-id", "op-1"]),
+            "--op-id and --epoch go together"
         );
     }
 

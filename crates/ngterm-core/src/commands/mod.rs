@@ -6,6 +6,7 @@ pub(crate) mod agent;
 pub(crate) mod ask;
 pub(crate) mod background;
 pub(crate) mod browser;
+pub(crate) mod catalog;
 pub(crate) mod companion_duplicate;
 pub(crate) mod companion_page;
 pub(crate) mod companions;

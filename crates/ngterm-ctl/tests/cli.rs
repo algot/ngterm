@@ -568,7 +568,10 @@ SUBCOMMANDS:
   recent                  Recently closed sessions and workspaces (File > Open
                           Recent).
   live                    Inspect and manage the daemons behind live sessions.
+  catalog                 Carry ngterm-headless's catalog to a remote window on
+                          a Mac.
   terminfo                The terminal's terminfo entry on other hosts.
+  server                  ngterm-headless on Linux hosts.
   clipboard               The clipboard of the terminals showing this pane.
   agent                   The coding agent a pane runs, for the Android chat
                           view.
@@ -1322,6 +1325,9 @@ SUBCOMMANDS:
   duplicate               Duplicate a session: a fresh shell in its directory,
                           placed right after it.
   close                   Close a session.
+  detach                  Hide a remote window's sessions on this Mac and leave
+                          them running on the server.
+  reattach                Show a detached session of a remote window again.
   select                  Select a session.
   go                      Navigate sessions:
                           next|prev|first|last|next-attention|prev-attention.
@@ -1375,6 +1381,8 @@ SUBCOMMANDS:
                           tree.
   expand                  Unfold a parent session's companions in the sidebar
                           tree.
+  convert                 Convert a session into a companion of a fresh session
+                          opened in its place; prints the fresh session's id.
 
   See 'ngtermctl help session <subcommand>' for detailed help.
 ";
@@ -1583,6 +1591,7 @@ SUBCOMMANDS:
   zoom                    Zoom a window (maximize-to-screen toggle).
   fullscreen              Toggle native macOS full screen for a window.
   minimize                Minimize a window to the Dock, or restore it.
+  remote                  Windows mirroring an ngterm-headless.
 
   See 'ngtermctl help window <subcommand>' for detailed help.
 ";
@@ -1680,6 +1689,9 @@ SUBCOMMANDS:
   new                     Create a workspace.
   rename                  Rename a workspace.
   delete                  Delete a workspace.
+  detach                  Hide a remote window's workspace and its sessions on
+                          this Mac, leaving them running on the server.
+  reattach                Show a detached workspace of a remote window again.
   select                  Select a workspace.
   go                      Navigate workspaces: next|prev.
   move                    Reorder a workspace among its siblings.
@@ -3876,6 +3888,8 @@ SUBCOMMANDS:
   search                  Search a text or log page: set the query, step to the
                           next or previous match, or close it.
   changes                 Step a diff page to its next or previous change.
+  wrap                    Wrap a text page's long lines, unwrap them, or toggle
+                          between the two.
   resize                  Resize an open overlay: floating at a percent or in
                           points, or back to full-pane.
   reload                  Reload an HTML overlay: the file or URL it was opened

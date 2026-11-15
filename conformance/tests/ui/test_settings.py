@@ -399,3 +399,26 @@ def test_sidebar_density_picker_persists(seeded, ui_for, adapter):
         _choose(ui, "Appearance", "settings-sidebar-density", "Default")
     # the default density is stored as no key at all
     wait_until(lambda: "sidebarDensity" not in _settings(seeded))
+
+
+@pytest.mark.since("0.42.0")
+@pytest.mark.covers("ui:settings-badge-reset")
+def test_badge_reset_picker_persists(seeded, ui_for, adapter):
+    """Which keystroke clears a session's unseen badge: the first key (the default), Enter, or none."""
+
+    def value(text):
+        return {"value": text} if adapter.has("ui-string-values") else {}
+
+    ui = ui_for(seeded)
+    _open(ui, "Notifications")
+    picker = "settings-badge-reset"
+    ui.find(picker, role="popup", **value("On first key"))
+    try:
+        for item, stored in [("On Enter", "enter"), ("Disabled", "never")]:
+            _choose(ui, "Notifications", picker, item)
+            wait_until(lambda stored=stored: _settings(seeded).get("badgeReset") == stored)
+            ui.find(picker, role="popup", **value(item))
+    finally:
+        _choose(ui, "Notifications", picker, "On first key")
+    # the default is stored as no key at all
+    wait_until(lambda: "badgeReset" not in _settings(seeded))
