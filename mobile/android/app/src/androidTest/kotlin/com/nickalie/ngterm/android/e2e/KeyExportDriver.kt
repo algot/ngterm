@@ -43,7 +43,6 @@ internal class KeyExportDriver {
     val device: UiDevice = UiDevice.getInstance(instrumentation)
     val compose = createAndroidComposeRule<MainActivity>()
     private val exportedName = "ngterm-e2e-key-${UUID.randomUUID()}"
-    private val exportedFile = "/sdcard/Download/$exportedName"
 
     private val ownRun =
         object : ExternalResource() {
@@ -75,7 +74,7 @@ internal class KeyExportDriver {
             override fun after() {
                 shell("locksettings clear --old $PIN")
                 clearClipboard()
-                shell("rm -f $exportedFile")
+                shell("find $SHARED_STORAGE -name $exportedName -delete")
             }
 
             private fun clearClipboard() =
@@ -161,6 +160,7 @@ internal class KeyExportDriver {
             device.wait(Until.hasObject(By.pkg(FILES).clazz("android.widget.EditText").text(exportedName)), WAIT_MS),
         )
         device.findObject(saveButton()).click()
+        assertTrue("the file screen closes on Save", device.wait(Until.gone(By.pkg(FILES)), WAIT_MS))
     }
 
     /** Picks the exported file in the system's file screen. */
@@ -171,7 +171,7 @@ internal class KeyExportDriver {
     }
 
     /** What the exported file holds; nothing when there is none. */
-    fun exportedFile(): String = shell("cat $exportedFile")
+    fun exportedFile(): String = shell("find $SHARED_STORAGE -name $exportedName -exec cat {} +")
 
     fun publicKeyLine(): String =
         compose
@@ -234,6 +234,9 @@ internal class KeyExportDriver {
         private const val PIN = "1379"
         private const val SYSTEM_UI = "com.android.systemui"
         private const val PROPOSED_NAME = "ngterm-private-key"
+
+        // the file screen opens on the folder this app last saved to, which a person may have moved off Downloads
+        private const val SHARED_STORAGE = "/sdcard/"
 
         // the system's file screen: com.android.documentsui, or Google's build of it
         private val FILES: Pattern = Pattern.compile(".*\\.documentsui")
