@@ -104,6 +104,9 @@ class AppLogsE2eTest {
         assertClean(copied, key)
 
         compose.onNodeWithText(text(R.string.logs_share)).performClick()
+        // the test's clock draws the frames that hand the file over, so they are waited for through it
+        compose.waitUntil(SHEET_WAIT_MS) { exported().exists() }
+        compose.waitForIdle()
         // the share sheet is the system's: the app is no longer the window on top
         val left = device.wait(Until.gone(By.pkg(instrumentation.targetContext.packageName).depth(0)), SHEET_WAIT_MS)
         screenshot("share-sheet")
