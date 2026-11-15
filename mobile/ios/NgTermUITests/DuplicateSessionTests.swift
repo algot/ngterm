@@ -71,12 +71,19 @@ internal final class DuplicateSessionTests: XCTestCase {
         XCTAssertFalse(FakeApp.element(containing: "Another device is driving", in: app).exists)
     }
 
-    // waits until the app has `count` windows
+    // the app's own windows, front first: those that show the machines or a session; a scene whose terminal has the
+    // keyboard has one more window with nothing in it (UIKit's, which hosts the keyboard), which is not counted
+    @MainActor
+    private static func contentWindows(of app: XCUIApplication) -> XCUIElementQuery {
+        app.windows.containing(NSPredicate(format: "identifier IN %@", ["session-title", "add-machine"]))
+    }
+
+    // waits until the app has `count` windows of its own
     @MainActor
     private static func expectWindows(_ count: Int, in app: XCUIApplication) {
         let windows = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "count == %d", count),
-            object: app.windows
+            object: contentWindows(of: app)
         )
         XCTAssertEqual(XCTWaiter.wait(for: [windows], timeout: windowWait), .completed, "not \(count) windows")
     }
@@ -88,11 +95,11 @@ internal final class DuplicateSessionTests: XCTestCase {
     private static func closeSessionWindows(in app: XCUIApplication) {
         var isMoreMissed = false
         for _ in 0..<closeTries {
-            let count = app.windows.count
+            let count = contentWindows(of: app).count
             guard count > 1 else {
                 return
             }
-            let front = app.windows.element(boundBy: 0)
+            let front = contentWindows(of: app).element(boundBy: 0)
             if isMoreMissed || front.buttons["add-machine"].exists {
                 isMoreMissed = false
                 guard detachARow(of: ["session 1", "work"], in: app) else {
@@ -110,11 +117,11 @@ internal final class DuplicateSessionTests: XCTestCase {
             }
             let closed = XCTNSPredicateExpectation(
                 predicate: NSPredicate(format: "count < %d", count),
-                object: app.windows
+                object: contentWindows(of: app)
             )
             _ = XCTWaiter.wait(for: [closed], timeout: windowWait)
         }
-        XCTAssertEqual(app.windows.count, 1, "the session windows stayed: \(app.debugDescription)")
+        XCTAssertEqual(contentWindows(of: app).count, 1, "the session windows stayed: \(app.debugDescription)")
     }
 
     // detaches the first of the sessions `names` whose row's context menu offers Detach; false when none does
@@ -206,9 +213,9 @@ internal final class DuplicateSessionTests: XCTestCase {
         XCTAssertFalse(Self.title(naming: "Duplicating", in: app).exists, "the copy's title still says Duplicating")
     }
 
-    // an iPad's session window: the copy opens in a window of its own, in front (the app's first window), and the
-    // source's window stays behind it, showing the source; the test closes the windows it opened (Detach), or the
-    // system would bring them back on the next launch
+    // an iPad's session window: the copy opens in a window of its own, in front (the first of the app's own windows),
+    // and the source's window stays behind it, showing the source; the test closes the windows it opened (Detach), or
+    // the system would bring them back on the next launch
     @MainActor
     internal func testInASessionWindowTheCopyOpensInAWindowOfItsOwn() throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "only an iPad opens session windows")
@@ -223,7 +230,7 @@ internal final class DuplicateSessionTests: XCTestCase {
         FakeApp.expect(newWindow, "Open in New Window in the session's More")
         newWindow.tap()
         Self.expectWindows(2, in: app)
-        let front = app.windows.element(boundBy: 0)
+        let front = Self.contentWindows(of: app).element(boundBy: 0)
         FakeApp.expect(Self.title(naming: "work", in: front), "work's window in front")
         XCTAssertFalse(front.buttons["add-machine"].exists, "work's window shows the machines")
 
@@ -232,12 +239,12 @@ internal final class DuplicateSessionTests: XCTestCase {
         FakeApp.expect(duplicate, "Duplicate session in work's window's More")
         duplicate.tap()
         Self.expectWindows(3, in: app)
-        let copy = app.windows.element(boundBy: 0)
+        let copy = Self.contentWindows(of: app).element(boundBy: 0)
         FakeApp.expect(Self.title(naming: "session 1", in: copy), "the copy's window in front")
         FakeApp.expect(Self.screen(showing: "P1 ready", in: copy), "the copy's pane in control")
         XCTAssertFalse(copy.buttons["Take control"].exists, "the copy offered Take control")
         XCTAssertFalse(copy.buttons["add-machine"].exists, "the copy opened beside the machines")
-        let behind = app.windows.allElementsBoundByIndex.dropFirst()
+        let behind = Self.contentWindows(of: app).allElementsBoundByIndex.dropFirst()
         XCTAssertTrue(
             behind.contains { Self.title(naming: "work", in: $0).exists },
             "work's window went: \(app.debugDescription)"
