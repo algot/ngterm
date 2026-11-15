@@ -12,6 +12,8 @@
 //!   agent's next prompt), and a candidate whose call they hold only finished is not shown. That is decided again at
 //!   each look at the record, not latched: a new prompt for the same call as an earlier finished one shows once the
 //!   transcript has written its call.
+//! - A viewer that answered the dialog itself says so (`agent.answered`, by the prompt's id): the origin then moves
+//!   the pane's status off `blocked`, which ends the prompt for every stream at once.
 //! - The calls read include the lines a window parsed and did not show ([`Approvals::context`]): a reconnect's cursor
 //!   may be past the result (the phone has it), while the record keeps the answered candidate as long as the status
 //!   stays `blocked`. While a prompt is live, the follower also reads back past its usual context until it holds the
@@ -42,6 +44,13 @@ use ngterm_proto::ControlAgentApproval;
 
 use super::claude::tool_kind;
 use super::{Approval, ChatEvent, EventBody, NoticeKind, QuestionItem, ToolKind, ToolStatus, title_line};
+
+/// The id of the prompt a hook reported at `since` (epoch seconds): its `approval` event's, which `agent.answered`
+/// names it by.
+#[must_use]
+pub fn prompt_id(since: f64) -> String {
+    format!("approval-{since}")
+}
 
 /// The prompts shown so far in one chat stream.
 #[derive(Debug, Default)]
@@ -120,7 +129,7 @@ impl Approvals {
 
     /// Takes the record's live approval now: the events that make the viewer's prompt match it.
     pub fn observe(&mut self, live: Option<&ControlAgentApproval>) -> Vec<ChatEvent> {
-        let id = live.map(|live| format!("approval-{}", live.since));
+        let id = live.map(|live| prompt_id(live.since));
         if self.shown.as_ref().map(|shown| &shown.id) == id.as_ref() {
             return Vec::new();
         }

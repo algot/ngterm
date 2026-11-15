@@ -10,13 +10,15 @@
 //! `chat` ([`chat`]) is what the Android app runs on the origin under its ssh: the pane's conversation as NDJSON chat
 //! events, read from the transcript the record names. `commands` ([`commands`]) is what it runs for the composer's `/`
 //! dropdown: the agent's slash commands and skills, once, as JSON. `upload` ([`upload`]) is what it runs for a file
-//! the composer attaches: the bytes on standard input, stored for the agent, the stored path printed.
+//! the composer attaches: the bytes on standard input, stored for the agent, the stored path printed. `answered`
+//! ([`answered`]) is what it runs once its approval card answered the agent's dialog.
 //!
 //! `mail` ([`mail`]) is another hook's call, not the chat view's: it hands the pane's `msg` mailbox to the agent running
 //! in it. `rerun` ([`rerun`]) is what a hook runs itself through when its agent is a background job, whose environment
 //! names another pane than its conversation's.
 
 mod account;
+mod answered;
 mod chat;
 mod commands;
 mod mail;
@@ -70,6 +72,7 @@ pub struct Agent {
 #[derive(Debug, clap::Subcommand)]
 enum AgentCommand {
     Hook(Hook),
+    Answered(answered::Answered),
     Chat(chat::Chat),
     Commands(commands::Commands),
     Mail(mail::Mail),
@@ -82,6 +85,7 @@ impl Agent {
     pub fn check(&self) -> Result<(), String> {
         match &self.command {
             AgentCommand::Hook(command) => command.validate(),
+            AgentCommand::Answered(command) => command.validate(),
             AgentCommand::Chat(command) => command.validate(),
             AgentCommand::Commands(command) => command.validate(),
             AgentCommand::Mail(command) => command.validate(),
@@ -94,6 +98,7 @@ impl Agent {
     pub fn execute(&self, env: &dyn Env) -> Result<(), Failure> {
         match &self.command {
             AgentCommand::Hook(command) => command.run(env),
+            AgentCommand::Answered(command) => command.run(env),
             AgentCommand::Chat(command) => command.run(env),
             AgentCommand::Commands(command) => command.run(env),
             AgentCommand::Mail(command) => command.run(env),

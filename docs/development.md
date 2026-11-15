@@ -1031,7 +1031,8 @@ every other viewer see as before; the chat is a second view of it, read from the
   same ssh link (`ngtermctl agent upload`, at most 32 MiB, kept a week under the state directory's `uploads/`) with
   its progress and Cancel shown, and its stored path goes into the prompt for the agent to read;
 - a permission prompt, Claude's `AskUserQuestion` or a Codex Plan-mode question, as a card pinned above the composer
-  and answered with its buttons;
+  and answered with its buttons; once an approval's dialog is seen gone the app tells the origin (`ngtermctl agent
+  answered`), so the session reads Working, with Stop, while the approved command runs, not Waiting until it ends;
 - the account the agent is signed in with and how much of its weekly limit is used, over the rows: Claude Code's
   email from its global config and its limit from the usage endpoint its `/usage` asks, with its own sign-in
   (`.credentials.json`, or the macOS Keychain); Codex's from its `auth.json` and the rate limits its rollout records.

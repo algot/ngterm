@@ -231,6 +231,8 @@ pub struct Args {
     /// ngterm's own (Rust-only): `agent.report`'s hook payload, parsed by `ngtermctl agent hook`. Boxed, so the bag
     /// every request carries stays small.
     pub report: Option<Box<AgentReport>>,
+    /// ngterm's own (Rust-only): `agent.answered`'s permission prompt, by the id its chat event carries.
+    pub approval: Option<String>,
 }
 
 /// One caller-provided choice for `pick.open` (upstream's `ControlPickItem`).

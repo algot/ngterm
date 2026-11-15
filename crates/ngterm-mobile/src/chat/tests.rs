@@ -53,6 +53,24 @@ fn far_words(tail: &str) -> String {
 
 #[cfg(unix)]
 #[test]
+fn the_answered_line_names_the_prompt_and_whether_the_turn_ran_on() {
+    let session = "00000000-0000-0000-0000-0000000000A1";
+    let answered = |working| {
+        far_words(&answered_tail(
+            ngterm_core::remote::origin::OriginShell::Posix,
+            session,
+            Side::Right,
+            "approval-1794705930.56",
+            working,
+        ))
+    };
+    let told = format!("[agent][answered][--target={session}][--pane][right][--approval=approval-1794705930.56]");
+    assert_eq!(answered(true), format!("{told}[--working]"));
+    assert_eq!(answered(false), told);
+}
+
+#[cfg(unix)]
+#[test]
 fn the_remote_lines_run_the_far_ngtermctl_agent_for_the_session_and_side() {
     let session = "00000000-0000-0000-0000-0000000000A1";
     let target = format!("[agent][chat][--target={session}]");

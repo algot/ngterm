@@ -244,6 +244,34 @@ fn an_approval_sends_its_options_key_and_looks_that_the_dialog_went() {
 }
 
 #[test]
+fn an_answered_approval_says_whether_the_turn_ran_on_once_its_dialog_went() {
+    let claude = screen("claude-100x40", Agent::Claude, "permission");
+    let card = asked("claude-100x40");
+    let other = screen("codex-160x48", Agent::Codex, "permission");
+    for (after, resumed) in [
+        (&WORKING, Some(true)),
+        (&IDLE, Some(false)),
+        // the agent's next dialog, or a screen that can't be read: neither is known
+        (&other, None),
+        (&Screen::Unknown, None),
+    ] {
+        let mut plan = Plan::new(Action::Approval(card.clone(), "Yes".to_owned()), Agent::Claude);
+        assert_eq!(plan.answered(), None, "nothing answered yet");
+        step(&mut plan, &claude);
+        assert_eq!(plan.answered(), None, "the dialog is not seen gone yet");
+        assert_eq!(step(&mut plan, after), Next::Done(AgentInputOutcome::Sent));
+        assert_eq!(plan.answered(), resumed.map(|working| (&card, working)), "{after:?}");
+    }
+    // an answer that never went, and any other action
+    let mut refused = Plan::new(Action::Approval(card, "Maybe".to_owned()), Agent::Claude);
+    step(&mut refused, &claude);
+    assert_eq!(refused.answered(), None);
+    let mut stop = Plan::new(Action::Interrupt, Agent::Claude);
+    step(&mut stop, &WORKING);
+    assert_eq!(stop.answered(), None);
+}
+
+#[test]
 fn an_approval_goes_only_to_the_dialog_that_asks_about_the_cards_call() {
     // the card answered elsewhere and the agent asking about another call: no label of the card answers the dialog
     // up now, its own or the agent's usual ones (the card's buttons when the screen could not be read)

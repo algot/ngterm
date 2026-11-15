@@ -27,7 +27,7 @@ use crate::chat::input::{ACTION_IN_FLIGHT, AgentInputOutcome, InputTiming, NO_AG
 use crate::chat::matchers::{Agent, Screen};
 use crate::chat::tests::matchers::{Capture, approval_of, asked, draft_drawn, into_prompt};
 use crate::chat::{ChatQuestion, ChatQuestionItem, ChatQuestionOption, ChatToolStatus};
-use crate::chat::{Side, commands_tail};
+use crate::chat::{Side, answered_tail, chat_tail, commands_tail};
 use crate::pane::{PaneRole, without_escapes};
 use crate::transport::fake::{Opened, Script};
 use crate::transport::{ChannelInput, ChannelPeer};
@@ -584,6 +584,107 @@ fn reading_the_chat_and_switching_it_with_the_terminal_never_claim_or_resize() {
         "the grid the terminal view gave"
     );
     drop(agents.stream);
+}
+
+/// The pane's chat, open, with `card` its open prompt `id`.
+fn chat_with_prompt(agents: &mut Agents, id: &str, card: &crate::chat::ChatApproval) -> Opened {
+    let posix = ngterm_core::remote::origin::OriginShell::Posix;
+    block_on(
+        agents
+            .fixture
+            .core
+            .open_chat(MACHINE.to_owned(), SESSION.to_owned(), PANE.to_owned()),
+    )
+    .unwrap();
+    let chat = agents
+        .fixture
+        .opened(|opened| opened.command == chat_tail(posix, SESSION, Side::Left, None));
+    let prompt = serde_json::json!({
+        "id": id, "cursor": 10, "type": "approval", "tool": card.tool, "title": card.title, "detail": card.detail,
+    });
+    send(
+        &chat.peer,
+        format!(
+            "{prompt}\n{}\n",
+            serde_json::json!({"id": "live", "cursor": 10, "type": "live"})
+        )
+        .as_bytes(),
+    );
+    agents.fixture.next(|event| match event {
+        MobileEvent::Chat { events, .. } => events.iter().any(|event| event.id == id).then_some(()),
+        _ => None,
+    });
+    chat
+}
+
+/// The `agent answered` commands the core ran.
+fn told(agents: &Agents) -> Vec<String> {
+    agents
+        .fixture
+        .transport
+        .execs()
+        .into_iter()
+        .map(|exec| exec.command)
+        .filter(|command| command.contains("answered"))
+        .collect()
+}
+
+#[test]
+fn an_answered_approval_tells_the_origin_what_the_agents_screen_showed_next() {
+    let posix = ngterm_core::remote::origin::OriginShell::Posix;
+    for (label, digit, next, working) in [("Yes", b'1', "working", true), ("No", b'4', "idle", false)] {
+        let mut agents = Agents::start("claude", "claude-44x36");
+        agents.first_is("leader");
+        agents.show(&agents.first.peer, "permission");
+        let card = asked("claude-44x36");
+        let _chat = chat_with_prompt(&mut agents, "approval-7.5", &card);
+        let expected = answered_tail(posix, SESSION, Side::Left, "approval-7.5", working);
+        agents.fixture.transport.script(&expected, Script::ok(""));
+        let answer = agents.act(move |pane| block_on(pane.answer_approval(card, label.to_owned())));
+        inputs_until(&mut agents.first.peer, |bytes, _| {
+            without_escapes(bytes).contains(&digit)
+        });
+        assert!(told(&agents).is_empty(), "nothing is told before the dialog goes");
+        agents.show(&agents.first.peer, next);
+        assert_eq!(outcome(&answer), Ok(AgentInputOutcome::Sent));
+        assert_eq!(told(&agents), [expected], "{label}");
+    }
+}
+
+#[test]
+fn an_answer_the_origin_cant_be_told_of_is_still_sent() {
+    // a card the chat holds no open prompt for: nothing to name
+    let mut agents = Agents::start("claude", "claude-44x36");
+    agents.first_is("leader");
+    agents.show(&agents.first.peer, "permission");
+    let _chat = chat_with_prompt(&mut agents, "approval-7.5", &approval_of("another command"));
+    let answer = agents.act(|pane| block_on(pane.answer_approval(asked("claude-44x36"), "Yes".to_owned())));
+    inputs_until(&mut agents.first.peer, |bytes, _| {
+        without_escapes(bytes).contains(&b'1')
+    });
+    agents.show(&agents.first.peer, "working");
+    assert_eq!(outcome(&answer), Ok(AgentInputOutcome::Sent));
+    assert!(told(&agents).is_empty());
+
+    // an origin without the command
+    let posix = ngterm_core::remote::origin::OriginShell::Posix;
+    let mut agents = Agents::start("claude", "claude-44x36");
+    agents.first_is("leader");
+    agents.show(&agents.first.peer, "permission");
+    let card = asked("claude-44x36");
+    let _chat = chat_with_prompt(&mut agents, "approval-7.5", &card);
+    let expected = answered_tail(posix, SESSION, Side::Left, "approval-7.5", true);
+    agents
+        .fixture
+        .transport
+        .script(&expected, Script::failing(2, "unrecognized subcommand 'answered'"));
+    let answer = agents.act(move |pane| block_on(pane.answer_approval(card, "Yes".to_owned())));
+    inputs_until(&mut agents.first.peer, |bytes, _| {
+        without_escapes(bytes).contains(&b'1')
+    });
+    agents.show(&agents.first.peer, "working");
+    assert_eq!(outcome(&answer), Ok(AgentInputOutcome::Sent));
+    assert_eq!(told(&agents), [expected]);
 }
 
 #[test]

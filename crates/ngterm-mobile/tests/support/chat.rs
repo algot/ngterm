@@ -1,6 +1,6 @@
 //! The e2e test's agent chat steps: a fake agent ([`FakeAgent`]) in the pane, the phone's chat of it read, followed,
 //! paged and resumed, a prompt sent while another client leads, a prompt sent while the agent works (absorbed into its
-//! turn), an approval, an approval answered while the phone is away, a question Claude Code has not written yet shown
+//! turn), an approval, an approval answered while the phone is away, one the phone answers whose command runs on, a question Claude Code has not written yet shown
 //! and answered, and the agent's end. The Left arrow steps between them are in `left_arrow.rs`.
 
 use std::collections::HashSet;
@@ -13,7 +13,7 @@ use serde_json::Value;
 
 use crate::agent::{
     APPROVAL_COMMAND, AWAY_COMMAND, CODEX_COMMAND, CODEX_PICK, CODEX_QUESTION, CODEX_THREAD, CONVERSATION,
-    FIRST_PROMPT, FakeAgent, FakeCodex, QUESTION_CALL, State, question_input,
+    DIALOG_COMMAND, FIRST_PROMPT, FakeAgent, FakeCodex, QUESTION_CALL, State, question_input,
 };
 use crate::machine::World;
 use crate::phone::{Client, MACHINE_ID, block_on, enter};
@@ -70,6 +70,7 @@ impl Scene<'_> {
         self.absorbed(&agent);
         self.approval(&agent);
         self.approval_away(&agent);
+        self.approved_running(&agent);
         self.question(&agent);
         self.end();
         self.left_arrow_elsewhere();
@@ -304,6 +305,31 @@ impl Scene<'_> {
                 .is_some_and(|lost| seen.states[lost..].contains(&MachineState::Connected))
         });
         self.wait_done(&id);
+    }
+
+    /// The phone answers Yes on the dialog of a command that then runs long. Claude Code has no hook for an answered
+    /// prompt, so the origin hears of it from the phone: the pane leaves `blocked` for `active` and the approval
+    /// ends, with the call still running and nothing new in the transcript.
+    fn approved_running(&mut self, agent: &FakeAgent) {
+        self.first.take_lead(self.session, self.pane);
+        agent.show(State::Permission);
+        self.first.wait_screen("Do you want to proceed?");
+        self.ask(&agent.permission_payload(DIALOG_COMMAND));
+        let (id, card) = self.approval_card(DIALOG_COMMAND);
+        self.first.wait("the session blocked", |seen| {
+            seen.statuses.last() == Some(&Some("blocked".to_owned()))
+        });
+        let pane = self.first.terminal.clone().expect("the phone's pane");
+        let outcome = block_on(pane.answer_approval(card, "Yes".to_owned())).expect("answer the approval");
+        assert_eq!(outcome, AgentInputOutcome::Sent);
+        self.first.wait_screen(WORKING);
+        self.first
+            .wait("the session working while the approved command runs", |seen| {
+                seen.statuses.last() == Some(&Some("active".to_owned()))
+            });
+        self.wait_done(&id);
+        agent.show(State::Idle);
+        self.first.wait_screen(FOOTER);
     }
 
     /// While the agent works, the phone's prompt goes into the running turn: the agent records it only as part of that

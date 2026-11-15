@@ -14,13 +14,14 @@ use tokio::time::Instant;
 use super::{Command, State};
 use crate::api::{PaneInputError, PaneSlot};
 use crate::applog::tag;
-use crate::chat::ChatKey;
 use crate::chat::input::{
     ACTION_IN_FLIGHT, Action, AgentInputOutcome, InputTiming, NO_AGENT_TO_DRIVE, Next, Plan, approval_labels,
 };
 use crate::chat::matchers::Agent;
+use crate::chat::{ANSWERED_DEADLINE, ChatKey};
 use crate::note;
 use crate::pane::{PaneRef, Standing};
+use crate::sessions;
 use crate::transport::Transport;
 
 /// Handles a chat action command.
@@ -198,7 +199,10 @@ async fn act<T: Transport>(
             Err(error) => Err(error),
         };
         match step {
-            Ok(Looked::Done(outcome)) => return Ok(outcome),
+            Ok(Looked::Done(outcome)) => {
+                tell_answered(state, &on, &plan).await;
+                return Ok(outcome);
+            }
             Ok(Looked::Again) => busy = 0,
             Ok(Looked::Pending) => {
                 busy = 0;
@@ -217,6 +221,18 @@ async fn act<T: Transport>(
             Err(error) => return Err(error),
         }
     }
+}
+
+/// Tells the origin the approval `plan` answered is over, and what the agent's screen showed next
+/// ([`Plan::answered`]). Best effort: whatever comes of it, the keys went.
+async fn tell_answered<T: Transport>(state: &State<T>, on: &On, plan: &Plan) {
+    let Some((card, working)) = plan.answered() else {
+        return;
+    };
+    let Some((connection, command)) = state.chats.borrow().answered(&on.key, card, working) else {
+        return;
+    };
+    let _ = sessions::run(&*connection, &command, ANSWERED_DEADLINE).await;
 }
 
 /// The looks in a row that may find the terminal busy (its frame stale, or held by the program) before an action

@@ -23,7 +23,8 @@ would, so the origin's agent record, `ngtermctl agent chat` and the phone's chat
   prompt is absorbed into the turn as Claude Code 2.1.319+ writes it (a `queue-operation` and a `queued_command`
   attachment, no user line); `question`, the `AskUserQuestion` picker (the capture's `question` screen) of the
   `question` input, whose call Claude Code writes only once it is answered: a digit picks that option of its first
-  question, writes the call and its result, and goes back to idle.
+  question, writes the call and its result, and goes back to idle; `permission`, the `Bash` permission dialog (the
+  capture's `permission` screen), where `1` (Yes) goes to `working` and writes nothing: the approved command runs on.
 
 - With `agent` `codex` it stands in for Codex 0.167.2 instead: it reports through `agent hook codex`, draws the
   recorded `codex-questions` capture, and appends the recorded rollout's line `groups` as Codex wrote them:
@@ -289,6 +290,11 @@ class Agent:
         if self.state == "question":
             if action == "text" and value.isdigit():
                 self.answer(int(value))
+            self.draw()
+            return True
+        if self.state == "permission":
+            if action == "text" and value == "1":
+                self.state = "working"
             self.draw()
             return True
         if action == "enter":

@@ -205,6 +205,21 @@ pub(crate) fn offers_chat<C: Connection>(connection: &C) -> Result<(), MobileErr
     }
 }
 
+/// The remote command that tells the origin the prompt `approval` (its chat event's id) was answered on its dialog,
+/// the agent's turn `working` on or its prompt back.
+#[must_use]
+pub(crate) fn answered_tail(shell: OriginShell, session_id: &str, side: Side, approval: &str, working: bool) -> String {
+    let mut words = agent_words("answered", session_id, side);
+    words.push(format!("--approval={approval}"));
+    if working {
+        words.push("--working".to_owned());
+    }
+    agent_tail(shell, "", &words)
+}
+
+/// How long the origin has to take an answered prompt's word.
+pub(crate) const ANSWERED_DEADLINE: Duration = Duration::from_secs(5);
+
 /// The catalog's remote command.
 #[must_use]
 pub(crate) fn commands_tail(shell: OriginShell, session_id: &str, side: Side) -> String {
@@ -1003,6 +1018,23 @@ impl<C: Connection> Chats<C> {
             connection,
             generation: catalog.generation,
         }))
+    }
+
+    /// What tells `key`'s origin that the open prompt `card` shows was answered ([`answered_tail`]), and the
+    /// connection to run it on: `None` when the chat is not open or its link is down, or holds no open prompt for
+    /// the card. Of two open prompts alike, the newest.
+    pub(crate) fn answered(&self, key: &ChatKey, card: &ChatApproval, working: bool) -> Option<(Rc<C>, String)> {
+        let chat = &self.open[self.find(key)?];
+        let connection = chat.connection.clone()?;
+        let since = |id: &str| id.rsplit('-').next().and_then(|since| since.parse::<f64>().ok());
+        let id = chat
+            .prompts
+            .iter()
+            .filter(|(_, approval)| ChatApproval::from((*approval).clone()) == *card)
+            .map(|(id, _)| id)
+            .max_by(|a, b| since(a).partial_cmp(&since(b)).unwrap_or(std::cmp::Ordering::Equal))?;
+        let command = answered_tail(connection.origin_shell(), &key.session_id, chat.side, id, working);
+        Some((connection, command))
     }
 
     /// `key`'s catalog, fetched under `generation`: kept unless its conversation changed meanwhile.

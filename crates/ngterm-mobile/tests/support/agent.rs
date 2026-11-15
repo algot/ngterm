@@ -28,6 +28,8 @@ pub(crate) const FILLER: u64 = 1;
 pub(crate) const APPROVAL_COMMAND: &str = "touch e2e-approval.txt";
 /// The second approval's command: one answered while the phone is away.
 pub(crate) const AWAY_COMMAND: &str = "touch e2e-away.txt";
+/// The command of the fake agent's permission dialog, as the recorded screen shows it.
+pub(crate) const DIALOG_COMMAND: &str = "touch picked.txt";
 /// The tool use id the fake agent writes its answered `AskUserQuestion` call under.
 pub(crate) const QUESTION_CALL: &str = "toolu_e2e_question";
 
@@ -64,7 +66,8 @@ pub(crate) enum State {
     /// A question's picker: Claude's `AskUserQuestion` of [`question_input`]; Codex's `request_user_input`, its call
     /// appended to the rollout as the picker opens.
     Question,
-    /// Codex's approval dialog for [`CODEX_COMMAND`].
+    /// The approval dialog: Codex's for [`CODEX_COMMAND`]; Claude's for [`DIALOG_COMMAND`], whose Yes leaves the
+    /// command running.
     Permission,
     /// The program exits, as the agent's own `/exit` ends it.
     Exit,

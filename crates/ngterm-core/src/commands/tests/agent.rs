@@ -1,4 +1,4 @@
-//! `agent.report`, `agent.get` and `agent.locate`: the per-pane agent record on the fakes (`commands::agent`).
+//! `agent.report`, `agent.get`, `agent.locate` and `agent.answered`: the per-pane agent record on the fakes (`commands::agent`).
 
 use ngterm_host::ProcessStat;
 use ngterm_host::fakes::{FakeProcessTable, FakeSurface, FakeSurfaceProbe};
@@ -8,6 +8,8 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use super::{Fixture, UNKNOWN, args, failure, send, short_tempdir, wire};
+use crate::agent_chat::approvals::prompt_id;
+use crate::model::{AgentStatus, StatusPane};
 use crate::persist::{AppSettings, LibraryPersistence};
 use crate::{Core, CoreConfig, CoreState};
 
@@ -193,6 +195,130 @@ fn a_candidate_is_an_approval_only_while_the_pane_is_blocked_and_done_once_it_le
     assert!(send_report(&mut fixture, session, left(), permission("Bash", "touch second.txt")).ok);
     let approval = agent_of(&get(&mut fixture, session, left()))["approval"].clone();
     assert_eq!(approval["detail"], "touch second.txt");
+}
+
+fn answered(fixture: &mut Fixture, session: Uuid, pane: Args, approval: &str, status: &str) -> Response {
+    let mut args = pane;
+    args.approval = Some(approval.to_owned());
+    args.status = Some(status.to_owned());
+    fixture.send(Command::Agent(AgentCmd::Answered), Some(&wire(session)), args)
+}
+
+/// The session's status and whether it blinks, as the model holds them.
+fn status_of(fixture: &Fixture, session: Uuid) -> (AgentStatus, bool) {
+    let indicator = &fixture.store().session(session).expect("the session").agent_indicator;
+    (indicator.status, indicator.blink)
+}
+
+/// A pane blocked on a `Bash` prompt for `command`, and the id its chat event carries.
+fn asked(fixture: &mut Fixture, session: Uuid, pane: &dyn Fn() -> Args, command: &str) -> String {
+    assert!(send_report(fixture, session, pane(), start(CLAUDE_A, "aaaa")).ok);
+    assert!(send_report(fixture, session, pane(), permission("Bash", command)).ok);
+    status(fixture, session, "blocked", "left");
+    let since = agent_of(&get(fixture, session, pane()))["approval"]["since"]
+        .as_f64()
+        .expect("a live approval");
+    prompt_id(since)
+}
+
+#[test]
+fn an_answered_prompt_whose_call_runs_on_leaves_the_pane_working_and_ends_the_approval() {
+    let (mut fixture, session, token) = one_pane();
+    let left = || pane_args(&token, "left");
+    let id = asked(&mut fixture, session, &left, "sleep 90");
+    assert_eq!(
+        answered(&mut fixture, session, left(), &id, "active"),
+        reported(session)
+    );
+    assert_eq!(status_of(&fixture, session), (AgentStatus::Active, true));
+    assert_eq!(agent_of(&get(&mut fixture, session, left())).get("approval"), None);
+    // the same prompt is not live again on a later block
+    status(&mut fixture, session, "blocked", "left");
+    assert_eq!(agent_of(&get(&mut fixture, session, left())).get("approval"), None);
+}
+
+#[test]
+fn an_answered_prompt_that_gave_the_prompt_back_clears_the_status() {
+    let (mut fixture, session, token) = one_pane();
+    let left = || pane_args(&token, "left");
+    let id = asked(&mut fixture, session, &left, "rm -rf build");
+    assert!(answered(&mut fixture, session, left(), &id, "idle").ok);
+    assert_eq!(status_of(&fixture, session), (AgentStatus::Idle, false));
+    assert_eq!(agent_of(&get(&mut fixture, session, left())).get("approval"), None);
+}
+
+#[test]
+fn a_late_or_mistaken_answer_changes_nothing() {
+    let (mut fixture, session, token) = one_pane();
+    let left = || pane_args(&token, "left");
+    let id = asked(&mut fixture, session, &left, "true");
+    // another prompt's id
+    assert!(answered(&mut fixture, session, left(), "approval-1", "active").ok);
+    assert_eq!(status_of(&fixture, session).0, AgentStatus::Blocked);
+    assert_eq!(
+        agent_of(&get(&mut fixture, session, left()))["approval"]["detail"],
+        "true"
+    );
+    // the hooks moved on: the call ended and the turn with it
+    status(&mut fixture, session, "completed", "left");
+    assert!(answered(&mut fixture, session, left(), &id, "active").ok);
+    assert_eq!(status_of(&fixture, session).0, AgentStatus::Completed);
+    // blocked again on the next prompt, the first one's answer arriving only now
+    assert!(send_report(&mut fixture, session, left(), permission("Bash", "false")).ok);
+    status(&mut fixture, session, "blocked", "left");
+    assert!(answered(&mut fixture, session, left(), &id, "active").ok);
+    assert_eq!(status_of(&fixture, session).0, AgentStatus::Blocked);
+    assert_eq!(
+        agent_of(&get(&mut fixture, session, left()))["approval"]["detail"],
+        "false"
+    );
+}
+
+#[test]
+fn an_answer_for_the_split_pane_leaves_the_status_its_own() {
+    let (mut fixture, session, _) = one_pane();
+    let token = split(&mut fixture, session);
+    let right = || pane_args(&token, "right");
+    assert!(send_report(&mut fixture, session, right(), start(CLAUDE_A, "aaaa")).ok);
+    assert!(send_report(&mut fixture, session, right(), permission("Bash", "make")).ok);
+    status(&mut fixture, session, "blocked", "right");
+    let since = agent_of(&get(&mut fixture, session, right()))["approval"]["since"]
+        .as_f64()
+        .expect("a live approval");
+    assert!(answered(&mut fixture, session, right(), &prompt_id(since), "active").ok);
+    let indicator = &fixture.store().session(session).expect("the session").agent_indicator;
+    assert_eq!(
+        (indicator.status, indicator.status_pane),
+        (AgentStatus::Active, Some(StatusPane::Right))
+    );
+}
+
+#[test]
+fn an_answer_without_its_prompt_or_a_status_to_leave_is_refused() {
+    let (mut fixture, session, token) = one_pane();
+    let left = || pane_args(&token, "left");
+    assert_eq!(
+        fixture.send(Command::Agent(AgentCmd::Answered), Some(&wire(session)), left()),
+        failure("agent.answered requires an approval")
+    );
+    for status in ["blocked", "completed", ""] {
+        assert_eq!(
+            answered(&mut fixture, session, left(), "approval-1", status),
+            failure("agent.answered requires a status (active|idle)")
+        );
+    }
+    let mut bare = left();
+    bare.approval = Some("approval-1".to_owned());
+    assert_eq!(
+        fixture.send(Command::Agent(AgentCmd::Answered), Some(&wire(session)), bare),
+        failure("agent.answered requires a status (active|idle)")
+    );
+    // no record in the pane: nothing to change
+    assert_eq!(
+        answered(&mut fixture, session, left(), "approval-1", "active"),
+        reported(session)
+    );
+    assert_eq!(status_of(&fixture, session).0, AgentStatus::Idle);
 }
 
 #[test]

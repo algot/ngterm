@@ -46,7 +46,11 @@
 //!   the agent's working directory, read in the rows above its options). A dialog about another call (the card's
 //!   answered elsewhere and the agent asks the next) or a card that names nothing a dialog shows (an MCP tool's) is
 //!   [`AgentInputOutcome::NotOnScreen`]: a label alone (Claude's `Yes`) would answer any dialog. The card stays up:
-//!   the origin's `approval_done`, or its next prompt, ends it. Two calls a dialog shows alike (the same command, two
+//!   the origin's `approval_done`, or its next prompt, ends it. Once the dialog is seen gone the origin is told
+//!   (`ngtermctl agent answered`, [`super::answered_tail`]), with what the screen showed next, a turn running or
+//!   the prompt back: Claude Code has no hook for an answered prompt, so the pane would stay `blocked`, and the
+//!   prompt open, until the approved call ends. Best effort: an origin without the command, or a link lost, leaves
+//!   the status to the agent's next hook. Two calls a dialog shows alike (the same command, two
 //!   edits of one file) can't be told apart on screen.
 //! - **Question**: per question, its tab confirmed by its text and options (a picker taller than the screen by what
 //!   is left of its text, and only while no other question of the call lists the same options); a digit picks a
@@ -343,6 +347,8 @@ pub(crate) struct Plan {
     agent: Agent,
     step: Step,
     sent: bool,
+    /// What the screen showed once an answered approval's dialog went: a turn running, or the prompt back.
+    resumed: Option<bool>,
 }
 
 impl Plan {
@@ -352,6 +358,17 @@ impl Plan {
             agent,
             step: Step::Start,
             sent: false,
+            resumed: None,
+        }
+    }
+
+    /// The approval the plan answered, and whether the agent's turn ran on once its dialog went (its prompt back
+    /// otherwise): what the origin is told ([`crate::chat::answered_tail`]). `None` for any other action, an answer
+    /// not seen through, and a screen that says neither (the agent's next dialog, one the matchers can't read).
+    pub(crate) fn answered(&self) -> Option<(&ChatApproval, bool)> {
+        match (&self.action, self.resumed) {
+            (Action::Approval(card, _), Some(working)) => Some((card, working)),
+            _ => None,
         }
     }
 
@@ -436,7 +453,13 @@ impl Plan {
             },
             // the dialog the key went to, still up
             (Step::Answered(answered), Screen::Permission(dialog)) if dialog == answered => Next::Wait,
-            (Step::Answered(_), _) => Next::Done(AgentInputOutcome::Sent),
+            (Step::Answered(_), screen) => {
+                self.resumed = match screen {
+                    Screen::Prompt { working, .. } => Some(*working),
+                    _ => None,
+                };
+                Next::Done(AgentInputOutcome::Sent)
+            }
             _ => self.not_on_screen(),
         }
     }

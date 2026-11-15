@@ -1,4 +1,4 @@
-//! `agent.report`, `agent.get` and `agent.locate` (Rust-only, `conformance/docs/rust-build.md` > Rust-only
+//! `agent.report`, `agent.get`, `agent.locate` and `agent.answered` (Rust-only, `conformance/docs/rust-build.md` > Rust-only
 //! extensions): the origin's per-pane agent record, which the agent-status hooks fill through `ngtermctl agent hook`
 //! and the Android chat view reads (`docs/plans/20261103-android-agent-chat.md`).
 //!
@@ -26,6 +26,13 @@
 //! later, unrelated block (a question at `Stop`, a `request_user_input` prompt) could make it live. One case is left
 //! open: a call the guardian denies runs no tool, so a turn that ends at once with a question finds it still there.
 //!
+//! `agent.answered` is a viewer's word that it answered the pane's dialog itself (the Android chat's approval card):
+//! Claude Code has no hook for an answered permission prompt, so the status would hold `blocked`, and the candidate
+//! with it, until the approved call ends, however long it runs. The viewer names the prompt by its chat event's id
+//! and says what the agent's screen showed next: a turn running (`active`) or the prompt back (`idle`). While that
+//! candidate is still the pane's live approval the status is written as from the pane and the candidate ends; a
+//! prompt already over, or another one, changes nothing, so a late word never undoes what a hook wrote since.
+//!
 //! `agent.locate` finds the pane by its conversation, for a hook that runs outside the pane: Claude Code can carry a
 //! conversation on in a background process of its daemon, whose hooks inherit the daemon's `NGTERM_*`, not the
 //! pane's (`agent_chat::moved`). The pane is the one whose record holds the conversation, or holds the one it moved
@@ -47,13 +54,14 @@ use uuid::Uuid;
 
 use super::{Outcome, args_of, not_found, parse_pane, unknown_pane_id, with_id};
 use crate::Core;
+use crate::agent_chat::approvals::prompt_id;
 use crate::agent_chat::hook::{HookEvent, check_transcript};
 use crate::agent_chat::moved::moved_to;
 use crate::agent_chat::{AgentKind, NO_AGENT};
 use crate::command_restore::PaneForeground;
 use crate::error::{ControlError, Noun};
 use crate::live::shell_integration::is_powershell;
-use crate::model::{AgentStatus, AppStore, Session, StatusPane, WindowLibrary};
+use crate::model::{AgentIndicator, AgentStatus, AppStore, Session, StatusPane, WindowLibrary};
 use crate::pane_env::uuid_string;
 use crate::projection::epoch_seconds;
 use crate::resolve::{ACTIVE, Resolver};
@@ -256,7 +264,50 @@ pub(crate) fn dispatch(core: &mut Core, cmd: AgentCmd, request: &Request) -> Out
         AgentCmd::Report => report(core, request),
         AgentCmd::Get => get(core, request),
         AgentCmd::Locate => locate_conversation(core, request),
+        AgentCmd::Answered => answered(core, request),
     }
+}
+
+/// `agent.answered`: the addressed pane's live approval, named by its chat event's id, was answered on its dialog;
+/// the pane's status becomes the one given (the module docs). Answers the session id, whether it changed anything
+/// or not.
+fn answered(core: &mut Core, request: &Request) -> Outcome {
+    let args = args_of(request);
+    let approval = args
+        .approval
+        .as_deref()
+        .ok_or_else(|| ControlError::rejected("agent.answered requires an approval"))?;
+    let status = match args.status.as_deref() {
+        Some("active") => AgentStatus::Active,
+        Some("idle") => AgentStatus::Idle,
+        _ => return Err(ControlError::rejected("agent.answered requires a status (active|idle)")),
+    };
+    let pane = addressed(core, request)?;
+    core.sync_agent_records();
+    let blocked = locate(core.library(), pane.identity).is_some_and(|(session, role)| pane_blocked(session, role));
+    let live = core
+        .agents
+        .by_pane
+        .get(&pane.identity)
+        .and_then(|record| record.live_approval(blocked))
+        .is_some_and(|candidate| prompt_id(epoch_seconds(candidate.since)) == approval);
+    if live {
+        // as the hooks' `active` and a keystroke's clear leave it
+        let indicator = match status {
+            AgentStatus::Active => AgentIndicator {
+                status,
+                blink: true,
+                status_pane: Some(pane.role),
+                ..AgentIndicator::default()
+            },
+            _ => AgentIndicator::default(),
+        };
+        if let Some(store) = core.library_mut().store_for_session_mut(pane.session) {
+            store.set_agent_indicator(indicator, pane.session);
+        }
+        core.note_agent_status_write(Some(pane.identity), status);
+    }
+    Ok(with_id(pane.session))
 }
 
 /// `agent.locate`'s refusal when no pane's record holds the conversation or the one it moved from.
