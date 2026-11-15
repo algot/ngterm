@@ -112,7 +112,8 @@ BOTH="$WORK/both"
 OFF="$WORK/agterm-off"
 
 # of the given pids (all this user's when none is given), those of the processes the logins of the stand-in agterm
-# machine and of the host that runs both started: each has that machine's private home
+# machines (the agterm Mac, the not-Live Mac) and of the host that runs both started: each has that machine's private
+# home
 agterm_procs() {
   local pid pids=("$@")
   (($#)) || mapfile -t pids < <(pgrep -u "$(id -u)" 2>/dev/null || true)

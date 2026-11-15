@@ -929,7 +929,12 @@ mobile core over its own ssh channels, and each only sends that Mac the command 
   `remoteSessions`) for a relaunch listing pinned to it. A line for no row (New Session from the picker) follows what
   the host's last listing found, ngterm on a Mac that runs both. A destination may pin the app, `agterm:HOST` or `ngterm:HOST` (`remotes.conf`,
   `live tree`, `live attach`); the pin stays in the row's host, and ssh gets only `HOST`. The mobile core lists a fresh
-  connection's machine before its first control line, so that line is never guessed at the app.
+  connection's machine before its first control line, so that line is never guessed at the app. A listing a host's
+  sessions are shown from (the picker, `live tree HOST`, the mobile core's sessions screen; not the listings flows read
+  or wait on) asks an agterm that lists no session, read-only, `agtermctl restore mode --json`
+  (`crates/ngterm-core/src/remote/not_live.rs`): a second ssh call on desktop, the same connection on mobile. Its answer
+  goes on that app's part as `restore` in `live tree HOST --json`; outside Live sessions mode the text form, the picker
+  and the phone apps add a line saying why nothing is listed and what to change on that Mac.
 - What agterm lacks (`peer::Capabilities`): the agent chat view (the mobile core refuses its calls), the Kitty clipboard
   bridge (no `attachBridge`), the stream's `name` and `companion.page` frames (its hello never offers them). The title
   bar shows an `agterm` badge beside the host, with that list as its tooltip; `live tree HOST` prints it as a header; the
@@ -958,7 +963,7 @@ scripts/build-android.sh :koverHtmlReportDebugJvm :koverXmlReportDebugJvm   # bo
 scripts/build-android.sh installGithubDebug    # onto the device or emulator adb sees
 scripts/test-mobile-e2e.sh            # the mobile core against a real ngterm-headless behind a private sshd, typing into a session of conformance's stand-in agterm Mac, and one machine that runs both, which a second ngterm-headless lists and attaches (Linux; python3 runs its fake agent and the stand-in)
 scripts/test-mobile-e2e.sh --coverage DIR   # the headless app's e2e line coverage into DIR, as CI's headless-e2e job (cargo-llvm-cov)
-scripts/test-android-e2e.sh [TEST...]  # the app on the device adb sees, against a real ngterm-headless behind a private sshd (with the mobile e2e's stand-in Claude Code on its PATH), conformance's stand-in agterm Mac on a second port, and on a third one host that runs both (Linux)
+scripts/test-android-e2e.sh [TEST...]  # the app on the device adb sees, against a real ngterm-headless behind a private sshd (with the mobile e2e's stand-in Claude Code on its PATH), conformance's stand-in agterm Mac on a second port, on a third one host that runs both, and on a fourth a Mac whose agterm is not in Live sessions mode (Linux)
 ```
 
 `build-android.sh` builds `libngterm_mobile.so` for arm64-v8a and x86_64 through cargo-ndk, generates the Kotlin
