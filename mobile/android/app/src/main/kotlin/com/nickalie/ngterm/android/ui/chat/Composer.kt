@@ -137,28 +137,40 @@ internal class KeptDrafts(
     val drafts: List<PaneDraft>,
 )
 
-/** How [KeepDrafts] saves: the drafts [kept] as the state is saved, each as [keptDraftSaver]'s fields. */
+/**
+ * How [KeepDrafts] saves: the drafts [kept] as the state is saved, each as [keptDraftSaver]'s fields, as many as fit
+ * [KEPT_DRAFTS_MAX] characters between them (saved state has a size limit for the whole app, and one over it stops
+ * the app). Saved state that isn't whole drafts of text, each no longer than [KEPT_DRAFT_MAX], brings none back.
+ */
 internal fun keptDraftsSaver(kept: () -> List<PaneDraft>): Saver<KeptDrafts, Any> =
     Saver(
         save = {
             val fields = ArrayList<String>()
+            var room = KEPT_DRAFTS_MAX
             for ((pane, conversation, text) in kept()) {
+                if (text.length > room) continue
+                room -= text.length
                 fields += listOf(pane.machineId, pane.sessionId, pane.paneId, conversation, text)
             }
             fields.takeIf { it.isNotEmpty() }
         },
         restore = { saved ->
-            val fields = (saved as? List<*>)?.filterIsInstance<String>().orEmpty()
+            val fields = (saved as? List<*>).orEmpty()
+            val whole = fields.size % KEPT_FIELDS == 0
+            val texts = fields.filterIsInstance<String>().takeIf { whole && it.size == fields.size }
             val drafts =
-                fields.takeIf { it.size % KEPT_FIELDS == 0 }?.chunked(KEPT_FIELDS) {
+                texts?.chunked(KEPT_FIELDS) {
                     PaneDraft(PaneRef(it[0], it[1], it[2]), it[KEPT_CONVERSATION], it[KEPT_TEXT])
                 }
-            KeptDrafts(drafts.orEmpty())
+            KeptDrafts(drafts?.takeIf { it.all { draft -> draft.text.length <= KEPT_DRAFT_MAX } }.orEmpty())
         },
     )
 
 /** The most characters of a draft [KeepDraft] keeps. */
 const val KEPT_DRAFT_MAX = 16_384
+
+/** The most characters of all the drafts [KeepDrafts] keeps between them. */
+const val KEPT_DRAFTS_MAX = 4 * KEPT_DRAFT_MAX
 
 /** A draft as [KeepDraft] keeps it: the [conversation] it was written for (`null`: nothing kept) and its [text]. */
 internal class KeptDraft(

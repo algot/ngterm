@@ -313,8 +313,9 @@ data class PaneDraft(
 interface KeptPrompts {
     /**
      * Those saved state can hold: each with a conversation to come back to, and short enough ([KEPT_DRAFT_MAX]). One
-     * still on its way to the agent is among them: a process let go meanwhile can't say whether it went, so its text
-     * comes back to the field.
+     * still on its way to the agent is not among them: saved state is written once, as the app is put away, and can't
+     * be told later that the message went, so it would bring a sent one back to the field. Once its send ended
+     * unsent, it is.
      */
     fun saved(): List<PaneDraft>
 
@@ -327,12 +328,15 @@ interface KeptPrompts {
 }
 
 // a prompt kept from a chat that closed: its [text], the [conversation] it was written in (`null`: the one its
-// pane's agent has still to name), and its send still on its way as the chat closed ([sending])
+// pane's agent has still to name), and its send still on its way as the chat closed ([sending]); [unsettled] until
+// that send is known to have ended unsent
 private class Kept(
     var conversation: String?,
     val text: String,
     val sending: Deferred<Result<AgentInputOutcome>>?,
-)
+) {
+    var unsettled = sending != null
+}
 
 /**
  * The prompts being written in the chats that closed, each kept for its pane's next chat of the same conversation.
@@ -340,7 +344,8 @@ private class Kept(
  * takes the first name the agent gets, and goes with the agent. One on its way to the agent as its chat closed waits
  * for the send to end, which the core carries through whoever waits for it: sent, it is let go, so it is never sent
  * twice; else it goes to the pane's chat [open] then, or its next. They outlive the app's process as far as saved state
- * holds them ([saved], [take]). Main thread only, its waits in [scope].
+ * holds them ([saved], [take]): not one still on its way, so a process let go never brings back a message that went.
+ * Main thread only, its waits in [scope].
  */
 private class Drafts(
     private val scope: CoroutineScope,
@@ -383,7 +388,7 @@ private class Drafts(
 
     override fun saved(): List<PaneDraft> =
         kept.mapNotNull { (pane, draft) ->
-            val named = draft.conversation?.takeIf { draft.text.length <= KEPT_DRAFT_MAX }
+            val named = draft.conversation?.takeIf { !draft.unsettled && draft.text.length <= KEPT_DRAFT_MAX }
             named?.let { PaneDraft(pane, it, draft.text) }
         }
 
@@ -407,6 +412,7 @@ private class Drafts(
         sending: Deferred<Result<AgentInputOutcome>>,
     ) {
         val sent = sending.await().getOrNull() == AgentInputOutcome.SENT
+        draft.unsettled = sent
         if (kept[pane] !== draft) return
         val chat = open(pane)
         if (sent || chat != null) kept.remove(pane)
