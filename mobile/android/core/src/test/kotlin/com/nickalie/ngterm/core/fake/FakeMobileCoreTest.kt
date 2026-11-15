@@ -53,16 +53,34 @@ class FakeMobileCoreTest {
             assertEquals(
                 listOf(
                     MobileEvent.MachineState("m1", MachineState.Connected),
-                    MobileEvent.Tree("m1", listOf(session)),
-                    MobileEvent.Tree("m1", listOf(session)),
-                    MobileEvent.Tree("m1", emptyList()),
-                    MobileEvent.Tree("m1", emptyList()),
+                    MobileEvent.Tree("m1", listOf(session), null),
+                    MobileEvent.Tree("m1", listOf(session), null),
+                    MobileEvent.Tree("m1", emptyList(), null),
+                    MobileEvent.Tree("m1", emptyList(), null),
                 ),
                 events,
             )
             assertEquals(
                 listOf("connect", "createSession", "listSessions", "endSession", "listSessions"),
                 core.calls.map { it.method },
+            )
+        }
+
+    @Test
+    fun aListingAndAnEndCarryTheMachinesHint() =
+        runTest {
+            val events = mutableListOf<MobileEvent>()
+            val core = FakeMobileCore(sink = EventSinkOf(events))
+            core.connect(machine)
+            core.hints["m1"] = "agterm on build-01 is not in Live sessions mode"
+            val session = core.createSession("m1", "work")
+            core.endSession("m1", session.id)
+            assertEquals(
+                listOf(
+                    MobileEvent.Tree("m1", listOf(session), "agterm on build-01 is not in Live sessions mode"),
+                    MobileEvent.Tree("m1", emptyList(), "agterm on build-01 is not in Live sessions mode"),
+                ),
+                events.filterIsInstance<MobileEvent.Tree>(),
             )
         }
 
@@ -109,7 +127,7 @@ class FakeMobileCoreTest {
             val copy = core.duplicateSession("m1", "c")
             assertEquals(null, copy.parent)
             assertEquals(listOf("p", "c", copy.id, "q"), core.listSessions("m1").map { it.id })
-            assertEquals(MobileEvent.Tree("m1", core.listSessions("m1")), events[1])
+            assertEquals(MobileEvent.Tree("m1", core.listSessions("m1"), null), events[1])
             val error = runCatching { core.duplicateSession("m1", "nope") }.exceptionOrNull()
             assertTrue(error is MobileException.Remote)
         }

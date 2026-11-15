@@ -142,6 +142,9 @@ class FakeMobileCore(
     /** Each machine's last listing, by machine id: what [listSessions] or [createSession] last answered. */
     private val listings = mutableMapOf<String, List<RemoteSession>>()
 
+    /** What each machine's listing says about why its agterm lists nothing, by id (the real core's hint). */
+    val hints: MutableMap<String, String> = mutableMapOf()
+
     /** Each session's panes, by session id, for the sessions a test gives them: see the class's rules. */
     val panes: MutableMap<String, Set<String>> = mutableMapOf()
 
@@ -219,7 +222,7 @@ class FakeMobileCore(
         val listing = sessionsOf(machineId).toList()
         listings[machineId] = listing
         listedPanes[machineId] = listing.mapNotNull { session -> panes[session.id]?.let { session.id to it } }.toMap()
-        emit(MobileEvent.Tree(machineId, listing))
+        emit(MobileEvent.Tree(machineId, listing, hints[machineId]))
         return listing
     }
 
@@ -360,7 +363,8 @@ class FakeMobileCore(
         val list = sessionsOf(machineId)
         if (!list.removeAll { it.id == sessionId }) throw MobileException.Remote("no session $sessionId")
         val listing = listings[machineId] ?: return
-        listings[machineId] = listing.filter { it.id != sessionId }.also { emit(MobileEvent.Tree(machineId, it)) }
+        listings[machineId] =
+            listing.filter { it.id != sessionId }.also { emit(MobileEvent.Tree(machineId, it, hints[machineId])) }
     }
 
     override suspend fun attachSession(

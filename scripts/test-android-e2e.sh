@@ -19,6 +19,9 @@
 # On a third port it answers as one host that runs both apps (BothAppsE2eTest): its logins see this run's ngterm and a
 # second stand-in agterm with a session of its own, so a listing asks both.
 #
+# On a fourth port it answers as a Mac whose agterm is not in Live sessions mode (AgtermNotLiveE2eTest): a third
+# stand-in agterm with restore mode none and no session, so the app says why it lists nothing.
+#
 # On exit it stops the instance and sshd by the pids they recorded, ends the stand-in agterms' processes (those with
 # their private homes), ends every session of the private namespace through that namespace's own session server and
 # removes the namespace's directory, and drops the port reverses. The scratch directory is removed after a pass and
@@ -103,8 +106,10 @@ PRIVATE=(env -i "NGTERM_STATE_DIR=$WORK/s" "HOME=$WORK/home" "PATH=$WORK/bin:$WO
 PORT=
 AGTERM_PORT=
 BOTH_PORT=
+OFF_PORT=
 AGTERM="$WORK/agterm"
 BOTH="$WORK/both"
+OFF="$WORK/agterm-off"
 
 # of the given pids (all this user's when none is given), those of the processes the logins of the stand-in agterm
 # machine and of the host that runs both started: each has that machine's private home
@@ -112,7 +117,8 @@ agterm_procs() {
   local pid pids=("$@")
   (($#)) || mapfile -t pids < <(pgrep -u "$(id -u)" 2>/dev/null || true)
   for pid in "${pids[@]}"; do
-    grep -qzxF -e "HOME=$AGTERM/home" -e "HOME=$BOTH/home" "/proc/$pid/environ" 2>/dev/null && echo "$pid"
+    grep -qzxF -e "HOME=$AGTERM/home" -e "HOME=$BOTH/home" -e "HOME=$OFF/home" "/proc/$pid/environ" 2>/dev/null &&
+      echo "$pid"
   done
   return 0
 }
@@ -169,6 +175,7 @@ reap() {
   [[ -z "$PORT" ]] || "$ADB" reverse --remove "tcp:$PORT" >/dev/null 2>&1 || true
   [[ -z "$AGTERM_PORT" ]] || "$ADB" reverse --remove "tcp:$AGTERM_PORT" >/dev/null 2>&1 || true
   [[ -z "$BOTH_PORT" ]] || "$ADB" reverse --remove "tcp:$BOTH_PORT" >/dev/null 2>&1 || true
+  [[ -z "$OFF_PORT" ]] || "$ADB" reverse --remove "tcp:$OFF_PORT" >/dev/null 2>&1 || true
 }
 collect() {
   [[ -n "$EVIDENCE" ]] || return 0
@@ -233,7 +240,7 @@ EOF
 chmod 755 "$WORK/force-command.sh"
 
 # a stand-in agterm in the directory $1: agterm's CLI in its bin and its app bundle's zmx, as conformance's AgtermMac
-# lays them out, with one live session named $2
+# lays them out, with one live session named $2 (none when it is empty), in restore mode $3 (default live)
 FAKE_AGTERM="$NATIVE_ROOT/conformance/agterm_conformance/fake_agterm.py"
 PYTHON="$(command -v python3)"
 stand_in_agterm() {
@@ -245,7 +252,7 @@ stand_in_agterm() {
     printf '#!/bin/sh\nexec %q -I %q %q %s "$@"\n' "$PYTHON" "$FAKE_AGTERM" "$root" "$program" >"$wrapper"
     chmod 755 "$wrapper"
   done
-  python3 -I - "$FAKE_AGTERM" "$root" "$2" <<'PY'
+  python3 -I - "$FAKE_AGTERM" "$root" "$2" "${3:-live}" <<'PY'
 import importlib.util, os, sys, uuid
 spec = importlib.util.spec_from_file_location("fake_agterm", sys.argv[1])
 fake = importlib.util.module_from_spec(spec)
@@ -260,10 +267,12 @@ session = {
     "workspaceID": workspace["id"], "workspaceName": workspace["name"],
     "cwd": os.path.join(root, "home"), "panes": [{"pane": "left", "daemon": daemon}],
 }
+listed = bool(sys.argv[3])
 fake.save_state(fake.Path(root), {
-    "running": True, "restore": "live", "home": os.path.join(root, "home"),
+    "running": True, "restore": sys.argv[4], "home": os.path.join(root, "home"),
     "zmx": os.path.join(root, "agterm.app", "zmx"), "socketDirectory": os.path.join(root, "zmx-sockets"),
-    "window": window, "workspace": workspace, "sessions": [session], "daemons": [daemon],
+    "window": window, "workspace": workspace,
+    "sessions": [session] if listed else [], "daemons": [daemon] if listed else [],
 })
 PY
 }
@@ -289,11 +298,21 @@ exec /bin/sh -c "\$SSH_ORIGINAL_COMMAND"
 EOF
 chmod 755 "$WORK/both-command.sh"
 
+# the Mac whose agterm is not in Live sessions mode: no session, restore mode none
+stand_in_agterm "$OFF" "" none
+cat >"$WORK/agterm-off-command.sh" <<EOF
+#!/bin/sh
+export HOME='$OFF/home'
+export PATH='$OFF/bin:/usr/bin:/bin'
+exec /bin/sh -c "\$SSH_ORIGINAL_COMMAND"
+EOF
+chmod 755 "$WORK/agterm-off-command.sh"
+
 # a free port is taken back from the kernel before sshd binds it, so another process may win it: three tries
 for ((try = 0; try < 3; try++)); do
-  read -r PORT AGTERM_PORT BOTH_PORT < <(python3 -I -c '
+  read -r PORT AGTERM_PORT BOTH_PORT OFF_PORT < <(python3 -I -c '
 import socket
-sockets = [socket.socket() for _ in range(3)]
+sockets = [socket.socket() for _ in range(4)]
 for one in sockets:
     one.bind(("127.0.0.1", 0))
 print(*(one.getsockname()[1] for one in sockets))')
@@ -302,6 +321,7 @@ ListenAddress 127.0.0.1
 Port $PORT
 Port $AGTERM_PORT
 Port $BOTH_PORT
+Port $OFF_PORT
 HostKey "$WORK/sshd/host_ed25519"
 PidFile "$WORK/sshd/sshd.pid"
 AuthorizedKeysFile "${WORK//%/%%}/sshd/authorized_keys"
@@ -324,6 +344,8 @@ Match LocalPort $AGTERM_PORT
   ForceCommand '$WORK/agterm-command.sh'
 Match LocalPort $BOTH_PORT
   ForceCommand '$WORK/both-command.sh'
+Match LocalPort $OFF_PORT
+  ForceCommand '$WORK/agterm-off-command.sh'
 EOF
   env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin "$SSHD" -D -f "$WORK/sshd/sshd_config" -E "$WORK/sshd/sshd.log" \
     </dev/null >/dev/null 2>&1 &
@@ -331,18 +353,21 @@ EOF
     banner="$(timeout 2 bash -c "exec 3<>/dev/tcp/127.0.0.1/$PORT && head -c 4 <&3" 2>/dev/null || true)"
     other="$(timeout 2 bash -c "exec 3<>/dev/tcp/127.0.0.1/$AGTERM_PORT && head -c 4 <&3" 2>/dev/null || true)"
     third="$(timeout 2 bash -c "exec 3<>/dev/tcp/127.0.0.1/$BOTH_PORT && head -c 4 <&3" 2>/dev/null || true)"
-    [[ "$banner" == SSH- && "$other" == SSH- && "$third" == SSH- ]] && break 2
+    fourth="$(timeout 2 bash -c "exec 3<>/dev/tcp/127.0.0.1/$OFF_PORT && head -c 4 <&3" 2>/dev/null || true)"
+    [[ "$banner" == SSH- && "$other" == SSH- && "$third" == SSH- && "$fourth" == SSH- ]] && break 2
     sleep 0.1
   done
   [[ -s "$WORK/sshd/sshd.pid" ]] && kill -TERM "$(<"$WORK/sshd/sshd.pid")" 2>/dev/null || true
   PORT=
   AGTERM_PORT=
   BOTH_PORT=
+  OFF_PORT=
 done
 [[ -n "$PORT" ]] || die "sshd never answered: $WORK/sshd/sshd.log"
 "$ADB" reverse "tcp:$PORT" "tcp:$PORT" >/dev/null
 "$ADB" reverse "tcp:$AGTERM_PORT" "tcp:$AGTERM_PORT" >/dev/null
 "$ADB" reverse "tcp:$BOTH_PORT" "tcp:$BOTH_PORT" >/dev/null
+"$ADB" reverse "tcp:$OFF_PORT" "tcp:$OFF_PORT" >/dev/null
 
 "$ADB" shell rm -rf "$DEVICE_EVIDENCE"
 "$ADB" shell mkdir -p "$DEVICE_EVIDENCE"
@@ -364,6 +389,7 @@ for test in "${TESTS[@]}"; do
     -Pandroid.testInstrumentationRunnerArguments.e2ePort="$PORT" \
     -Pandroid.testInstrumentationRunnerArguments.e2eAgtermPort="$AGTERM_PORT" \
     -Pandroid.testInstrumentationRunnerArguments.e2eBothPort="$BOTH_PORT" \
+    -Pandroid.testInstrumentationRunnerArguments.e2eAgtermOffPort="$OFF_PORT" \
     -Pandroid.testInstrumentationRunnerArguments.e2eUser="$USER_NAME" \
     -Pandroid.testInstrumentationRunnerArguments.e2eKey="$(base64 -w0 "$WORK/client_ed25519")"
 done

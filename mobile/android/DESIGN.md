@@ -377,6 +377,13 @@ machine is the subject: the list is quiet rows on the ground, not cards, since a
   machine without `ngtermctl` (the far shell's "not found") says "ngtermctl isn't on build-01", what to install and
   where, with Open the README (the server setup section) and Retry under it. A refresh that fails over a list keeps
   the list under an error banner with Retry; the offline banner shows over it as on the home.
+- **agterm outside Live sessions mode:** agterm lists only the sessions started in its Live sessions mode, so when a
+  machine's agterm lists none and runs another mode, a `Banner` in the Attention tone says why in the core's words
+  ("agterm on build-01 is not in Live sessions mode: set Settings > General > Restore sessions to Live sessions and
+  restart agterm; only sessions started after that can be attached"), over the empty state or over ngterm's sessions
+  on a machine that runs both, under the offline and error banners. It has no action, since the fix is on the
+  machine; the next listing (pull to refresh) drops it once agterm runs Live sessions. The empty state under it still
+  offers New session. An agterm in Live sessions mode with no session yet shows the plain empty state.
 
 ### The terminal (`ui/terminal/`)
 

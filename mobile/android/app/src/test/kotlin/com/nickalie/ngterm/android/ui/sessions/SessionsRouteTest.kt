@@ -373,6 +373,32 @@ class SessionsRouteTest {
     }
 
     @Test
+    fun anAgtermOutsideLiveSessionsModeSaysWhyOverTheEmptyListAndOverOtherSessions() {
+        val hint =
+            "agterm on build-01 is not in Live sessions mode: set Settings > General > Restore sessions to Live " +
+                "sessions and restart agterm; only sessions started after that can be attached"
+        test.core.hints["m1"] = hint
+        connect()
+        route()
+        compose.awaitText("No sessions on build-01")
+        compose.awaitText(hint)
+        // New session still invites: on a machine that runs both apps it goes to ngterm
+        compose.onAllNodesWithText("New session")[0].assertIsEnabled()
+
+        // ngterm's sessions beside it: the hint stays over them
+        test.core.sessions["m1"] = mutableListOf(fakeSession("s1", "build"))
+        runBlocking { test.connections.listSessions("m1") }
+        compose.awaitText("build")
+        compose.onNodeWithText(hint).assertExists()
+
+        // agterm in Live sessions mode: the next listing says nothing more
+        test.core.hints.clear()
+        runBlocking { test.connections.listSessions("m1") }
+        gone(hint)
+        compose.onNodeWithText("build").assertExists()
+    }
+
+    @Test
     fun anOfflineListKeepsItsRowsAndAFailedRefreshOffersRetryOverThem() {
         test.core.sessions["m1"] = mutableListOf(fakeSession("s1", "build"))
         connect()

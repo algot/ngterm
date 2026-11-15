@@ -61,7 +61,7 @@ class ClipboardReadPromptTest {
             NgtermTheme { NgtermApp(graph = test.graph, coreVersion = "1.2.3", layout = NavLayout.Bar) }
         }
         compose.awaitText("build-01")
-        test.core.emit(MobileEvent.Tree("m1", listOf(fakeSession("s1", name = "docs-site"))))
+        test.core.emit(MobileEvent.Tree("m1", listOf(fakeSession("s1", name = "docs-site")), null))
     }
 
     @After

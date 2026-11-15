@@ -87,6 +87,28 @@ class ConnectionsTest {
         }
 
     @Test
+    fun aListingsHintStaysUntilAListingWithoutOneOrADisconnect() =
+        runTest {
+            val connections = connections()
+            val hint = "agterm on build-01 is not in Live sessions mode"
+            core.hints["m1"] = hint
+            connections.connect(machine)
+            advanceUntilIdle()
+            assertEquals(hint, connections.hints.value["m1"])
+
+            core.hints.clear()
+            connections.listSessions("m1")
+            advanceUntilIdle()
+            assertEquals(null, connections.hints.value["m1"])
+
+            core.hints["m1"] = hint
+            connections.listSessions("m1")
+            advanceUntilIdle()
+            connections.disconnect("m1")
+            assertEquals(null, connections.hints.value["m1"])
+        }
+
+    @Test
     fun aMachineRunningBothAppsIsNgtermsAndNamesItsAgtermSessions() =
         runTest {
             val connections = connections()

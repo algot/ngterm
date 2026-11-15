@@ -90,6 +90,7 @@ class Connections(
     private val linkState = MutableStateFlow<Map<String, Link>>(emptyMap())
     private val treeState = MutableStateFlow<Map<String, List<RemoteSession>>>(emptyMap())
     private val treeFailureState = MutableStateFlow<Map<String, String>>(emptyMap())
+    private val hintState = MutableStateFlow<Map<String, String>>(emptyMap())
     private val attachedState = MutableStateFlow<Map<String, Set<String>>>(emptyMap())
     private val peerState = MutableStateFlow<Map<String, MachinePeer>>(emptyMap())
     private val sessionPeerState = MutableStateFlow<Map<SessionKey, MachinePeer>>(emptyMap())
@@ -131,6 +132,12 @@ class Connections(
     /** Each connected machine's sessions as it last listed them, by id. */
     val trees: StateFlow<Map<String, List<RemoteSession>>> = treeState.asStateFlow()
 
+    /**
+     * Why a machine's agterm lists no session (the core's words: it is not in Live sessions mode, and what to change
+     * there), by id, as its last listing said.
+     */
+    val hints: StateFlow<Map<String, String>> = hintState.asStateFlow()
+
     /** Why a machine's last listing failed (the core's words), by id, until a listing lands. */
     val treeFailures: StateFlow<Map<String, String>> = treeFailureState.asStateFlow()
 
@@ -159,7 +166,7 @@ class Connections(
             is MobileEvent.HostKeyUnknown -> set(event.machineId, Link.HostKeyUnknown(event.fingerprint))
             is MobileEvent.HostKeyChanged -> set(event.machineId, Link.HostKeyChanged(event.pinned, event.offered))
             is MobileEvent.SignInRequested -> signInRequested(event.machineId, event.message, event.url)
-            is MobileEvent.Tree -> listed(event.machineId, event.sessions)
+            is MobileEvent.Tree -> listed(event.machineId, event.sessions, event.hint)
             is MobileEvent.SessionName -> named(event.machineId, event.sessionId, event.name)
             else -> Unit
         }
@@ -179,12 +186,14 @@ class Connections(
     private fun listed(
         machineId: String,
         sessions: List<RemoteSession>,
+        hint: String?,
     ) {
         synchronized(listingLock) {
             bump(machineId)
             listings[machineId] = sessions
             treeState.update { it + (machineId to withStreamNames(machineId, sessions)) }
             treeFailureState.update { it - machineId }
+            hintState.update { if (hint == null) it - machineId else it + (machineId to hint) }
             // under the lock, so a disconnect or a replaced connection can't land between the listing and its app
             learnPeer(machineId, sessions)
         }
@@ -478,6 +487,7 @@ class Connections(
             listings -= machineId
             treeState.update { it - machineId }
             treeFailureState.update { it - machineId }
+            hintState.update { it - machineId }
             forgetPeers(machineId)
         }
         attachedState.update { it - machineId }

@@ -22,7 +22,8 @@ private const val PHONE_NIGHT = "w411dp-h891dp-night-xhdpi"
 
 /**
  * A machine's sessions in its other states (empty, reading, not connected, offline, unreachable, ngtermctl missing, a
- * failed refresh over the list), a New session under way and the New session dialog, on a phone in light and dark.
+ * failed refresh over the list, an agterm outside Live sessions mode), a New session under way and the New session
+ * dialog, on a phone in light and dark.
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -44,6 +45,12 @@ class SessionStatesScreenshotTest {
         SampleSessions.copy(link = Link.Unreachable("build-01.lan:22: connection refused"), sessions = null)
     private val duplicating = SampleSessions.copy(ending = emptySet(), duplicating = "s4", creating = true)
     private val stale = SampleSessions.copy(failure = "build-01 gave no answer (Connection reset by peer)")
+    private val notLive =
+        empty.copy(
+            hint =
+                "agterm on build-01 is not in Live sessions mode: set Settings > General > Restore sessions to Live " +
+                    "sessions and restart agterm; only sessions started after that can be attached",
+        )
 
     @Test
     @Config(qualifiers = PHONE)
@@ -101,6 +108,14 @@ class SessionStatesScreenshotTest {
     @Test
     @Config(qualifiers = PHONE_NIGHT)
     fun staleDark() = capture("machine_sessions_stale_dark") { SessionsSample(stale) }
+
+    @Test
+    @Config(qualifiers = PHONE)
+    fun notLiveLight() = capture("machine_sessions_not_live_light") { SessionsSample(notLive) }
+
+    @Test
+    @Config(qualifiers = PHONE_NIGHT)
+    fun notLiveDark() = capture("machine_sessions_not_live_dark") { SessionsSample(notLive) }
 
     // Robolectric's default window: under a phone's qualifiers its layout of a text field in a dialog never settles
     @OptIn(ExperimentalRoborazziApi::class)

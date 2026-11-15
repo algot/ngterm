@@ -240,11 +240,13 @@ private fun Waiting(
     }
 }
 
-// what is said over the list or the empty state: the device is offline, the last refresh failed
+// what is said over the list or the empty state: the device is offline, the last refresh failed, why agterm there
+// lists nothing (the fix is on the machine, so it has no action: a refresh lists again once it is made)
 @Composable
 private fun Banners(
     offline: Boolean,
     failure: String?,
+    hint: String?,
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -257,6 +259,7 @@ private fun Banners(
                 action = SectionAction(stringResource(R.string.action_retry), onRetry),
             )
         }
+        if (hint != null) Banner(StatusTone.Attention, hint)
     }
 }
 
@@ -275,7 +278,7 @@ private fun Empty(
         modifier = modifier.fillMaxSize().padding(horizontal = gutter(), vertical = spacing.sm),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Banners(state.offline, failure, actions.onRefresh, Modifier.widthIn(max = spacing.readableWidth))
+        Banners(state.offline, failure, state.hint, actions.onRefresh, Modifier.widthIn(max = spacing.readableWidth))
         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
             EmptyState(
                 icon = R.drawable.ic_sessions,
@@ -316,9 +319,9 @@ private fun Listing(
         contentPadding = PaddingValues(horizontal = gutter(), vertical = spacing.sm),
         verticalArrangement = Arrangement.spacedBy(spacing.xs),
     ) {
-        if (state.offline || body.failure != null) {
+        if (state.offline || body.failure != null || state.hint != null) {
             item(key = "banners") {
-                Banners(state.offline, body.failure, actions.onRefresh, wide.padding(bottom = spacing.sm))
+                Banners(state.offline, body.failure, state.hint, actions.onRefresh, wide.padding(bottom = spacing.sm))
             }
         }
         group(attached, body.attached, actions, onAskEnd, wide)

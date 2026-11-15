@@ -44,6 +44,8 @@ data class MachineSessions(
     val creating: Boolean = false,
     // what each session's Chat view item reads (PaneChats.chatViewItems)
     val chatViews: ChatViews = ChatViews(),
+    // why the machine's agterm lists no session, as its last listing said
+    val hint: String? = null,
     // the app the machine runs, when a listing said (null: ngterm, or not said)
     val peer: MachinePeer? = null,
     // the app of each session that isn't ngterm's, by session id: a machine may run both
@@ -98,10 +100,10 @@ class SessionsViewModel(
         combine(
             connections.links,
             connections.trees,
-            connections.treeFailures,
+            combine(connections.treeFailures, connections.hints, ::Pair),
             connections.attached,
             combine(graph.chats.chatViewItems, connections.peers, connections.sessionPeers, ::Triple),
-        ) { links, trees, failures, attached, (chatViews, peers, sessionPeers) ->
+        ) { links, trees, (failures, hints), attached, (chatViews, peers, sessionPeers) ->
             Live(
                 links[machineId] ?: Link.Offline,
                 trees[machineId],
@@ -110,6 +112,7 @@ class SessionsViewModel(
                 chatViews,
                 peers[machineId],
                 sessionPeers.filterKeys { it.machineId == machineId }.mapKeys { it.key.sessionId },
+                hints[machineId],
             )
         }
 
@@ -121,6 +124,7 @@ class SessionsViewModel(
         val chatViews: ChatViews,
         val peer: MachinePeer?,
         val sessionPeers: Map<String, MachinePeer>,
+        val hint: String?,
     )
 
     private val creates = graph.creates
@@ -153,6 +157,7 @@ class SessionsViewModel(
                         chatViews = live.chatViews,
                         peer = live.peer,
                         sessionPeers = live.sessionPeers,
+                        hint = live.hint,
                     ),
                 )
             }
