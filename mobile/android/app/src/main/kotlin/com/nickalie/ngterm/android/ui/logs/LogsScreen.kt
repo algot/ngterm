@@ -26,6 +26,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.core.content.FileProvider
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nickalie.ngterm.android.R
@@ -42,7 +43,7 @@ import java.io.File
 
 /**
  * Settings' Logs page over the diagnostic [log]: the screen, with Share handing the exported file to the system's
- * share sheet through the app's file provider.
+ * share sheet through the app's file provider. The log is read again each time the page opens and the app resumes.
  */
 @Composable
 fun LogsRoute(
@@ -56,6 +57,10 @@ fun LogsRoute(
 ) {
     val state by model.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    LifecycleResumeEffect(model) {
+        model.refresh()
+        onPauseOrDispose {}
+    }
     val title = stringResource(R.string.logs_share_title)
     val exported = (state as? LogsUiState.Ready)?.exported
     LaunchedEffect(exported) {

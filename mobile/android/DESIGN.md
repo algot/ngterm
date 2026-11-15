@@ -1158,16 +1158,19 @@ The plan, reviewed against the brief:
 - **What it holds:** bodyMedium, on-surface, two sentences, never collapsed. They are the log's contract: the core
   keeps typed text, terminal output, chat messages, keys, passphrases and fingerprints out by construction, and the
   app's own lines hold to the same.
-- **Actions:** Copy (a `CopyButton`: the lines shown, "Copied" for 2 s), Share (the whole log as `ngterm-log.txt`
-  through the system's share sheet, from a file provider that lists that one file; no storage permission) and Clear
-  logs (a `ConfirmDialog` that repeats the action's words; the log then starts with a line saying it was cleared).
+- **Actions:** Copy (a `CopyButton`: the lines shown and no other, as the log wrote them, oldest first; "Copied" for
+  2 s), Share (the whole log as `ngterm-log.txt` through the system's share sheet, from a file provider that shares
+  the one export directory; each Share writes a file of its own and deletes the one before, so an app that got an
+  earlier share never reads a later log; no storage permission) and Clear logs (a `ConfirmDialog` that repeats the
+  action's words; the log then starts with a line saying it was cleared).
 - **Extent:** a bodySmall line: how many lines and how big, newest first, times in UTC. A log longer than the screen
   reads (the newest 300 lines) says so, and that Copy takes these while Share sends all of it.
 - **The plate:** `surfaceContainerLow`, mono small. A day's date (semibold, on-surface-variant) above its lines; a
   line is its time (on-surface-variant), its component (semibold), the level's word when it is a warning or an error,
   then what happened with its `key=value` fields as written. Lines wrap anywhere; a long press selects.
-- **States:** "Reading the log" while it is read; "Nothing is logged yet." with nothing in it; a Share that could not
-  write its file shows a `Banner` in the error tone saying so and what to do (free storage and share again, or copy).
+- **States:** the log is read again each time the page opens and the app comes back to the screen. "Reading the log"
+  while it is read; "Nothing is logged yet." with nothing in it; a Share that could not write its file shows a
+  `Banner` in the error tone saying so and what to do (free storage and share again, or copy).
 
 ## Copy
 

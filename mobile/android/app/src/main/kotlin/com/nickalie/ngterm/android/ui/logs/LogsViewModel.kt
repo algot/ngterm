@@ -2,10 +2,10 @@ package com.nickalie.ngterm.android.ui.logs
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.nickalie.ngterm.android.data.Diagnostics
 import com.nickalie.ngterm.android.data.LogTag
 import com.nickalie.ngterm.core.ffi.AppLogInterface
 import com.nickalie.ngterm.core.ffi.LogException
+import com.nickalie.ngterm.core.ffi.LogLevel
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.UUID
 
 /** What the Logs screen's controls do. */
 data class LogsActions(
@@ -29,9 +30,9 @@ sealed interface LogsUiState {
     data object Loading : LogsUiState
 
     /**
-     * The newest [lines] (newest first) and the text they came from ([shown], what Copy takes), out of a log of
-     * [totalBytes]; [cut] when the log holds more than is shown. [exportFailed] after a Share that could not write
-     * its file; [exported] is a file ready to share, until [LogsViewModel.shared].
+     * The newest [lines] (newest first) and the same lines as the log wrote them, oldest first ([shown], what
+     * Copy takes), out of a log of [totalBytes]; [cut] when the log holds more than is shown. [exportFailed] after
+     * a Share that could not write its file; [exported] is a file ready to share, until [LogsViewModel.shared].
      */
     data class Ready(
         val lines: List<LogLine>,
@@ -45,7 +46,8 @@ sealed interface LogsUiState {
 
 /**
  * The Logs screen over the diagnostic [log]: its newest window ([WINDOW_BYTES], at most [MAX_LINES] lines), read off
- * the main thread ([io]); Share writes the whole log into [exportDir] as [EXPORT_NAME]; Clear empties it.
+ * the main thread ([io]); Share writes the whole log as [EXPORT_NAME] into a directory of its own under [exportDir],
+ * in place of the export before it; Clear empties it. Its own lines go to the same [log].
  */
 class LogsViewModel(
     private val log: AppLogInterface,
@@ -68,16 +70,17 @@ class LogsViewModel(
 
     private suspend fun read(): LogsUiState.Ready =
         withContext(io) {
-            val shown = log.tail(WINDOW_BYTES.toUInt())
+            val tail = log.tail(WINDOW_BYTES.toUInt())
             val total = log.size().toLong()
-            val lines = parseLog(shown, MAX_LINES)
-            val whole = total <= shown.toByteArray().size && shown.lineSequence().count { it.isNotBlank() } <= MAX_LINES
-            LogsUiState.Ready(lines = lines, shown = shown, totalBytes = total, cut = !whole)
+            val read = tail.lineSequence().filter { it.isNotBlank() }.toList()
+            val shown = read.takeLast(MAX_LINES).joinToString("") { "$it\n" }
+            val cut = total > tail.toByteArray().size || read.size > MAX_LINES
+            LogsUiState.Ready(lines = parseLog(shown, MAX_LINES), shown = shown, totalBytes = total, cut = cut)
         }
 
     /** The shown lines were copied to the clipboard. */
     fun copied() {
-        Diagnostics.info(LogTag.LOGS, "copied the shown lines")
+        log.append(LogLevel.INFO, LogTag.LOGS, "copied the shown lines")
         refresh()
     }
 
@@ -86,14 +89,16 @@ class LogsViewModel(
         viewModelScope.launch {
             val file =
                 withContext(io) {
-                    exportDir.mkdirs()
-                    val target = File(exportDir, EXPORT_NAME)
+                    // a file of its own each time: an app that still reads an earlier share never gets this one
+                    exportDir.deleteRecursively()
+                    val target = File(File(exportDir, UUID.randomUUID().toString()), EXPORT_NAME)
+                    target.parentFile?.mkdirs()
                     try {
                         val bytes = log.export(target.path)
-                        Diagnostics.info(LogTag.LOGS, "exported bytes=$bytes")
+                        log.append(LogLevel.INFO, LogTag.LOGS, "exported bytes=$bytes")
                         target
                     } catch (_: LogException) {
-                        Diagnostics.warn(LogTag.LOGS, "export failed: the file could not be written")
+                        log.append(LogLevel.WARN, LogTag.LOGS, "export failed: the file could not be written")
                         null
                     }
                 }
@@ -125,7 +130,7 @@ class LogsViewModel(
         /** The exported file's name. */
         const val EXPORT_NAME = "ngterm-log.txt"
 
-        /** The directory under the app's cache the exported file is written to (res/xml/log_paths.xml shares it). */
+        /** The directory under the app's cache the exports are written under (res/xml/log_paths.xml shares it). */
         const val EXPORT_DIR = "logs-export"
     }
 }

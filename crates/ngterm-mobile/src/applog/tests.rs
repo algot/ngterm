@@ -10,8 +10,8 @@ use tracing::Dispatch;
 use tracing::subscriber::NoSubscriber;
 
 use super::{
-    AppLog, FILE_NAME, LogLevel, LogSubscriber, LoggedSink, MESSAGE_CAP, REDACTED, ROTATED_NAME, VALUE_CAP, is_class,
-    stamp, tag, variant,
+    AppLog, FILE_NAME, LogLevel, LogSubscriber, LoggedSink, MESSAGE_CAP, REDACTED, ROTATED_NAME, TAG_CAP, VALUE_CAP,
+    is_class, stamp, tag, variant,
 };
 use crate::api::{EventSink, MachineState, MobileEvent};
 use crate::chat::{ChatBody, ChatEvent, ChatState};
@@ -248,6 +248,31 @@ fn an_apps_line_is_one_line_cut_at_the_cap_under_a_plain_tag() {
     assert_eq!(kept.len(), 2);
     assert!(kept[0].ends_with("I app: first second third"), "{}", kept[0]);
     assert!(kept[1].ends_with(&format!("I app: {}", "x".repeat(MESSAGE_CAP))));
+}
+
+#[test]
+fn an_apps_tag_is_letters_digits_dashes_and_underscores_up_to_its_cap() {
+    let captured = Captured::new();
+    let longest = "t".repeat(TAG_CAP);
+    for tag in ["chat-ui", "nav_2", longest.as_str()] {
+        captured.log.append(LogLevel::Info, tag.to_owned(), "kept".to_owned());
+    }
+    let too_long = "t".repeat(TAG_CAP + 1);
+    for tag in ["ui.chat", "a:b", "a+b", "a@b", "a/b", "таг", too_long.as_str()] {
+        captured
+            .log
+            .append(LogLevel::Info, tag.to_owned(), "replaced".to_owned());
+    }
+
+    let text = captured.text();
+    let kept = lines(&text);
+    assert_eq!(kept.len(), 10);
+    for (line, tag) in kept.iter().zip(["chat-ui", "nav_2", longest.as_str()]) {
+        assert!(line.ends_with(&format!("I {tag}: kept")), "{line}");
+    }
+    for line in &kept[3..] {
+        assert!(line.ends_with("I app: replaced"), "{line}");
+    }
 }
 
 #[test]

@@ -44,7 +44,7 @@ private val SampleSettings =
         clipboard = listOf(TrustedMachine("m1", "build-01", "nick@build-01.lan:22")),
     )
 
-private val NoSettingsActions = SettingsActions({}, { _, _ -> }, {}, {}, {}, {}, {}, {}, {})
+private val NoSettingsActions = SettingsActions({}, { _, _ -> }, {}, {}, {}, {}, {}, {}, {}, {})
 
 private val SampleOffer = UpdateOffer("0.3.0", 38_200_000, "https://github.com/nickalie/ngterm/releases/tag/v0.3.0")
 

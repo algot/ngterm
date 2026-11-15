@@ -65,7 +65,7 @@ class AppLogsE2eTest {
                 val context = instrumentation.targetContext
                 File(context.filesDir, "datastore").deleteRecursively()
                 File(context.noBackupFilesDir, "keys").deleteRecursively()
-                exported().delete()
+                exportDir().deleteRecursively()
             }
         }
 
@@ -105,14 +105,14 @@ class AppLogsE2eTest {
 
         compose.onNodeWithText(text(R.string.logs_share)).performClick()
         // the test's clock draws the frames that hand the file over, so they are waited for through it
-        compose.waitUntil(SHEET_WAIT_MS) { exported().exists() }
+        compose.waitUntil(SHEET_WAIT_MS) { exported() != null }
         compose.waitForIdle()
         // the share sheet is the system's: the app is no longer the window on top
         val left = device.wait(Until.gone(By.pkg(instrumentation.targetContext.packageName).depth(0)), SHEET_WAIT_MS)
         screenshot("share-sheet")
         assertNotNull("the share sheet opened", left)
         assertTrue("the share sheet opened", left)
-        val whole = exported().readText()
+        val whole = requireNotNull(exported()).readText()
         for (line in CONNECT_LINES) assertTrue("the exported log holds \"$line\"", line in whole)
         assertTrue("the exported log holds the copy too", "logs: copied the shown lines" in whole)
         assertClean(whole, key)
@@ -165,8 +165,9 @@ class AppLogsE2eTest {
         return text
     }
 
-    private fun exported() =
-        File(File(instrumentation.targetContext.cacheDir, LogsViewModel.EXPORT_DIR), LogsViewModel.EXPORT_NAME)
+    private fun exportDir() = File(instrumentation.targetContext.cacheDir, LogsViewModel.EXPORT_DIR)
+
+    private fun exported() = exportDir().walk().firstOrNull { it.name == LogsViewModel.EXPORT_NAME }
 
     private fun awaitText(
         text: String,

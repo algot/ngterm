@@ -26,7 +26,7 @@ class SettingsStatesTest {
     fun readingSettingsShowsProgressAndAFailureOffersRetry() {
         var state: SettingsUiState by mutableStateOf(SettingsUiState.Loading)
         val ready = SettingsUiState.Ready(AppSettings(), emptySet(), emptyList(), emptyList())
-        val actions = SettingsActions({}, { _, _ -> }, {}, {}, {}, {}, {}, { state = ready }, {})
+        val actions = SettingsActions({}, { _, _ -> }, {}, {}, {}, {}, {}, { state = ready }, {}, {})
         compose.setContent {
             NgtermTheme { SettingsScreen(state, "test", true, KeyWork(), actions) }
         }
@@ -42,7 +42,7 @@ class SettingsStatesTest {
     @Config(sdk = [26], qualifiers = "w700dp-h1000dp-mdpi")
     fun android8OffersPinnedThemesButNoWallpaperColors() {
         val ready = SettingsUiState.Ready(AppSettings(), emptySet(), emptyList(), emptyList())
-        val actions = SettingsActions({}, { _, _ -> }, {}, {}, {}, {}, {}, {}, {})
+        val actions = SettingsActions({}, { _, _ -> }, {}, {}, {}, {}, {}, {}, {}, {})
         compose.setContent {
             NgtermTheme { SettingsScreen(ready, "test", true, KeyWork(), actions) }
         }

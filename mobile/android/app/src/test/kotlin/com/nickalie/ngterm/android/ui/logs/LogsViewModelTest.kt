@@ -1,6 +1,5 @@
 package com.nickalie.ngterm.android.ui.logs
 
-import com.nickalie.ngterm.android.data.Diagnostics
 import com.nickalie.ngterm.core.fake.FakeAppLog
 import com.nickalie.ngterm.core.ffi.LogLevel
 import kotlinx.coroutines.Dispatchers
@@ -11,6 +10,7 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -28,11 +28,9 @@ class LogsViewModelTest {
 
     @Before fun setUp() {
         Dispatchers.setMain(dispatcher)
-        Diagnostics.log = log
     }
 
     @After fun tearDown() {
-        Diagnostics.log = null
         Dispatchers.resetMain()
     }
 
@@ -77,6 +75,14 @@ class LogsViewModelTest {
         assertEquals(LogsViewModel.MAX_LINES, ready.lines.size)
         assertEquals("attached session=S1999 pane=P1", ready.lines.first().text)
         assertTrue(ready.shown.length <= LogsViewModel.WINDOW_BYTES)
+        // Copy takes the lines on screen and no other, as the log wrote them
+        assertEquals(
+            (1700 until 2000).map { "attached session=S$it pane=P1" },
+            ready.shown
+                .trimEnd()
+                .lines()
+                .map { it.substringAfter("pane: ") },
+        )
         assertTrue(ready.totalBytes > LogsViewModel.WINDOW_BYTES)
     }
 
@@ -87,12 +93,28 @@ class LogsViewModelTest {
         val model = model()
         model.export()
         val file = requireNotNull(model.ready().exported)
-        assertEquals(File(dir.root, "export/ngterm-log.txt"), file)
+        assertEquals("ngterm-log.txt", file.name)
+        assertEquals(File(dir.root, "export"), file.parentFile?.parentFile)
         assertEquals(whole, file.readText())
         assertFalse(model.ready().exportFailed)
         assertTrue(log.lines.last().startsWith("I logs: exported bytes="))
         model.shared()
         assertNull(model.ready().exported)
+    }
+
+    @Test
+    fun eachShareWritesAFileOfItsOwnAndTheOneBeforeIsGone() {
+        log.core('I', "link", "connect asked machine=m1")
+        val model = model()
+        model.export()
+        val first = requireNotNull(model.ready().exported)
+        model.shared()
+        log.core('I', "link", "machine connected machine=m1")
+        model.export()
+        val second = requireNotNull(model.ready().exported)
+        assertNotEquals(first, second)
+        assertFalse(first.exists())
+        assertEquals(listOf(second), File(dir.root, "export").walk().filter { it.isFile }.toList())
     }
 
     @Test

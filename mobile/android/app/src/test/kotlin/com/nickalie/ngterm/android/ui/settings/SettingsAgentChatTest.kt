@@ -71,7 +71,7 @@ class SettingsAgentChatTest {
             ViewModelProvider(models, viewModelFactory { initializer { SettingsViewModel(test.graph) } })[
                 SettingsViewModel::class.java,
             ]
-        val actions = SettingsActions(model::change, { _, _ -> }, {}, {}, {}, {}, {}, {}, {})
+        val actions = SettingsActions(model::change, { _, _ -> }, {}, {}, {}, {}, {}, {}, {}, {})
         compose.setContent {
             val state by model.state.collectAsState()
             NgtermTheme {

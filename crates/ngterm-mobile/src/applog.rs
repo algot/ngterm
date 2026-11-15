@@ -53,6 +53,8 @@ pub const ROTATED_NAME: &str = "app.log.1";
 pub const FILE_CAP: u64 = 512 * 1024;
 /// The most characters of an app's own line.
 pub const MESSAGE_CAP: usize = 300;
+/// The most characters of an app's component tag.
+pub const TAG_CAP: usize = 16;
 /// The most characters of a field's string value.
 pub const VALUE_CAP: usize = 64;
 /// What stands for a string value that is neither a class nor an id.
@@ -266,19 +268,15 @@ impl AppLog {
         Self::with_cap(dir, FILE_CAP)
     }
 
-    /// Appends the app's own line: `tag` names the component (letters, digits, `-` and `_`; anything else reads
-    /// `app`), `message` is made one line and cut at [`MESSAGE_CAP`] characters. The app never passes typed text, a
-    /// message body, a key or a passphrase.
+    /// Appends the app's own line: `tag` names the component (1 to [`TAG_CAP`] ASCII letters, digits, `-` or `_`;
+    /// anything else reads `app`), `message` is made one line and cut at [`MESSAGE_CAP`] characters. The app never
+    /// passes typed text, a message body, a key or a passphrase.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "UniFFI passes the foreign side's arguments owned"
     )]
     pub fn append(&self, level: LogLevel, tag: String, message: String) {
-        let tag = if is_class(&tag) && tag.len() <= 16 {
-            tag.as_str()
-        } else {
-            "app"
-        };
+        let tag = if is_tag(&tag) { tag.as_str() } else { "app" };
         self.line(level, tag, &one_line(&message, MESSAGE_CAP));
     }
 
@@ -365,6 +363,16 @@ pub(crate) fn variant(value: &dyn std::fmt::Debug) -> String {
 /// The tag a target shows: what follows [`tag::PREFIX`].
 fn short(target: &str) -> &str {
     target.strip_prefix(tag::PREFIX).unwrap_or(target)
+}
+
+/// Whether `value` names an app's component: 1 to [`TAG_CAP`] ASCII letters, digits, `-` or `_`, so it never holds
+/// the `:` that ends a line's tag.
+fn is_tag(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= TAG_CAP
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
 }
 
 /// Whether `value` reads as a class or an id: 1 to [`VALUE_CAP`] ASCII letters, digits or `_ - . : + @ /`, so a

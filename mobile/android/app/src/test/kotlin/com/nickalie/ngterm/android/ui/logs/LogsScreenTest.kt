@@ -11,6 +11,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.lifecycle.Lifecycle
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.nickalie.ngterm.android.TestGraph
 import com.nickalie.ngterm.android.awaitStore
@@ -67,6 +68,34 @@ class LogsScreenTest {
     }
 
     @Test
+    fun openingTheLogAgainShowsAndCopiesWhatWasLoggedSince() {
+        open()
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.awaitText("core settings-test")
+        test.logs.core('W', "chat", "action refused why=unknown-prompt")
+        compose.onNodeWithText("Logs").performScrollTo().performClick()
+        compose.awaitText("action refused why=unknown-prompt", substring = true)
+        compose.onNodeWithText("Copy").performClick()
+        val clipboard = compose.activity.getSystemService(ClipboardManager::class.java)
+        compose.awaitStore { clipboard.primaryClip != null }
+        val copied =
+            clipboard.primaryClip
+                ?.getItemAt(0)
+                ?.text
+                .toString()
+        assertTrue(copied, "W chat: action refused why=unknown-prompt" in copied)
+    }
+
+    @Test
+    fun comingBackToTheAppReadsTheLogAgain() {
+        open()
+        compose.activityRule.scenario.moveToState(Lifecycle.State.STARTED)
+        test.logs.core('I', "link", "network changed online=true")
+        compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+        compose.awaitText("network changed online=true", substring = true)
+    }
+
+    @Test
     fun copyPutsTheShownLinesOnTheClipboard() {
         open()
         compose.onNodeWithText("Copy").performClick()
@@ -100,7 +129,10 @@ class LogsScreenTest {
         assertEquals("text/plain", send.type)
         assertTrue(send.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0)
         val uri = requireNotNull(send.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java))
-        assertEquals("content://${compose.activity.packageName}.logs/logs/ngterm-log.txt", uri.toString())
+        // a path of its own for each share, under the one shared directory
+        val path = Regex("/logs/[0-9a-f-]{36}/ngterm-log\\.txt")
+        assertEquals("${compose.activity.packageName}.logs", uri.authority)
+        assertTrue(uri.toString(), path.matches(uri.path.orEmpty()))
         val sent =
             compose.activity.contentResolver
                 .openInputStream(uri)
