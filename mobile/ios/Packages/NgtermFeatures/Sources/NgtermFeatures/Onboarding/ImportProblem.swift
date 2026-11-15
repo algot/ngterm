@@ -54,6 +54,10 @@ public enum ImportProblem: Hashable, Sendable {
 
         case .Invalid(let reason):
             self = .notAKey(reason: reason)
+
+        case .PassphraseTooShort:
+            // an export's refusal, which no import gives
+            self = .notAKey(reason: error.reason)
         }
     }
 }
