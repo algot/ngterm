@@ -78,10 +78,18 @@
             return sessions[machineId] ?? []
         }
 
-        /// Refuses a chat call on `machineId` when its last listing named agterm, which has no agent chat view, as the
-        /// core does.
-        internal func offersChat(_ machineId: String) throws(MobileError) {
-            if listings[machineId]?.contains(where: { $0.peer == .agterm }) == true {
+        /// Refuses a chat call on `sessionId` of `machineId` when its last listing named the session agterm's, which
+        /// has no agent chat view, as the core does; without `sessionId` (an upload, which goes to the machine), when
+        /// every session it listed was agterm's: a machine that runs ngterm beside it is ngterm's.
+        internal func offersChat(_ machineId: String, sessionId: String? = nil) throws(MobileError) {
+            let listing = listings[machineId] ?? []
+            let isAgterm =
+                if let sessionId {
+                    listing.contains { $0.id == sessionId && $0.peer == .agterm }
+                } else {
+                    !listing.isEmpty && listing.allSatisfy { $0.peer == .agterm }
+                }
+            if isAgterm {
                 throw MobileError.Remote(reason: FakeMobileCore.noChatOnAgterm)
             }
         }

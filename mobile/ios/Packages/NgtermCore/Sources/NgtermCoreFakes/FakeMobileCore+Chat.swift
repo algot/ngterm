@@ -16,7 +16,7 @@
                 let ref = PaneRef(machineId: machineId, sessionId: sessionId, paneId: paneId)
                 try state.withLock { state throws(MobileError) in
                     _ = try state.sessionsOf(machineId)
-                    try state.offersChat(machineId)
+                    try state.offersChat(machineId, sessionId: sessionId)
                     guard state.shown[ref] != nil else {
                         throw MobileError.Remote(reason: Self.notShown)
                     }
@@ -72,7 +72,7 @@
                 let ref = PaneRef(machineId: machineId, sessionId: sessionId, paneId: paneId)
                 return try state.withLock { state throws(MobileError) in
                     _ = try state.sessionsOf(machineId)
-                    try state.offersChat(machineId)
+                    try state.offersChat(machineId, sessionId: sessionId)
                     guard let commands = state.catalogs[ref] else {
                         throw MobileError.Remote(reason: "no agent in this pane")
                     }

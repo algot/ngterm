@@ -42,6 +42,9 @@ internal struct CoreChoice {
     internal static let fakeDuplicateSlowArgument = "-ngterm-fake-duplicate-slow"
     /// With the fake core, the launch argument that leaves the question about notifying to be asked.
     internal static let fakeNotificationQuestionArgument = "-ngterm-fake-notification-question"
+    /// With the fake core, the launch argument that saves a Mac running agterm beside ngterm, a session of each
+    /// (``FakeAgtermWorld/seedBeside(_:core:keyId:)``).
+    internal static let fakeAgtermBesideArgument = "-ngterm-fake-agterm-beside"
 
     // the public key's comment, which shows in a machine's authorized_keys: whose key it is ("ngterm@iPhone")
     @MainActor private static var keyComment: String {

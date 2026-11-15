@@ -113,7 +113,7 @@ public final class AttachedSessions {
             companionOf: companionOf,
             isNested: isNested
         )
-        made.peer = connections.peers[key.machineId]
+        made.peer = connections.sessionPeers[key]
         seen[key] = made
         return made
     }

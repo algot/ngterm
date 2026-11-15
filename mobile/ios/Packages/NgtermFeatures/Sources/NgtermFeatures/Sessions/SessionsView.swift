@@ -254,7 +254,7 @@ public struct SessionsView: View {
                 attached: attached,
                 others: others,
                 banners: banners(state, failure: failure),
-                note: state.peer.flatMap { $0.isForeign ? $0.note : nil },
+                note: state.peerNote,
                 selection: selection,
                 onOpen: open,
                 onDetach: model.detach,

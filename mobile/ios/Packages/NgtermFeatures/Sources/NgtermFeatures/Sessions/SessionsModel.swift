@@ -55,6 +55,11 @@ public final class SessionsModel {
             isRefreshing: isRefreshing,
             ending: ending,
             peer: connections.peers[machineId],
+            sessionPeers: Dictionary(
+                uniqueKeysWithValues: connections.sessionPeers.compactMap { key, peer in
+                    key.machineId == machineId ? (key.sessionId, peer) : nil
+                }
+            ),
             duplicating: create?.machineId == machineId ? create?.source : nil,
             isCreating: create != nil,
             hint: connections.hints[machineId]

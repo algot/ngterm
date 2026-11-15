@@ -20,7 +20,8 @@
     /// (`split.lan`) is saved already, with a session `work` of two panes side by side (``FakeSessionWorld``), whose
     /// origin asks a question as it is attached, and whose first pane runs Claude Code (``FakeChatWorld``), each when
     /// asked too, its first Duplicate failing when asked; and, when asked, each Duplicate held a while; and, when
-    /// asked, a Mac running agterm, `studio` (``FakeAgtermWorld``).
+    /// asked, a Mac running agterm, `studio` (``FakeAgtermWorld``); and, when asked, a Mac running agterm beside
+    /// ngterm, `duo` (``FakeAgtermWorld/seedBeside(_:core:keyId:)``).
     ///
     /// Notifications go to memory (``FakeNotices``), and the question about notifying counts as asked unless the
     /// launch asks for it.
@@ -45,8 +46,8 @@
         /// The app's graph over the fake core, as the launch arguments ask.
         ///
         /// The `arguments` are ``CoreChoice``'s: a key already, two programs asking to read the clipboard, `split` with
-        /// its session, its question, its agent and its companion, `studio` running agterm, the question about
-        /// notifying left to ask, each Duplicate held ``duplicatePause``.
+        /// its session, its question, its agent and its companion, `studio` running agterm, `duo` running both, the
+        /// question about notifying left to ask, each Duplicate held ``duplicatePause``.
         @MainActor
         internal static func graph(arguments: [String]) -> AppGraph {
             graph(arguments: arguments, duplicatePause: Self.duplicatePause)
@@ -87,6 +88,9 @@
             }
             if arguments.contains(CoreChoice.fakeAgtermNotLiveArgument) {
                 FakeAgtermWorld.seedNotLive(machines, core: core, keyId: key.id)
+            }
+            if arguments.contains(CoreChoice.fakeAgtermBesideArgument) {
+                FakeAgtermWorld.seedBeside(machines, core: core, keyId: key.id)
             }
             if arguments.contains(CoreChoice.fakeDuplicateSlowArgument) {
                 holdDuplicates(core, pause: duplicatePause)

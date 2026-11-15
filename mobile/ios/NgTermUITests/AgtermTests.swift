@@ -5,12 +5,15 @@ import XCTest
 /// `studio`, whose one session `notes` runs Claude Code in its pane (the app's `FakeAgtermWorld`). Its row, its
 /// sessions screen and its session view say it runs agterm; its sessions list, attach and end as an ngterm machine's
 /// do; and its pane keeps showing the terminal: agterm has no chat view, so Chat view is off and takes no tap, and no
-/// view switch offers a chat. Beside it, an ngterm machine keeps no badge and its chat view.
+/// view switch offers a chat. Beside it, an ngterm machine keeps no badge and its chat view; and on a Mac running both
+/// apps, only the agterm session has the badge and no chat view.
 internal final class AgtermTests: XCTestCase {
     // how long a view that should not come is watched for
     private static let steady: TimeInterval = 3
     // how long a press on a row holds to bring up its context menu
     private static let longPress: TimeInterval = 1
+    // where a tap closes the menu that is up: below it
+    private static let offMenu = CGVector(dx: 0.5, dy: 0.9)
 
     @MainActor
     private static func any(_ identifier: String, in app: XCUIApplication) -> XCUIElement {
@@ -141,6 +144,59 @@ internal final class AgtermTests: XCTestCase {
         FakeApp.expect(hint, "why agterm lists nothing")
         XCTAssertTrue(hint.label.contains("Set Settings > General > Restore sessions to Live sessions"), hint.label)
         try FakeApp.audit(app)
+    }
+
+    // `duo` (the app's `FakeAgtermWorld`) runs agterm beside ngterm, Claude Code in each session's pane: the machine
+    // has no badge, `journal` (agterm's) has one in its row and its title, its Chat view is off and greyed, saying why,
+    // in the row's menu and in More, and its pane keeps the terminal; `build` (ngterm's) has no badge and shows its chat
+    @MainActor
+    internal func testOnAMacRunningBothOnlyTheAgtermSessionHasTheBadgeAndNoChat() throws {
+        let app = FakeApp.launch(withKey: true, arguments: ["-ngterm-fake-agterm-beside"], for: self)
+        FakeApp.showMachines(in: app)
+        FakeApp.expectRow("duo", reads: "Connected", in: app)
+        XCTAssertFalse(Self.any("machine-row-duo", in: app).label.contains("agterm"), "duo's row has a badge")
+
+        Self.any("machine-row-duo", in: app).tap()
+        let journal = Self.labelled("session-journal", containing: "agterm", in: app)
+        FakeApp.expect(journal, "journal's agterm badge")
+        let build = Self.any("session-build", in: app)
+        FakeApp.expect(build, "build's row")
+        XCTAssertFalse(build.label.contains("agterm"), "build's row has a badge")
+        FakeApp.expect(FakeApp.element(containing: "duo, nick at duo.lan, port 22", in: app), "duo's title")
+        XCTAssertFalse(FakeApp.element(containing: "duo.lan, port 22, agterm", in: app).exists, "duo's title badge")
+        let note = Self.labelled("sessions-peer-note", containing: "the agent chat view", in: app)
+        FakeApp.expect(note, "what agterm lacks, under the list")
+        try FakeApp.audit(app)
+
+        journal.press(forDuration: Self.longPress)
+        let chatView = Self.any("session-chat-view", in: app)
+        FakeApp.expect(chatView, "Chat view in journal's menu")
+        XCTAssertFalse(chatView.isEnabled, "journal's Chat view took a tap")
+        FakeApp.expect(FakeApp.element(containing: "agterm has no chat view", in: app), "why Chat view is off")
+        app.buttons["Attach"].tap()
+        FakeApp.expect(Self.labelled("session-title", containing: "agterm", in: app), "journal's agterm badge")
+        FakeApp.expect(Self.terminal(showing: "duo-journal$", in: app), "journal's terminal")
+        XCTAssertFalse(Self.any("chat", in: app).waitForExistence(timeout: Self.steady), "journal showed a chat")
+        XCTAssertFalse(Self.any("session-view-switch", in: app).exists, "a view switch offered journal a chat")
+        try FakeApp.audit(app)
+        app.buttons["session-menu"].tap()
+        FakeApp.expect(chatView, "Chat view in journal's More")
+        XCTAssertFalse(chatView.isEnabled, "journal's Chat view in More took a tap")
+        // a tap beside the menu closes it
+        app.windows.firstMatch.coordinate(withNormalizedOffset: Self.offMenu).tap()
+
+        Self.backToMachines(in: app)
+        Self.any("machine-row-duo", in: app).tap()
+        FakeApp.expect(build, "build's row")
+        build.press(forDuration: Self.longPress)
+        FakeApp.expect(chatView, "Chat view in build's menu")
+        XCTAssertTrue(chatView.isEnabled, "build's Chat view takes no tap")
+        XCTAssertFalse(FakeApp.element(containing: "has no chat view", in: app).exists, "build says it has no chat")
+        app.buttons["Attach"].tap()
+        FakeApp.expect(Self.any("chat", in: app), "build's chat")
+        let title = Self.any("session-title", in: app)
+        FakeApp.expect(title, "build's title")
+        XCTAssertFalse(title.label.contains("agterm"), "build's title has a badge")
     }
 
     deinit {

@@ -2,7 +2,8 @@ import SwiftUI
 
 /// A machine's sessions as a list: the banners (the device is offline, the last refresh failed), the families with a
 /// session this app has attached under "Attached", then the others under "On build-01", companions under their
-/// parents, and under the last group a `note` when the machine's app lacks features (agterm).
+/// parents, and under the last group a `note` when the machine's app, or its sessions' beside ngterm's, lacks features
+/// (agterm).
 ///
 /// Its selection is the session this window shows; selecting another attaches and opens it (`onOpen`). A row's
 /// Duplicate session asks `onDuplicate` for a copy of it.

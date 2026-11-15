@@ -10,8 +10,8 @@ import Observation
 /// ``setChatView(_:on:)``), unless its terminal was picked: by hand (``pick(_:_:)``), or because its chat ended or the
 /// origin couldn't open it (a link that is down only defers the open until it is back). A terminal so picked holds
 /// until the pane's next conversation (or the agent leaves); picking the chat again lifts it. With its session's chat
-/// view off every pane shows its terminal, as on a machine whose app has no chat view (agterm:
-/// ``Connections/peers``), where no chat is ever opened.
+/// view off every pane shows its terminal, as in a session whose app has no chat view (agterm:
+/// ``Connections/sessionPeers``), where no chat is ever opened.
 ///
 /// A shown pane (``SessionPanes/shown``) in chat view has its chat open in ``chats``, so the core's chat channels stay
 /// as few as the panes shown; a pane leaving chat view (or being hidden) closes its chat, the pane's own attach staying
@@ -110,15 +110,15 @@ public final class PaneChats {
         return store.choice(machine: key.machineId, session: key.sessionId)?.chat ?? settings.settings.agentChat
     }
 
-    /// The name of the app without a chat view that the machine of `key` runs, or `nil` when it has one.
+    /// The name of the app without a chat view that `key` is a session of, or `nil` when its app has one.
     public func noChatOn(_ key: SessionKey) -> String? {
-        guard let peer = connections.peers[key.machineId], !peer.offersChat else {
+        guard let peer = connections.sessionPeers[key], !peer.offersChat else {
             return nil
         }
         return peer.badge
     }
 
-    /// How `pane` shows: `nil` for a pane with no agent, or whose session's chat view is off or whose machine's app has
+    /// How `pane` shows: `nil` for a pane with no agent, or whose session's chat view is off or whose session's app has
     /// none (no switch then).
     public func view(of pane: PaneRef) -> PaneView? {
         let key = SessionKey(pane)

@@ -71,6 +71,8 @@ public enum SessionsBody: Hashable, Sendable {
             return .empty(failure: state.failure)
         }
         let names = Dictionary(listed.map { ($0.id, $0.name) }) { first, _ in first }
+        // the machine's own badge, in the title, already says it when every session is that app's
+        let ownApp = state.peer?.isForeign == true
         let families = SessionFamilies.of(listed).map { family in
             family.map { session in
                 SessionLine(
@@ -79,7 +81,8 @@ public enum SessionsBody: Hashable, Sendable {
                     isAttached: state.attached.contains(session.id),
                     isEnding: state.ending.contains(session.id),
                     isDuplicating: state.duplicating == session.id,
-                    canDuplicate: !state.isCreating && !state.ending.contains(session.id)
+                    canDuplicate: !state.isCreating && !state.ending.contains(session.id),
+                    peer: ownApp ? nil : state.sessionPeers[session.id].flatMap { $0.isForeign ? $0 : nil }
                 )
             }
         }

@@ -26,7 +26,8 @@ internal struct SessionEntry: View {
             // the Attached group's heading says it: the mark would only crowd the row
             isAttached: false,
             isEnding: line.isEnding,
-            isDuplicating: line.isDuplicating
+            isDuplicating: line.isDuplicating,
+            peer: line.peer?.badge
         ) {
             if let status = session.status, !status.allSatisfy(\.isWhitespace) {
                 AgentStatusBadge(status: status, colorHex: session.statusColor, shape: session.statusShape)

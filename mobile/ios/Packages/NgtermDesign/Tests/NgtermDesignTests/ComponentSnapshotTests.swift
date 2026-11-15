@@ -90,7 +90,7 @@ internal struct ComponentSnapshotTests {
         snapshot(list, named: "machines", variant: variant, height: variant == .accessibility ? 1_400 : 560)
     }
 
-    @Test("a machine's app badge, alone and after a row's address", arguments: SnapshotVariant.allCases)
+    @Test("an app badge, alone and in a machine's row and a session's", arguments: SnapshotVariant.allCases)
     internal func peerBadges(variant: SnapshotVariant) {
         let list = List {
             PeerBadge("agterm", note: "Attached from agterm: the agent chat view is not available")
@@ -105,8 +105,15 @@ internal struct ComponentSnapshotTests {
                 action: Self.noAction,
                 peer: "agterm"
             )
+            // an agterm session on a Mac that runs both apps: attached, and not
+            SessionRow(name: "notes", line: "~/notes", isAttached: true, peer: "agterm") {
+                AgentStatusBadge(status: "active")
+            }
+            SessionRow(name: "journal of the week's builds", line: "~/journal", peer: "agterm") {
+                AgentStatusBadge(status: nil)
+            }
         }
-        snapshot(list, named: "peer-badges", variant: variant, height: variant == .accessibility ? 1_000 : 400)
+        snapshot(list, named: "peer-badges", variant: variant, height: variant == .accessibility ? 1_600 : 560)
     }
 
     @Test("session rows", arguments: SnapshotVariant.allCases)

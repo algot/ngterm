@@ -4,7 +4,8 @@ import Observation
 
 /// The app's side of the mobile core's connections (mobile/android's `Connections`): each machine's ``Link``, its last
 /// listing and why the last one failed, the sessions this app has attached, and the app each machine runs (``peers``:
-/// ngterm, or agterm with fewer features), as its listings name it.
+/// ngterm, or agterm with fewer features) and each session's that isn't ngterm's (``sessionPeers``, as a machine may
+/// run both), as its listings name them.
 ///
 /// An attached session's listing carries the name its stream last said, so a rename on its machine shows everywhere at
 /// once, though the machine is listed only now and then.
@@ -29,8 +30,11 @@ public final class Connections {
     /// there), by id, as its last listing said.
     public private(set) var hints: [String: String] = [:]
     /// The app each machine runs, by id, as its connection's last listing with a session named it; a machine not here
-    /// runs ngterm or hasn't said.
+    /// runs ngterm or hasn't said. A machine that runs both apps is ngterm's: ``sessionPeers`` names its agterm
+    /// sessions.
     public private(set) var peers: [String: MachinePeer] = [:]
+    /// The app of each listed session that isn't ngterm's; a session not here is ngterm's.
+    public private(set) var sessionPeers: [SessionKey: MachinePeer] = [:]
     /// The sessions this app has attached, by machine id: each machine's session ids.
     public internal(set) var attached: [String: Set<String>] = [:] {
         didSet {
@@ -212,7 +216,7 @@ public final class Connections {
         treeFailures[machineId] = nil
         hints[machineId] = nil
         attached[machineId] = nil
-        peers[machineId] = nil
+        forgetPeers(machineId)
         streamNames = streamNames.filter { $0.key.machineId != machineId }
     }
 
@@ -358,13 +362,42 @@ public final class Connections {
         }
     }
 
-    // a listing names its machine's app on each session (one connection, one app); an empty one says nothing, so the
-    // app learned before stays
+    // a listing names each session's app; the machine's is another app than ngterm only when every session's is (a
+    // machine may run both). An empty listing says nothing, so the app learned before stays
     private func learnPeer(_ machineId: String, _ sessions: [RemoteSession]) {
-        guard let kind = sessions.lazy.compactMap(\.peer).first, peers[machineId]?.kind != kind else {
+        var apps: [PeerKind: MachinePeer] = [:]
+        var foreign: [SessionKey: MachinePeer] = [:]
+        for session in sessions {
+            guard let kind = session.peer, kind != .ngterm else {
+                continue
+            }
+            let app = apps[kind] ?? MachinePeer(kind: kind)
+            apps[kind] = app
+            foreign[SessionKey(machineId: machineId, sessionId: session.id)] = app
+        }
+        let known = sessionPeers.filter { $0.key.machineId != machineId }.merging(foreign) { _, new in new }
+        if known != sessionPeers {
+            sessionPeers = known
+        }
+        let kind: PeerKind? =
+            if sessions.isEmpty {
+                nil
+            } else if foreign.count == sessions.count {
+                sessions.first?.peer
+            } else {
+                sessions.lazy.compactMap(\.peer).first { $0 == .ngterm }
+            }
+        guard let kind, peers[machineId]?.kind != kind else {
             return
         }
-        peers[machineId] = MachinePeer(kind: kind)
+        peers[machineId] = apps[kind] ?? MachinePeer(kind: kind)
+    }
+
+    private func forgetPeers(_ machineId: String) {
+        peers[machineId] = nil
+        if sessionPeers.keys.contains(where: { $0.machineId == machineId }) {
+            sessionPeers = sessionPeers.filter { $0.key.machineId != machineId }
+        }
     }
 
     // a stream's word on its session's name (a blank one says nothing); it reaches the listing once the session is
@@ -409,7 +442,7 @@ public final class Connections {
     // old one, and a listing call on it no longer counts
     private func replaced(_ machineId: String) {
         bump(machineId)
-        peers[machineId] = nil
+        forgetPeers(machineId)
         for sessionId in (attached[machineId] ?? []).sorted() {
             detach(machineId: machineId, sessionId: sessionId)
         }

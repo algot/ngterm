@@ -51,6 +51,31 @@ internal struct FakeMobileCoreChatTests {
         #expect(core.uploads.isEmpty)
     }
 
+    @Test("a machine that runs both apps refuses the chat only of its agterm session, and takes uploads")
+    internal func agtermBesideNgtermRefusesOnlyItsSessions() async throws {
+        let core = FakeMobileCore()
+        core.sessions["m1"] = [fakeSession(id: "s1", peer: .ngterm), fakeSession(id: "s2", peer: .agterm)]
+        try await core.connect(machine: Self.machine)
+        _ = try await core.listSessions(machineId: "m1")
+        _ = try await core.showPane(machineId: "m1", sessionId: "s1", paneId: "p1", size: Self.size)
+        _ = try await core.showPane(machineId: "m1", sessionId: "s2", paneId: "p1", size: Self.size)
+        await #expect(throws: MobileError.Remote(reason: FakeMobileCore.noChatOnAgterm)) {
+            try await core.openChat(machineId: "m1", sessionId: "s2", paneId: "p1")
+        }
+        try await core.openChat(machineId: "m1", sessionId: "s1", paneId: "p1")
+        _ = try await core.uploadFile(
+            machineId: "m1",
+            name: "notes.txt",
+            bytes: Data("hi".utf8),
+            progress: { _, _ in
+                // the fake reports no progress a test reads here
+            },
+            cancel: UploadCancel()
+        )
+        #expect(core.openChats == [PaneRef(machineId: "m1", sessionId: "s1", paneId: "p1")])
+        #expect(core.uploads.count == 1)
+    }
+
     @Test("a chat opens only on a shown pane, and closes with its close or the pane's hide")
     internal func openAndClose() async throws {
         let core = try await Self.shown()

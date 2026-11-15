@@ -1,7 +1,7 @@
 import NgtermCore
 
-/// A session as the list shows it: the session, its parent's name when it is a companion, what is under way, and
-/// whether Duplicate takes a tap.
+/// A session as the list shows it: the session, its parent's name when it is a companion, what is under way, whether
+/// Duplicate takes a tap, and its app when the machine's own is another (``peer``).
 public struct SessionLine: Hashable, Sendable, Identifiable {
     /// The session.
     public let session: RemoteSession
@@ -15,6 +15,9 @@ public struct SessionLine: Hashable, Sendable, Identifiable {
     public let isDuplicating: Bool
     /// Whether Duplicate takes a tap: not while a create, or the session's End, is under way.
     public let canDuplicate: Bool
+    /// The app it is a session of when its machine's own app is another (an agterm session beside ngterm's on a
+    /// machine that runs both), for its row's badge; `nil` when the machine's app is its own.
+    public let peer: MachinePeer?
 
     /// The session's id.
     public var id: String {
@@ -33,15 +36,16 @@ public struct SessionLine: Hashable, Sendable, Identifiable {
         return session.cwd.allSatisfy(\.isWhitespace) ? nil : session.cwd
     }
 
-    /// `session` as a companion of `companionOf` (or not), attached or not, being ended or duplicated or not, and
-    /// whether it `canDuplicate`.
+    /// `session` as a companion of `companionOf` (or not), attached or not, being ended or duplicated or not, whether
+    /// it `canDuplicate`, and its app when its machine's own is another (`peer`).
     public init(
         session: RemoteSession,
         companionOf: String?,
         isAttached: Bool,
         isEnding: Bool,
         isDuplicating: Bool = false,
-        canDuplicate: Bool = true
+        canDuplicate: Bool = true,
+        peer: MachinePeer? = nil
     ) {
         self.session = session
         self.companionOf = companionOf
@@ -49,5 +53,6 @@ public struct SessionLine: Hashable, Sendable, Identifiable {
         self.isEnding = isEnding
         self.isDuplicating = isDuplicating
         self.canDuplicate = canDuplicate
+        self.peer = peer
     }
 }

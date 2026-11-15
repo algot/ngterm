@@ -1,8 +1,8 @@
 import NgtermCore
 import NgtermPlatform
 
-/// What a machine's sessions screen knows: the machine, its link, its sessions and what is under way on them, and the
-/// app it runs (mobile/android's `MachineSessions`).
+/// What a machine's sessions screen knows: the machine, its link, its sessions and what is under way on them, the app
+/// it runs and each session's that isn't ngterm's (mobile/android's `MachineSessions`).
 public struct MachineSessions: Hashable, Sendable {
     /// The machine.
     public var machine: StoredMachine
@@ -24,6 +24,8 @@ public struct MachineSessions: Hashable, Sendable {
     public var ending: Set<String>
     /// The app the machine runs, as a listing said; `nil`: ngterm, or not said.
     public var peer: MachinePeer?
+    /// The app of each session that isn't ngterm's, by session id: a machine may run both.
+    public var sessionPeers: [String: MachinePeer]
     /// The session whose Duplicate is under way, by id.
     public var duplicating: String?
     /// Whether a create (a New session, a Duplicate) is under way on this device, from any screen: none takes another.
@@ -31,10 +33,19 @@ public struct MachineSessions: Hashable, Sendable {
     /// Why the machine's agterm lists no session, as its last listing said.
     public var hint: String?
 
+    /// What the app the machine runs lacks, for the list's footer, or, on a machine that runs ngterm beside it, what
+    /// the app of its first listed session that isn't ngterm's lacks; `nil` when every session is ngterm's.
+    public var peerNote: String? {
+        if let peer, peer.isForeign {
+            return peer.note
+        }
+        return sessions.lazy.compactMap { sessionPeers[$0.id] }.first(where: \.isForeign)?.note
+    }
+
     /// The screen's facts: `machine` with its `link`, its `sessions` when it `isListed`, why the last listing
     /// `failure`d, what is `attached`, whether the device `isOffline`, a refresh is under way, which sessions are
-    /// `ending`, the app it runs (`peer`), which session is `duplicating`, whether a create `isCreating`, and why its
-    /// agterm lists nothing (`hint`).
+    /// `ending`, the app it runs (`peer`) and each session's that isn't ngterm's (`sessionPeers`), which session is
+    /// `duplicating`, whether a create `isCreating`, and why its agterm lists nothing (`hint`).
     public init(
         machine: StoredMachine,
         link: Link,
@@ -46,6 +57,7 @@ public struct MachineSessions: Hashable, Sendable {
         isRefreshing: Bool = false,
         ending: Set<String> = [],
         peer: MachinePeer? = nil,
+        sessionPeers: [String: MachinePeer] = [:],
         duplicating: String? = nil,
         isCreating: Bool = false,
         hint: String? = nil
@@ -60,6 +72,7 @@ public struct MachineSessions: Hashable, Sendable {
         self.isRefreshing = isRefreshing
         self.ending = ending
         self.peer = peer
+        self.sessionPeers = sessionPeers
         self.duplicating = duplicating
         self.isCreating = isCreating
         self.hint = hint

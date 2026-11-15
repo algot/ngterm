@@ -2,7 +2,7 @@
 ///
 /// Its machine's name, its name, context and agent status (the stream's once it has said them, the machine's last
 /// listing's until then), its machine's link, its stream's live state, its parent's name when it is a companion,
-/// whether it is nested under that parent (attached too, and listed above it), and the app its machine runs.
+/// whether it is nested under that parent (attached too, and listed above it), and the app it is a session of.
 public struct AttachedSession: Hashable, Sendable {
     /// Which session it is.
     public let key: SessionKey
@@ -22,7 +22,8 @@ public struct AttachedSession: Hashable, Sendable {
     public let companionOf: String?
     /// Whether it sits under its parent: a companion whose parent is attached and listed above it.
     public let isNested: Bool
-    /// The app its machine runs, as a listing said; `nil`: ngterm, or not said.
+    /// The app it is a session of, when a listing said another than ngterm (on a machine that runs both too); `nil`:
+    /// ngterm, or not said.
     public var peer: MachinePeer?
 
     /// The session `key` on `machine`, named `name`, over `link`, its stream at `live`, about `context`, with `status`,
