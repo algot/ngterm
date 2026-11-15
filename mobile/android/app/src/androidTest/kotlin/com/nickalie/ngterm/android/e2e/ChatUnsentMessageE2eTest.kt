@@ -3,6 +3,7 @@ package com.nickalie.ngterm.android.e2e
 import android.os.ParcelFileDescriptor
 import android.util.Base64
 import android.util.Log
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.state.ToggleableState
@@ -20,6 +21,8 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.nickalie.ngterm.android.MainActivity
@@ -36,12 +39,15 @@ import org.junit.rules.TestWatcher
 import org.junit.runner.Description
 import org.junit.runner.RunWith
 import java.io.File
+import kotlin.math.roundToInt
 
 /**
  * A chat message that can't be sent, end to end, as a person meets it: Claude Code runs in a named session, and its
  * prompt in the terminal already holds a few characters someone typed there and never entered. A long first message
  * sent from the chat is then not sent (it would go along with those characters). The chat says so, with the message
  * still in its field and Show terminal as the way on, and never the old "Use the terminal" with Answer in terminal.
+ * Nothing was said yet, so the chat still says so over the banner, with the soft keyboard open: its words are there in
+ * full, over the banner and not under it, and the banner's Show terminal is the one on screen, in full too.
  *
  * The message stays through every way to the terminal and back: the banner's Show terminal, then the session's More
  * menu (Chat view reads as off over the terminal picked, one tap brings the chat back); the bar's Show terminal, then
@@ -126,8 +132,9 @@ class ChatUnsentMessageE2eTest {
         assertTrue("no banner says the message was not sent; the pane shows:\n${paneText()}", told)
         assertEquals("the field lost the message that was not sent", 1, nodes(composer() and hasText(MESSAGE)))
         assertEquals("the chat shows a message that was not sent", 0, nodes(hasContentDescription(said(MESSAGE))))
-        assertEquals("the banner has no Show terminal", 1, nodes(bannerAction(R.string.session_show_terminal)))
         assertEquals(0, nodes(hasText(text(R.string.chat_answer_in_terminal))))
+
+        assertNothingSaidShowsInFullOverTheBanner()
 
         // the banner's way on, the terminal: nothing of the message went into it
         compose.onNode(bannerAction(R.string.session_show_terminal)).performClick()
@@ -208,9 +215,44 @@ class ChatUnsentMessageE2eTest {
     // what the banner of a message that was not sent says, after the agent's name
     private fun notSent(): String = text(R.string.chat_problem_prompt_not_found, NAME_MARK).substringAfter(NAME_MARK)
 
-    // the button beside the banner's message, not the one a chat with nothing said shows under its own text
+    // the chat with nothing said, over the banner and the keyboard: its words in full, and one Show terminal
+    private fun assertNothingSaidShowsInFullOverTheBanner() {
+        assertTrue("the soft keyboard is not open", keyboardOpen())
+        val banner = bounds(hasText(notSent(), substring = true))
+        val emptyChat =
+            listOf(
+                hasText(text(R.string.chat_empty_title)),
+                hasText(text(R.string.chat_empty_body, NAME_MARK).substringAfter(NAME_MARK), substring = true),
+            )
+        for (part in emptyChat) {
+            assertEquals("the chat with nothing said lost ${part.description}", 1, nodes(part))
+            assertTrue("the chat with nothing said shows ${part.description} cut", shownInFull(part))
+            assertTrue("${part.description} lies under the banner", bounds(part).bottom <= banner.top)
+        }
+        assertEquals("the banner has no Show terminal", 1, nodes(bannerAction(R.string.session_show_terminal)))
+        assertTrue("the banner's Show terminal is cut", shownInFull(bannerAction(R.string.session_show_terminal)))
+        assertEquals("Show terminal is offered twice", 1, nodes(hasText(text(R.string.session_show_terminal))))
+    }
+
+    // the button beside the banner's message, not the one a chat with nothing said has under its own words
     private fun bannerAction(label: Int): SemanticsMatcher =
         hasText(text(label)) and hasAnySibling(hasText(notSent(), substring = true))
+
+    private fun bounds(matcher: SemanticsMatcher): Rect = compose.onNode(matcher).fetchSemanticsNode().boundsInRoot
+
+    // nothing of the node is clipped away: what is on screen is all of it
+    private fun shownInFull(matcher: SemanticsMatcher): Boolean {
+        val node = compose.onNode(matcher).fetchSemanticsNode()
+        val shown = node.boundsInRoot
+        return shown.width.roundToInt() == node.size.width && shown.height.roundToInt() == node.size.height
+    }
+
+    private fun keyboardOpen(): Boolean =
+        compose.runOnUiThread {
+            ViewCompat
+                .getRootWindowInsets(compose.activity.window.decorView)
+                ?.isVisible(WindowInsetsCompat.Type.ime()) == true
+        }
 
     private fun chatViewState(): ToggleableState? =
         compose
