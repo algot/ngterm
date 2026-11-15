@@ -282,14 +282,18 @@ def _watch_quick_grid(ctl):
     """Start a program in the quick terminal that prints a numbered reading of the terminal's rows and columns on
     each poll, as a full-screen program reads them; its pattern and the shell's prompt. A reading newer than a request
     was taken after it, so a check can tell a fresh reading from one printed before. Nothing is typed while the panel
-    resizes: a key typed then can be lost on Windows. It polls rather than traps SIGWINCH, which Git's sh on Windows
-    can miss. The typed line holds the marker split in two and never matches."""
-    _quick_echo(ctl)
-    prompt = _last_line(assert_ok(ctl.request("quick.text"))["text"])
+    resizes: a key typed then can be lost on Windows. The watcher starts with a disposable space because showing the
+    panel can itself resize the terminal; its first reading establishes readiness before any further input. It polls
+    rather than traps SIGWINCH, which Git's sh on Windows can miss. The typed line holds the marker split in two and
+    never matches."""
+    response = ctl.wait_response(
+        "quick.text", None, lambda response: response.ok and _last_line(response.result["text"])
+    )
+    prompt = _last_line(response.result["text"])
     marker = f"QGRID{next(_markers)}"
     report = f'printf "%s%s=%s %s\\n" {marker[:5]} {marker[5:]} "$n" "$(stty size)"'
     loop = f"n=0; while :; do n=$((n+1)); {report}; sleep 0.2; done"
-    assert_ok(ctl.request("quick.type", text=f"sh -c '{loop}'\n"))
+    assert_ok(ctl.request("quick.type", text=f" sh -c '{loop}'\n"))
     return re.compile(rf"(?m)^{marker}=(\d+) (\d+) (\d+)$"), prompt
 
 
