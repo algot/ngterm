@@ -129,7 +129,7 @@ class ChatFirstMessageE2eTest {
         // a message being written, then the terminal: it shows the message that was sent
         compose.onNode(composer()).performTextInput(DRAFT)
         compose.onNode(hasContentDescription(text(R.string.session_show_terminal))).performClick()
-        compose.waitUntil(CONNECT_WAIT_MS) { nodes(terminal()) > 0 && MESSAGE_LAST_LINE in terminalText() }
+        compose.waitUntil(CONNECT_WAIT_MS) { nodes(terminal()) > 0 && MESSAGE_LAST_LINE in terminalWords() }
         screenshot("terminal")
 
         // the way back a person looks for: More > Chat view, which reads as off while the terminal is picked
@@ -215,6 +215,9 @@ class ChatFirstMessageE2eTest {
                 .flatten()
                 .joinToString("\n") { it.text }
         }.getOrDefault("")
+
+    // the terminal's text with its rows joined, so a message reads the same however the agent wrapped it
+    private fun terminalWords(): String = terminalText().split(Regex("\\s+")).joinToString(" ")
 
     // what the pane shows, in either view: every text and spoken label on screen
     private fun paneText(): String =
