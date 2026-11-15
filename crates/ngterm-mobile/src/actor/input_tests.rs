@@ -795,6 +795,63 @@ fn an_answer_whose_confirmation_times_out_still_notifies_the_origin_once() {
 }
 
 #[test]
+fn an_answer_whose_dialog_stays_up_until_the_timeout_leaves_the_origin_untold() {
+    let mut agents = Agents::start_timed("claude", "claude-44x36", expiring());
+    agents.first_is("leader");
+    agents.show(&agents.first.peer, "permission");
+    let _chat = approval_chat(&mut agents, "claude-44x36");
+    let answer = agents.act(|pane| block_on(pane.answer_approval(asked("claude-44x36"), "Yes".to_owned())));
+    inputs_until(&mut agents.first.peer, |bytes, _| {
+        without_escapes(bytes).contains(&b'1')
+    });
+    assert_eq!(outcome(&answer), Ok(AgentInputOutcome::Unconfirmed));
+    assert!(told(&agents).is_empty(), "the agent may still be waiting on the dialog");
+    assert!(
+        typed(&mut agents.first.peer).is_empty(),
+        "the answer key goes only once"
+    );
+}
+
+#[test]
+fn a_pane_swapped_while_its_answer_waits_is_still_the_one_told_of() {
+    let mut agents = Agents::start("claude", "claude-44x36");
+    agents.first_is("leader");
+    agents.show(&agents.first.peer, "permission");
+    let _chat = approval_chat(&mut agents, "claude-44x36");
+    let expected = answered_tail(
+        ngterm_core::remote::origin::OriginShell::Posix,
+        SESSION,
+        Side::Right,
+        "approval-7.5",
+        true,
+    );
+    agents.fixture.transport.script(&expected, Script::ok(""));
+    let answer = agents.act(|pane| block_on(pane.answer_approval(asked("claude-44x36"), "Yes".to_owned())));
+    inputs_until(&mut agents.first.peer, |bytes, _| {
+        without_escapes(bytes).contains(&b'1')
+    });
+    let other = uuid::Uuid::from_u128(7);
+    let swapped = Body::Layout(PresentationLayout {
+        panes: vec![other, pane_uuid()],
+        primary: other,
+        axis: Some("vertical".to_owned()),
+        shown: true,
+    });
+    let frame = PresentationFrame {
+        generation: 1,
+        rev: 4,
+        body: swapped,
+    };
+    send(&agents.stream.peer, &frames::encode(&frame).unwrap());
+    agents
+        .fixture
+        .next(|event| matches!(event, MobileEvent::SessionLayout { .. }).then_some(()));
+    agents.show(&agents.first.peer, "working");
+    assert_eq!(outcome(&answer), Ok(AgentInputOutcome::Sent));
+    assert_eq!(told(&agents), [expected]);
+}
+
+#[test]
 fn of_two_open_prompts_alike_the_origin_is_told_of_the_newest() {
     let posix = ngterm_core::remote::origin::OriginShell::Posix;
     // ids a comparison as text orders the other way, delivered in either order

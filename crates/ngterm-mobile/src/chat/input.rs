@@ -55,7 +55,8 @@
 //!   card when the answer began, by its id: the agent's next prompt, alike and up before the dialog is seen gone, is
 //!   never named, and the origin ignores the word once it has replaced the answered one. The notification is kept
 //!   before input, even if the chat closes meanwhile; an unknown interim frame waits for the next readable prompt.
-//!   A sent answer is reported once even if confirmation times out, conservatively keeping the turn working.
+//!   A sent answer is reported once even if confirmation times out, conservatively keeping the turn working,
+//!   unless the last look still showed its dialog: the origin keeps it blocked.
 //! - **Question**: per question, its tab confirmed by its text and options (a picker taller than the screen by what
 //!   is left of its text, and only while no other question of the call lists the same options); a digit picks a
 //!   single-select option (the picker moves on), digits toggle a multi-select question's boxes to the answer and Tab moves on; free text goes
@@ -353,6 +354,8 @@ pub(crate) struct Plan {
     sent: bool,
     /// What the screen showed once an answered approval's dialog went: a turn running, or the prompt back.
     resumed: Option<bool>,
+    /// The last look at an answered approval, the one its key went from included, showed the dialog it answered.
+    still_up: bool,
 }
 
 impl Plan {
@@ -363,14 +366,18 @@ impl Plan {
             step: Step::Start,
             sent: false,
             resumed: None,
+            still_up: false,
         }
     }
 
     /// The approval the plan answered, and whether the agent's turn ran on once its dialog went (its prompt back
-    /// otherwise). A sent answer with no readable prompt yet conservatively keeps the turn working.
+    /// otherwise). A sent answer with no readable prompt yet conservatively keeps the turn working; one whose dialog
+    /// was still up at the last look is not answered.
     pub(crate) fn answered(&self) -> Option<(&ChatApproval, bool)> {
         match (&self.action, self.resumed) {
-            (Action::Approval(card, _), working) if self.sent => Some((card, working.unwrap_or(true))),
+            (Action::Approval(card, _), working) if self.sent && !self.still_up => {
+                Some((card, working.unwrap_or(true)))
+            }
             _ => None,
         }
     }
@@ -447,6 +454,7 @@ impl Plan {
                 Some(option) if shown_subjects(card).iter().any(|subject| dialog.asks(subject)) => {
                     let key = option.key.into();
                     self.step = Step::Answered(dialog.clone());
+                    self.still_up = true;
                     Next::Send {
                         keys: vec![key],
                         look: true,
@@ -455,9 +463,16 @@ impl Plan {
                 _ => self.not_on_screen(),
             },
             // the dialog the key went to, still up
-            (Step::Answered(answered), Screen::Permission(dialog)) if dialog == answered => Next::Wait,
-            (Step::Answered(_), Screen::Unknown) => Next::Wait,
+            (Step::Answered(answered), Screen::Permission(dialog)) if dialog == answered => {
+                self.still_up = true;
+                Next::Wait
+            }
+            (Step::Answered(_), Screen::Unknown) => {
+                self.still_up = false;
+                Next::Wait
+            }
             (Step::Answered(_), screen) => {
+                self.still_up = false;
                 self.resumed = match screen {
                     Screen::Prompt { working, .. } => Some(*working),
                     _ => None,

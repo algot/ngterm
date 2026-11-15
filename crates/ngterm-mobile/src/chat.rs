@@ -444,6 +444,16 @@ struct Catalog {
     commands: Option<Vec<AgentCommand>>,
 }
 
+/// What tells an origin how a chat action on its pane ended, kept before the action's first key goes: the chat may
+/// close meanwhile.
+pub(crate) struct Notice<C> {
+    pub(crate) connection: Rc<C>,
+    /// The pane's side when the action began, for a session whose layout is gone by the time the notice goes.
+    side: Side,
+    /// The answered prompt's id; `None` for Stop.
+    approval: Option<String>,
+}
+
 /// A running chat channel; dropping it stops the channel.
 struct Link {
     launch: u64,
@@ -1039,19 +1049,35 @@ impl<C: Connection> Chats<C> {
             .map(|(_, id)| id.clone())
     }
 
-    /// What tells `key`'s origin that its prompt `approval` ([`Self::prompt`]) was answered ([`answered_tail`]), and
-    /// the connection to run it on: `None` when the chat is not open or its link is down.
-    pub(crate) fn answered(&self, key: &ChatKey, approval: &str, working: bool) -> Option<(Rc<C>, String)> {
+    /// What will tell `key`'s origin that its prompt `approval` ([`Self::prompt`]) was answered ([`answered_tail`]):
+    /// `None` when the chat is not open or its link is down.
+    pub(crate) fn answer_notice(&self, key: &ChatKey, approval: String) -> Option<Notice<C>> {
         let chat = &self.open[self.find(key)?];
-        let connection = chat.connection.clone()?;
-        let command = answered_tail(connection.origin_shell(), &key.session_id, chat.side, approval, working);
-        Some((connection, command))
+        Some(Notice {
+            connection: chat.connection.clone()?,
+            side: chat.side,
+            approval: Some(approval),
+        })
     }
 
-    pub(crate) fn interrupted(&self, key: &ChatKey, connection: Rc<C>) -> Option<(Rc<C>, String)> {
-        let side = self.side(key)?;
-        let command = interrupted_tail(connection.origin_shell(), &key.session_id, side);
-        Some((connection, command))
+    /// What will tell `key`'s origin that chat Stop interrupted its pane ([`interrupted_tail`]), over `connection`.
+    pub(crate) fn interrupt_notice(&self, key: &ChatKey, connection: Rc<C>) -> Option<Notice<C>> {
+        Some(Notice {
+            connection,
+            side: self.side(key)?,
+            approval: None,
+        })
+    }
+
+    /// `notice`'s command, addressed to the side `key`'s pane is on now: a pane swapped meanwhile is still the one
+    /// told of.
+    pub(crate) fn notice_command(&self, key: &ChatKey, notice: &Notice<C>, working: bool) -> String {
+        let side = self.side(key).unwrap_or(notice.side);
+        let shell = notice.connection.origin_shell();
+        match &notice.approval {
+            Some(approval) => answered_tail(shell, &key.session_id, side, approval, working),
+            None => interrupted_tail(shell, &key.session_id, side),
+        }
     }
 
     /// `key`'s catalog, fetched under `generation`: kept unless its conversation changed meanwhile.

@@ -257,11 +257,7 @@ fn an_answered_approval_says_whether_the_turn_ran_on_once_its_dialog_went() {
         let mut plan = Plan::new(Action::Approval(card.clone(), "Yes".to_owned()), Agent::Claude);
         assert_eq!(plan.answered(), None, "nothing answered yet");
         step(&mut plan, &claude);
-        assert_eq!(
-            plan.answered(),
-            Some((&card, true)),
-            "a sent answer always reaches the origin"
-        );
+        assert_eq!(plan.answered(), None, "the dialog is still up");
         assert_eq!(step(&mut plan, after), Next::Done(AgentInputOutcome::Sent));
         assert_eq!(plan.answered(), resumed.map(|working| (&card, working)), "{after:?}");
     }
@@ -283,6 +279,19 @@ fn approval_waits_through_an_unknown_frame_before_classifying_the_running_turn()
     assert_eq!(step(&mut plan, &Screen::Unknown), Next::Wait);
     assert_eq!(step(&mut plan, &WORKING), Next::Done(AgentInputOutcome::Sent));
     assert_eq!(plan.answered(), Some((&card, true)));
+}
+
+#[test]
+fn an_approval_whose_dialog_is_still_up_at_the_last_look_is_not_answered() {
+    let dialog = screen("claude-100x40", Agent::Claude, "permission");
+    let card = asked("claude-100x40");
+    let mut plan = Plan::new(Action::Approval(card.clone(), "Yes".to_owned()), Agent::Claude);
+    step(&mut plan, &dialog);
+    assert_eq!(plan.answered(), None, "the key's effect is not seen yet");
+    assert_eq!(step(&mut plan, &dialog), Next::Wait);
+    assert_eq!(plan.answered(), None, "the key may not have reached the dialog");
+    assert_eq!(step(&mut plan, &Screen::Unknown), Next::Wait);
+    assert_eq!(plan.answered(), Some((&card, true)), "the dialog is no longer seen up");
 }
 
 #[test]

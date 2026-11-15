@@ -18,7 +18,7 @@ use crate::chat::input::{
     ACTION_IN_FLIGHT, Action, AgentInputOutcome, InputTiming, NO_AGENT_TO_DRIVE, Next, Plan, approval_labels,
 };
 use crate::chat::matchers::Agent;
-use crate::chat::{ANSWERED_DEADLINE, ChatKey};
+use crate::chat::{ANSWERED_DEADLINE, ChatKey, Notice};
 use crate::note;
 use crate::pane::{PaneRef, Standing};
 use crate::sessions;
@@ -185,8 +185,9 @@ async fn act<T: Transport>(
     standing(state, &on).ok_or(PaneInputError::Closed)?;
     let agent = agent.ok_or_else(|| refused(NO_AGENT_TO_DRIVE))?;
     let _acting = Acting::take(state, &on.key)?;
-    let notification = notification(state, &on, &action);
-    let can_answer = !matches!(action, Action::Approval(..)) || notification.is_some();
+    let notice = notice(state, &on, &action);
+    let approval = matches!(action, Action::Approval(..));
+    let can_answer = !approval || notice.is_some();
     let timing = state.wiring.timing;
     let Some(attach) = lead(state, &on, timing).await? else {
         return Ok(AgentInputOutcome::LeadRefused);
@@ -222,36 +223,34 @@ async fn act<T: Transport>(
             Err(error) => break Err(error),
         }
     };
+    let working = if approval {
+        plan.answered().map(|(_, working)| working)
+    } else {
+        Some(true)
+    };
     if plan.sent()
-        && let Some((connection, active, idle)) = notification
+        && let Some(working) = working
+        && let Some(notice) = notice
     {
-        let working = plan.answered().is_none_or(|(_, working)| working);
-        let command = if working { active } else { idle };
-        if !matches!(sessions::run(&*connection, &command, ANSWERED_DEADLINE).await, Ok(result) if result.status == 0) {
+        let command = state.chats.borrow().notice_command(&on.key, &notice, working);
+        if !matches!(sessions::run(&*notice.connection, &command, ANSWERED_DEADLINE).await, Ok(result) if result.status == 0)
+        {
             return Ok(AgentInputOutcome::Unconfirmed);
         }
     }
     outcome
 }
 
-fn notification<T: Transport>(
-    state: &State<T>,
-    on: &On,
-    action: &Action,
-) -> Option<(Rc<T::Connection>, String, String)> {
+fn notice<T: Transport>(state: &State<T>, on: &On, action: &Action) -> Option<Notice<T::Connection>> {
+    let chats = state.chats.borrow();
     match action {
-        Action::Approval(card, _) => {
-            let chats = state.chats.borrow();
-            chats.prompt(&on.key, card).and_then(|prompt| {
-                let (connection, working) = chats.answered(&on.key, &prompt, true)?;
-                let (_, idle) = chats.answered(&on.key, &prompt, false)?;
-                Some((connection, working, idle))
-            })
+        Action::Approval(card, _) => chats
+            .prompt(&on.key, card)
+            .and_then(|prompt| chats.answer_notice(&on.key, prompt)),
+        Action::Interrupt => {
+            let connection = Rc::clone(&state.connections.borrow().get(&on.key.machine_id)?.connection);
+            chats.interrupt_notice(&on.key, connection)
         }
-        Action::Interrupt => state.connections.borrow().get(&on.key.machine_id).and_then(|link| {
-            let (connection, command) = state.chats.borrow().interrupted(&on.key, Rc::clone(&link.connection))?;
-            Some((connection, command.clone(), command))
-        }),
         _ => None,
     }
 }
