@@ -7,10 +7,11 @@ import UIKit
 
 @testable import NgtermFeatures
 
-/// A pane turned from its chat to its terminal (the toolbar's Show terminal, the chat's own Show terminal) while
-/// the chat's prompt field has the keyboard, in the session view: the terminal, under the chat, takes the keyboard straight from the field before the
-/// view changes, so the soft keyboard stays up and no first responder moves inside the view update (which has the
-/// hosting view read its graph mid-update, and can spin for good); the chat shown again takes it back.
+/// A pane turned from its chat to its terminal (the toolbar's Show terminal, the chat's own Show terminal) while the
+/// chat's prompt field has the keyboard, in the session view: the terminal, under the chat, takes the keyboard straight
+/// from the field before the view changes, so the soft keyboard stays up and no first responder moves inside the view
+/// update (which has the hosting view read its graph mid-update, and can spin for good); the chat shown again takes it
+/// back.
 @MainActor
 @Suite("a pane turning between its chat and its terminal")
 internal struct PaneTurnTests {

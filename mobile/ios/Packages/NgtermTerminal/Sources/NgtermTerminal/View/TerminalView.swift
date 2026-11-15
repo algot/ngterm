@@ -351,11 +351,7 @@ public final class TerminalView: UIView {
         made.isPaused = !framePending
         made.add(to: .main, forMode: .common)
         link = made
-        if comesOnInViewUpdates {
-            keyboard.takeAfterViewUpdate()
-        } else {
-            takeHandover()
-        }
+        takeHandoverInWindow()
     }
 
     /// A touch or a click on it selects it (``onSelect``), whatever it goes on to do.

@@ -53,6 +53,16 @@ extension TerminalView {
         takeHandover(comingOn: false)
     }
 
+    /// The terminal came into a window: it takes the handover as ``takeHandover()``, one SwiftUI put there
+    /// (``comesOnInViewUpdates``) once that view update is over.
+    internal func takeHandoverInWindow() {
+        if comesOnInViewUpdates {
+            keyboard.takeAfterViewUpdate()
+        } else {
+            takeHandover()
+        }
+    }
+
     /// As ``takeHandover()``, for a terminal about to be drawn focused too (`comingOn`: its pane turns from its chat
     /// to it).
     internal func takeHandover(comingOn: Bool) {

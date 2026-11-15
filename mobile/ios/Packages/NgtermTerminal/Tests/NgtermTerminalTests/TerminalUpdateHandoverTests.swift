@@ -14,9 +14,9 @@ import UIKit
 @Suite("the focus handed over to a terminal in a view update")
 internal struct TerminalUpdateHandoverTests {
     private struct Slot: View {
-        internal let terminal: TerminalViewRepresentable?
+        let terminal: TerminalViewRepresentable?
 
-        internal var body: some View {
+        var body: some View {
             if let terminal {
                 terminal
             } else {
