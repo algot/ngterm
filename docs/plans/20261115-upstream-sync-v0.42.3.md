@@ -165,6 +165,11 @@ What Task 1 left for the feature tasks:
 - Nine commands answer `NAME is not supported by this host` (`session.page`, `session.companion.convert`,
   `session.overlay.wrap`, `window.remote.open|dismiss`, `session|workspace.detach|reattach`); the task that builds
   one replaces its arm and makes the `since`-marked tests of it pass on Rust.
+- `conformance/tests/cli/test_registered_ahead_cli.py` holds these interim answers on the Rust build (in the ratchet;
+  it skips on a build at 0.42.0, the reference included): the help of the new leaves, the nine refusals by name,
+  `server install`'s refusal and the app's refusal of a markdown page's `--navigation`. The task that builds one
+  removes its case there and its id from `conformance/rust-passing.txt` in the same commit (Tasks 17 and 33 theirs);
+  Task 41 removes the module and its remaining ids.
 - `catalog.subscribe`, `catalog.op` and any `opID` already answer upstream's refusals of an app with windows, in
   ngterm's words (`… served only by ngterm-headless`, rust-build.md > Other strings of the build's own): the suite's
   vocabulary selftest holds every translated text to a Rust literal, so the texts came with their tests.
