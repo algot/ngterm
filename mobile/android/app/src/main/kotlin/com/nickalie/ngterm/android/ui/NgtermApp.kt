@@ -32,6 +32,7 @@ import com.nickalie.ngterm.android.data.SessionKey
 import com.nickalie.ngterm.android.ui.asks.AskPrompt
 import com.nickalie.ngterm.android.ui.asks.NotificationPermissionPrompt
 import com.nickalie.ngterm.android.ui.chat.ChatViewModel
+import com.nickalie.ngterm.android.ui.chat.KeepDrafts
 import com.nickalie.ngterm.android.ui.machines.HostKeySheet
 import com.nickalie.ngterm.android.ui.machines.MachinesRoute
 import com.nickalie.ngterm.android.ui.machines.MachinesUiState
@@ -104,6 +105,7 @@ fun NgtermApp(
     sessions: SessionViewModel = viewModel { SessionViewModel(graph) },
 ) {
     val step by onboarding.step.collectAsStateWithLifecycle()
+    KeepDrafts(graph.chats)
     when (step) {
         OnboardingStep.Loading -> {
             Box(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background))

@@ -50,7 +50,8 @@ enum class PaneView { Terminal, Chat }
  * has its chat open in [chats], one [ChatViewModel] each, so the core's chat channels stay as few as the panes on
  * screen; a pane leaving chat view (or the screen) closes its chat, and the pane's own attach stays open behind it all
  * along. A prompt being written in a chat that closes comes back to the pane's next chat of the same conversation,
- * unless it was on its way to the agent and went. A session's Chat view item reads [chatViewItems], whichever menu
+ * unless it was on its way to the agent and went; while the app is put away saved state holds it, and
+ * a new process takes it back ([keptDrafts]). A session's Chat view item reads [chatViewItems], whichever menu
  * shows it.
  * Events arrive on the core's thread; the flows take them from any. Used on the main thread. A chat's `/` menu ranks
  * the agent's commands with [filter] (the core's `filter_commands`; the app's tests, which run without the native
@@ -96,6 +97,9 @@ class PaneChats(
 
     /** The open chats, by pane. */
     val chats: StateFlow<Map<PaneRef, ChatViewModel>> = chatState.asStateFlow()
+
+    /** The prompts kept from the chats that closed, for saved state to hold while the app is put away. */
+    val keptDrafts: KeptPrompts get() = drafts
 
     init {
         connections.listen(::onEvent)
@@ -298,6 +302,30 @@ private data class Hold(
 // what the origin announced of [pane]'s agent, or `null` when it runs none
 private fun Map<SessionKey, LiveSession>.agent(pane: PaneRef): PaneAgent? = this[pane.session]?.agents?.get(pane.paneId)
 
+/** A prompt kept from [pane]'s chat that closed, as saved state holds it: its [text], written in [conversation]. */
+data class PaneDraft(
+    val pane: PaneRef,
+    val conversation: String,
+    val text: String,
+)
+
+/** The prompts kept from the chats that closed, as saved state reads and brings them back. Main thread only. */
+interface KeptPrompts {
+    /**
+     * Those saved state can hold: each with a conversation to come back to, and short enough ([KEPT_DRAFT_MAX]). One
+     * still on its way to the agent is among them: a process let go meanwhile can't say whether it went, so its text
+     * comes back to the field.
+     */
+    fun saved(): List<PaneDraft>
+
+    /**
+     * Takes the drafts [saved] before the app's process was let go, each for its pane's next chat of its conversation
+     * (or the one open by now). Only the first call of a process counts: later ones (the activity made again in the
+     * same process) bring what is kept here already, or was let go since.
+     */
+    fun take(saved: List<PaneDraft>)
+}
+
 // a prompt kept from a chat that closed: its [text], the [conversation] it was written in (`null`: the one its
 // pane's agent has still to name), and its send still on its way as the chat closed ([sending])
 private class Kept(
@@ -311,13 +339,15 @@ private class Kept(
  * One written before the conversation had a name follows its pane's agent as a picked terminal does ([follow]): it
  * takes the first name the agent gets, and goes with the agent. One on its way to the agent as its chat closed waits
  * for the send to end, which the core carries through whoever waits for it: sent, it is let go, so it is never sent
- * twice; else it goes to the pane's chat [open] then, or its next. Main thread only, its waits in [scope].
+ * twice; else it goes to the pane's chat [open] then, or its next. They outlive the app's process as far as saved state
+ * holds them ([saved], [take]). Main thread only, its waits in [scope].
  */
 private class Drafts(
     private val scope: CoroutineScope,
     private val open: (PaneRef) -> ChatViewModel?,
-) {
+) : KeptPrompts {
     private val kept = mutableMapOf<PaneRef, Kept>()
+    private var taken = false
 
     // closes [chat], keeping what its field holds for the conversation it follows, else the one its pane's [agent]
     // announced, else the one that agent names next; with no agent left there is no conversation to keep it for
@@ -349,6 +379,25 @@ private class Drafts(
         val draft = kept[chat.pane]?.takeUnless { it.sending?.isActive == true } ?: return
         kept.remove(chat.pane)
         hand(chat, draft)
+    }
+
+    override fun saved(): List<PaneDraft> =
+        kept.mapNotNull { (pane, draft) ->
+            val named = draft.conversation?.takeIf { draft.text.length <= KEPT_DRAFT_MAX }
+            named?.let { PaneDraft(pane, it, draft.text) }
+        }
+
+    // each to its pane's open chat, else kept for its next
+    override fun take(saved: List<PaneDraft>) {
+        if (taken) return
+        taken = true
+        for (draft in saved) {
+            val chat = open(draft.pane)
+            when {
+                chat != null -> chat.restoreDraft(draft.conversation, draft.text)
+                draft.pane !in kept -> kept[draft.pane] = Kept(draft.conversation, draft.text, null)
+            }
+        }
     }
 
     // a draft's send ended after its chat closed: sent, the draft goes; else the pane's open chat takes it

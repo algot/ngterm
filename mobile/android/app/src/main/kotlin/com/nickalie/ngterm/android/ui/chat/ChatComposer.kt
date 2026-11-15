@@ -163,9 +163,11 @@ class ChatComposer(
         if (draft.text.trim() == text) draft = TextFieldValue()
     }
 
-    /** Puts a [text] kept from before back in the field, unless the field holds something already. */
-    internal fun restore(text: String) {
-        if (draft.text.isEmpty()) edit(TextFieldValue(text, TextRange(text.length)))
+    /** Puts a [text] kept from before back in the field, unless the field holds something already; whether it did. */
+    internal fun restore(text: String): Boolean {
+        if (draft.text.isNotEmpty()) return false
+        edit(TextFieldValue(text, TextRange(text.length)))
+        return draft.text.isNotEmpty()
     }
 
     /** A new conversation: its catalog is asked for afresh, at once while the menu is open. */

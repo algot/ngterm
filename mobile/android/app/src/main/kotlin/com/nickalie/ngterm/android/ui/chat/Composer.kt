@@ -119,6 +119,44 @@ fun KeepDraft(
     }
 }
 
+/**
+ * Keeps the drafts of [chats]' chats that closed (their panes show the terminal, or left the screen:
+ * [PaneChats.keptDrafts]) while the app is put away and its process let go, and hands them back to [chats] when the
+ * app comes back, for each pane's next chat of the same conversation. Stands wherever the app does, as those chats
+ * have no [KeepDraft] on screen.
+ */
+@Composable
+fun KeepDrafts(chats: PaneChats) {
+    val prompts = chats.keptDrafts
+    val kept = rememberSaveable(prompts, saver = keptDraftsSaver(prompts::saved)) { KeptDrafts(emptyList()) }
+    LaunchedEffect(kept) { prompts.take(kept.drafts) }
+}
+
+/** The drafts [KeepDrafts] brought back: none in a process that starts afresh. */
+internal class KeptDrafts(
+    val drafts: List<PaneDraft>,
+)
+
+/** How [KeepDrafts] saves: the drafts [kept] as the state is saved, each as [keptDraftSaver]'s fields. */
+internal fun keptDraftsSaver(kept: () -> List<PaneDraft>): Saver<KeptDrafts, Any> =
+    Saver(
+        save = {
+            val fields = ArrayList<String>()
+            for ((pane, conversation, text) in kept()) {
+                fields += listOf(pane.machineId, pane.sessionId, pane.paneId, conversation, text)
+            }
+            fields.takeIf { it.isNotEmpty() }
+        },
+        restore = { saved ->
+            val fields = (saved as? List<*>)?.filterIsInstance<String>().orEmpty()
+            val drafts =
+                fields.takeIf { it.size % KEPT_FIELDS == 0 }?.chunked(KEPT_FIELDS) {
+                    PaneDraft(PaneRef(it[0], it[1], it[2]), it[KEPT_CONVERSATION], it[KEPT_TEXT])
+                }
+            KeptDrafts(drafts.orEmpty())
+        },
+    )
+
 /** The most characters of a draft [KeepDraft] keeps. */
 const val KEPT_DRAFT_MAX = 16_384
 

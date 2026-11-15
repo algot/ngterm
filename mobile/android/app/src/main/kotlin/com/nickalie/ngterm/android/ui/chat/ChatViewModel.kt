@@ -1,5 +1,6 @@
 package com.nickalie.ngterm.android.ui.chat
 
+import androidx.compose.ui.text.input.TextFieldValue
 import com.nickalie.ngterm.android.data.reason
 import com.nickalie.ngterm.core.ffi.AgentCommand
 import com.nickalie.ngterm.core.ffi.AgentInputOutcome
@@ -373,19 +374,27 @@ class ChatViewModel internal constructor(
      * only into the [conversation] it was written for, and only into an empty field. A chat that follows that
      * conversation ([ChatViewModel.conversation]: named by its events, or the one its pane announces while its
      * events name none) takes it at once; one whose conversation has no name yet waits for its events to
-     * name it.
+     * name it. A draft taken on the pane's announcement alone goes out of the field again when the chat's events
+     * then name another conversation (the pane had moved on, its announcement still on its way), unless the field
+     * holds something else by then.
      */
     internal fun restoreDraft(
         conversation: String,
         text: String,
     ) {
-        if (conversation == this.conversation) {
-            composer.restore(text)
-            return
-        }
+        val named = chat.value.conversation?.conversationId
+        // the pane's announcement stands in for the name the events have still to give
+        val announced = named == null && conversation == this.conversation
+        val put = (named == conversation || announced) && composer.restore(text)
+        if (named != null || (announced && !put)) return
+        // what the field made of it (its line breaks)
+        val shown = composer.draft.text
         scope.launch {
             val now = chat.mapNotNull { it.conversation?.conversationId }.first()
-            if (now == conversation) composer.restore(text)
+            when {
+                !announced -> if (now == conversation) composer.restore(text)
+                now != conversation -> if (composer.draft.text == shown) composer.edit(TextFieldValue())
+            }
         }
     }
 

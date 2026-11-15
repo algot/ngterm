@@ -633,7 +633,9 @@ compact                            medium (rail open)               expanded
   lifts it, and so does turning the session's Chat view on (below). A message being written in the chat's composer
   waits for the pane's next chat of the same conversation, so the trip to the terminal and back loses nothing (one
   that was on its way to the agent as the chat closed comes back only if it did not go, so it is never sent twice;
-  one written before the conversation had a name follows the pane's agent, and goes with it). When
+  one written before the conversation had a name follows the pane's agent, and goes with it; one put back on the
+  pane's word alone leaves the field again if the chat then names another conversation). It waits through the app
+  being put away too, as a draft in an open chat does. When
   the agent ends, or its chat ends or can't open (an origin without the chat view), the pane shows its
   terminal and the switch offers the chat back while the agent is still announced. A pane without an agent, or every
   pane of a session with its chat view off, has no switch. Switching never resizes the pane or moves its lead: the terminal stays
