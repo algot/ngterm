@@ -54,6 +54,7 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle, ThreadId};
 use std::time::Duration;
 
+use ngterm_core::remote::not_live;
 use ngterm_core::remote::peer::origin_pane_identity as pane_identity;
 use ngterm_proto::{ControlRemoteTree, RemotePeer};
 use uuid::Uuid;
@@ -991,6 +992,7 @@ fn listed<T: Transport>(
 ) -> Vec<RemoteSession> {
     let tree = with_skipped_app(state, &machine_id, tree);
     let sessions = sessions::listed_sessions(&tree);
+    let hint = not_live::hint(&tree);
     if !state.is_current(&machine_id, &link.connection) {
         return sessions;
     }
@@ -1006,6 +1008,7 @@ fn listed<T: Transport>(
     state.emit(MobileEvent::Tree {
         machine_id,
         sessions: sessions.clone(),
+        hint,
     });
     sessions
 }
@@ -1085,17 +1088,21 @@ async fn end_session<T: Transport>(
         return Ok(());
     }
     let ticket = state.ticket();
-    let sessions = {
+    let listed = {
         let mut listings = state.listings.borrow_mut();
         let kept = listings.entry(machine_id.clone()).or_default();
         kept.as_of = ticket;
         kept.tree.as_mut().map(|tree| {
             sessions::forget(tree, &session_id);
-            sessions::listed_sessions(tree)
+            (sessions::listed_sessions(tree), not_live::hint(tree))
         })
     };
-    if let Some(sessions) = sessions {
-        state.emit(MobileEvent::Tree { machine_id, sessions });
+    if let Some((sessions, hint)) = listed {
+        state.emit(MobileEvent::Tree {
+            machine_id,
+            sessions,
+            hint,
+        });
     }
     Ok(())
 }

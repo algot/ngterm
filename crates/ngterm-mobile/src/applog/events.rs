@@ -158,12 +158,17 @@ fn machine(event: &MobileEvent) {
                 machine = machine_id.as_str()
             );
         }
-        MobileEvent::Tree { machine_id, sessions } => note!(
+        MobileEvent::Tree {
+            machine_id,
+            sessions,
+            hint,
+        } => note!(
             INFO,
             tag::SESSIONS,
             "session list reported",
             machine = machine_id.as_str(),
-            sessions = sessions.len()
+            sessions = sessions.len(),
+            hint = hint.is_some()
         ),
         _ => {}
     }

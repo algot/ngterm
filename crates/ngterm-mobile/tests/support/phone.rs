@@ -47,6 +47,8 @@ pub(crate) struct Seen {
     pub(crate) chat_states: Vec<ChatState>,
     /// Every session status, in order: `idle`, `active`, `completed` or `blocked`, `None` when cleared.
     pub(crate) statuses: Vec<Option<String>>,
+    /// Every listing's hint, in order ([`MobileEvent::Tree`]).
+    pub(crate) hints: Vec<Option<String>>,
 }
 
 impl std::fmt::Debug for Seen {
@@ -67,6 +69,7 @@ impl std::fmt::Debug for Seen {
             .field("chat_recent", &recent)
             .field("chat_states", &self.chat_states)
             .field("statuses", &self.statuses)
+            .field("hints", &self.hints)
             .finish()
     }
 }
@@ -95,6 +98,7 @@ impl Seen {
             MobileEvent::Chat { events, .. } => self.chat.extend(events),
             MobileEvent::ChatState { state, .. } => self.chat_states.push(state),
             MobileEvent::SessionStatus { status, .. } => self.statuses.push(status.map(|status| status.status)),
+            MobileEvent::Tree { hint, .. } => self.hints.push(hint),
             _ => {}
         }
     }

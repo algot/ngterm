@@ -452,6 +452,7 @@ fn machine_events() -> Vec<MobileEvent> {
         MobileEvent::Tree {
             machine_id: machine_id(),
             sessions: vec![session(&private())],
+            hint: Some(private()),
         },
         MobileEvent::MachineState {
             machine_id: machine_id(),

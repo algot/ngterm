@@ -401,7 +401,9 @@ fn ids(sessions: &[crate::sessions::RemoteSession]) -> Vec<&str> {
 fn next_tree(events: &Receiver<Received>) -> (String, Vec<crate::sessions::RemoteSession>) {
     loop {
         match events.recv_timeout(WAIT).expect("an event").2 {
-            MobileEvent::Tree { machine_id, sessions } => return (machine_id, sessions),
+            MobileEvent::Tree {
+                machine_id, sessions, ..
+            } => return (machine_id, sessions),
             MobileEvent::MachineState { .. } => {}
             other => panic!("unexpected {other:?}"),
         }
@@ -448,6 +450,66 @@ fn a_listing_is_answered_and_arrives_as_a_tree() {
     let (machine_id, event) = next_tree(&events);
     assert_eq!(machine_id, "m1");
     assert_eq!(event, sessions);
+}
+
+/// A Mac whose agterm lists nothing and is not in Live sessions mode: the tree says why, naming the machine by its
+/// label; a plain listing says nothing more.
+#[test]
+fn a_tree_says_why_an_agterm_lists_nothing() {
+    use ngterm_core::remote::not_live;
+    let transport = FakeTransport::new();
+    let tree = ngterm_core::remote::ssh::tree_tail(ngterm_core::remote::origin::OriginShell::Posix);
+    let empty = serde_json::json!({"ok": true, "result": {"remote": {
+        "endpoint": {"executable": "/Applications/agterm.app/Contents/MacOS/zmx", "socketDirectory": "/tmp/z"},
+        "sessions": [],
+    }}});
+    transport.script(
+        &tree,
+        crate::transport::fake::Script::ok(&format!("{}\n{empty}", ngterm_core::remote::peer::AGTERM_ANSWER)),
+    );
+    let mode = serde_json::json!({"ok": true, "result": {"restore": {
+        "configured": "none", "requestedAtLaunch": "none", "active": "none", "restartRequired": false,
+    }}});
+    transport.script(
+        &not_live::restore_tail(),
+        crate::transport::fake::Script::ok(&mode.to_string()),
+    );
+    let (sink, events) = recorder();
+    let core = core(&transport, &sink);
+    let mut studio = machine("m1", "box.example");
+    studio.label = "Studio".to_owned();
+    block_on(core.connect(studio)).expect("connected");
+
+    assert!(
+        block_on(core.list_sessions("m1".to_owned()))
+            .expect("listed")
+            .is_empty()
+    );
+
+    let hint = loop {
+        match events.recv_timeout(WAIT).expect("an event").2 {
+            MobileEvent::Tree { hint, .. } => break hint,
+            MobileEvent::MachineState { .. } => {}
+            other => panic!("unexpected {other:?}"),
+        }
+    };
+    assert_eq!(
+        hint.as_deref(),
+        Some(
+            "agterm on Studio is not in Live sessions mode: set Settings > General > Restore sessions to Live \
+             sessions and restart agterm; only sessions started after that can be attached"
+        )
+    );
+
+    transport.script(&tree, listing(&[(PARENT, None)]));
+    block_on(core.list_sessions("m1".to_owned())).expect("listed");
+    loop {
+        match events.recv_timeout(WAIT).expect("an event").2 {
+            MobileEvent::Tree { hint, .. } => break assert_eq!(hint, None),
+            MobileEvent::MachineState { .. } => {}
+            other => panic!("unexpected {other:?}"),
+        }
+    }
 }
 
 #[test]

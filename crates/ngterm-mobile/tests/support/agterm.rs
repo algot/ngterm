@@ -100,6 +100,23 @@ impl StandIn {
             .collect()
     }
 
+    /// Sets agterm's restore mode, as its Settings would for the next launch and that launch did.
+    pub(crate) fn set_restore(&self, mode: &str) {
+        let path = self.directory.join("state.json");
+        let mut state: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).expect("the stand-in's state")).expect("its JSON");
+        state["restore"] = serde_json::Value::from(mode);
+        fs::write(&path, state.to_string()).expect("write the stand-in's state");
+    }
+
+    /// agterm's restore mode now.
+    pub(crate) fn restore(&self) -> String {
+        let state: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(self.directory.join("state.json")).expect("the stand-in's state"))
+                .expect("its JSON");
+        text(&state["restore"])
+    }
+
     /// The names of the sessions agterm itself lists now (its own `agtermctl zmx tree --json`).
     pub(crate) fn sessions(&self) -> Vec<String> {
         let output = Command::new(self.bin().join("agtermctl"))

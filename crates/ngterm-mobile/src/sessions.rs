@@ -27,6 +27,7 @@ mod tests;
 
 use std::time::Duration;
 
+use ngterm_core::remote::not_live;
 use ngterm_core::remote::origin::{self, OriginForm, OriginShell};
 use ngterm_core::remote::origin_replies::{
     COMPANION_DEADLINE, ListingWait, NEW_SESSION_ARGUMENTS, PAUSE, RESTORE_MODE_ARGUMENTS, WaitStep,
@@ -327,7 +328,8 @@ async fn control_in<C: Connection, S: AsRef<str>>(
     run(connection, &control_tail(form, arguments), COMPANION_DEADLINE).await
 }
 
-/// `host`'s attachable sessions, within `deadline`; `host` is the name the messages give the machine.
+/// `host`'s attachable sessions, within `deadline`; `host` is the name the messages give the machine. An agterm there
+/// that lists none is asked its restore mode, as desktop's picker asks it ([`not_live`]), so the listing says why.
 ///
 /// # Errors
 ///
@@ -337,9 +339,15 @@ pub async fn read_tree<C: Connection>(
     host: &str,
     deadline: Duration,
 ) -> Result<ControlRemoteTree, String> {
-    let result = run_tree(connection, deadline, None).await.inspect_err(|_| {
+    let mut result = run_tree(connection, deadline, None).await.inspect_err(|_| {
         note!(WARN, tag::SESSIONS, "listing failed", class = "no-channel", host = host);
     })?;
+    if not_live::asks_restore_mode(&result) {
+        // the mode only says why agterm listed nothing, so a failed ask leaves the listing as it is
+        if let Ok(restore) = run(connection, &not_live::restore_tail(), not_live::RESTORE_DEADLINE).await {
+            result = not_live::with_restore(result, &restore);
+        }
+    }
     let tree = read_remote_tree(&result, host).inspect_err(|_| {
         note!(
             WARN,

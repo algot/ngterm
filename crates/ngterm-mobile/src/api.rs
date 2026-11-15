@@ -106,6 +106,9 @@ pub enum MobileEvent {
     Tree {
         machine_id: String,
         sessions: Vec<RemoteSession>,
+        /// Why the machine's agterm lists no session: it is not in Live sessions mode, and what to change there
+        /// (desktop's words). `None` for every other listing, an agterm in that mode with no session yet included.
+        hint: Option<String>,
     },
     /// An attached session's presentation stream changed state ([`MobileCore::attach_session`]). Leaving `Connected`
     /// is followed by what that takes away: the open asks dismissed, the context, status and HUD cleared.

@@ -26,7 +26,8 @@
 //! agterm beside it, in one login). The phone lists the sessions of both, each with the app that listed it; New
 //! Session goes to ngterm; an agterm session is typed into and ended through agterm, and has no chat. A second
 //! server of the user's, another private `ngterm-headless`, lists the machine with `ngtermctl live tree HOST` and
-//! attaches a session of each app with `ngtermctl live attach HOST ID`, each through its own app.
+//! attaches a session of each app with `ngtermctl live attach HOST ID`, each through its own app. With agterm's
+//! sessions gone and agterm outside Live sessions mode, both say why it lists nothing.
 //!
 //! Without `sshd` a test skips with a reason, unless `CI` is set: there it fails.
 //!
@@ -237,4 +238,28 @@ fn a_machine_running_both_apps_lists_the_sessions_of_both_and_each_works_through
         text.contains(&format!("no attachable sessions on {HOST} (agterm)")) && text.contains(&ngterm.id),
         "{text}"
     );
+    assert!(
+        !text.contains("Live sessions mode"),
+        "agterm in Live sessions mode got a hint: {text}"
+    );
+
+    // agterm outside Live sessions mode: the viewer and the phone say why it lists nothing, and nothing set its mode
+    host.agterm.set_restore("none");
+    let not_live = "is not in Live sessions mode: set Settings > General > Restore sessions to Live sessions and \
+                    restart agterm; only sessions started after that can be attached";
+    let text = viewer
+        .headless
+        .ctl(&["live", "tree", HOST])
+        .expect("the viewer's listing");
+    assert!(text.ends_with(&format!("agterm on {HOST} {not_live}\n")), "{text}");
+    second.drain();
+    second.sessions();
+    second.wait("the listing's hint", |seen| {
+        seen.hints.last().is_some_and(Option::is_some)
+    });
+    assert_eq!(
+        second.seen.hints.last().cloned().flatten(),
+        Some(format!("agterm on e2e machine {not_live}"))
+    );
+    assert_eq!(host.agterm.restore(), "none");
 }

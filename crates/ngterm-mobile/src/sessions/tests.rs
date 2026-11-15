@@ -204,6 +204,47 @@ async fn an_agterm_machine_is_learned_from_its_listing_and_gets_agterms_lines() 
     );
 }
 
+/// An agterm Mac that lists nothing is asked, read-only, for its restore mode, so the listing says why; one in Live
+/// sessions mode, or one that does not answer the ask, lists nothing and says nothing more.
+#[tokio::test(start_paused = true)]
+async fn an_agterm_that_lists_nothing_is_asked_its_mode_and_the_listing_says_why() {
+    use ngterm_core::remote::origin::OriginShell;
+    let empty = json!({"ok": true, "result": {"remote": {
+        "endpoint": {"executable": "/Applications/agterm.app/Contents/MacOS/zmx", "socketDirectory": "/tmp/agterm-zmx-1"},
+        "sessions": [],
+    }}});
+    let answer = Script::ok(&format!("{}\n{empty}", ngterm_core::remote::peer::AGTERM_ANSWER));
+    let cases = [
+        (
+            Some(restore_mode("none")),
+            Some(
+                "agterm on box is not in Live sessions mode: set Settings > General > Restore sessions to Live \
+                 sessions and restart agterm; only sessions started after that can be attached",
+            ),
+        ),
+        (Some(restore_mode("live")), None),
+        (Some(exits(1, "", "Error: agterm is not running\n")), None),
+        (None, None),
+    ];
+    for (restore, said) in cases {
+        let transport = FakeTransport::new();
+        transport.script(&tree_tail(OriginShell::Posix), answer.clone());
+        if let Some(restore) = restore {
+            transport.script(&not_live::restore_tail(), restore);
+        }
+        let connection = fresh(&transport).await;
+
+        let tree = list(&connection, HOST).await.expect("a listing");
+
+        assert!(tree.sessions.is_empty());
+        assert_eq!(not_live::hint(&tree).as_deref(), said);
+        assert_eq!(
+            commands(&transport),
+            [tree_tail(OriginShell::Posix), not_live::restore_tail()]
+        );
+    }
+}
+
 /// A first control line on a fresh connection is agterm's on an agterm-only Mac: the app is listed first, never guessed.
 #[tokio::test]
 async fn a_fresh_connections_first_control_line_lists_the_app_first() {
