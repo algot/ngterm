@@ -672,9 +672,37 @@ pub struct FakeProcessTable {
     executables: std::cell::RefCell<BTreeMap<i32, String>>,
     /// The `PATH` each process reports.
     search_paths: std::cell::RefCell<BTreeMap<i32, String>>,
+    /// How many times a read listed every process, as the Windows table does ([`FakeProcessTable::listings`]).
+    listings: Rc<std::cell::Cell<usize>>,
 }
 
 impl FakeProcessTable {
+    /// A count of the times a read listed every process, as the Windows table does: each [`crate::ProcessTable::group`]
+    /// and [`crate::ProcessTable::terminal_foreground`] read on this table, and one for each
+    /// [`crate::ProcessTable::shared_listing`] view that made such reads. It stays readable after the table is boxed
+    /// away.
+    #[must_use]
+    pub fn listings(&self) -> Rc<std::cell::Cell<usize>> {
+        Rc::clone(&self.listings)
+    }
+
+    fn listed(&self) {
+        self.listings.set(self.listings.get() + 1);
+    }
+
+    fn group_listed(&self, pgrp: i32) -> Vec<crate::ProcessStat> {
+        self.processes
+            .borrow()
+            .iter()
+            .filter(|(stat, _)| stat.pgrp == pgrp)
+            .map(|(stat, _)| *stat)
+            .collect()
+    }
+
+    fn terminal_foreground_listed(&self, pid: i32) -> Option<i32> {
+        self.foregrounds.borrow().get(&pid).copied()
+    }
+
     /// Makes process `pid` report `pgrp` as its terminal's foreground group.
     pub fn set_terminal_foreground(&self, pid: i32, pgrp: i32) {
         self.foregrounds.borrow_mut().insert(pid, pgrp);
@@ -727,16 +755,13 @@ impl crate::ProcessTable for FakeProcessTable {
     }
 
     fn group(&self, pgrp: i32) -> Vec<crate::ProcessStat> {
-        self.processes
-            .borrow()
-            .iter()
-            .filter(|(stat, _)| stat.pgrp == pgrp)
-            .map(|(stat, _)| *stat)
-            .collect()
+        self.listed();
+        self.group_listed(pgrp)
     }
 
     fn terminal_foreground(&self, pid: i32) -> Option<i32> {
-        self.foregrounds.borrow().get(&pid).copied()
+        self.listed();
+        self.terminal_foreground_listed(pid)
     }
 
     fn working_directory(&self, pid: i32) -> Option<String> {
@@ -749,6 +774,59 @@ impl crate::ProcessTable for FakeProcessTable {
 
     fn search_path(&self, pid: i32) -> Option<String> {
         self.search_paths.borrow().get(&pid).cloned()
+    }
+
+    fn shared_listing(&self) -> Option<Box<dyn crate::ProcessTable + '_>> {
+        Some(Box::new(FakeSharedListing {
+            table: self,
+            listed: std::cell::Cell::new(false),
+        }))
+    }
+}
+
+/// [`FakeProcessTable`]'s [`crate::ProcessTable::shared_listing`] view: one listing at its first read that needs one.
+struct FakeSharedListing<'a> {
+    table: &'a FakeProcessTable,
+    listed: std::cell::Cell<bool>,
+}
+
+impl FakeSharedListing<'_> {
+    fn listed(&self) {
+        if !self.listed.replace(true) {
+            self.table.listed();
+        }
+    }
+}
+
+impl crate::ProcessTable for FakeSharedListing<'_> {
+    fn argv(&self, pid: i32) -> Option<Vec<String>> {
+        self.table.argv(pid)
+    }
+
+    fn stat(&self, pid: i32) -> Option<crate::ProcessStat> {
+        self.table.stat(pid)
+    }
+
+    fn group(&self, pgrp: i32) -> Vec<crate::ProcessStat> {
+        self.listed();
+        self.table.group_listed(pgrp)
+    }
+
+    fn terminal_foreground(&self, pid: i32) -> Option<i32> {
+        self.listed();
+        self.table.terminal_foreground_listed(pid)
+    }
+
+    fn working_directory(&self, pid: i32) -> Option<String> {
+        self.table.working_directory(pid)
+    }
+
+    fn executable_path(&self, pid: i32) -> Option<String> {
+        self.table.executable_path(pid)
+    }
+
+    fn search_path(&self, pid: i32) -> Option<String> {
+        self.table.search_path(pid)
     }
 }
 

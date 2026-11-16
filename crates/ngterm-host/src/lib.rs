@@ -366,6 +366,14 @@ pub trait ProcessTable {
     /// Process `pid`'s own `PATH` (`Path` on Windows, any case); `None` when its environment cannot be read or has
     /// none.
     fn search_path(&self, pid: i32) -> Option<String>;
+
+    /// A view of this table for one pass over many panes (the `tree`, a restore capture), which the pass reads in
+    /// place of this table. A table that lists every process of the system to answer [`ProcessTable::group`] or
+    /// [`ProcessTable::terminal_foreground`] (Windows) gives a view that lists them one time for the pass, not one
+    /// time for each pane. `None`, the default, when this table's own reads are the pass's.
+    fn shared_listing(&self) -> Option<Box<dyn ProcessTable + '_>> {
+        None
+    }
 }
 
 #[cfg(test)]

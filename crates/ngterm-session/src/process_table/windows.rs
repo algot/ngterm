@@ -12,6 +12,7 @@
 //! structure prefixes name only the fields read; the working directory loses the trailing separator Windows keeps on
 //! it (but a root's).
 
+use std::cell::OnceCell;
 use std::ffi::c_void;
 use std::mem::{MaybeUninit, size_of};
 use std::os::windows::io::{AsRawHandle as _, OwnedHandle};
@@ -35,6 +36,7 @@ use windows_sys::Win32::UI::Shell::CommandLineToArgvW;
 
 use super::{ConsoleMember, console_foreground};
 use crate::job;
+use crate::job::ProcessEntry;
 use crate::job::windows::{creation_time, open};
 
 /// The live Windows process table.
@@ -78,42 +80,22 @@ impl ProcessTable for ProcTable {
     }
 
     /// The process that stands in for group `pgrp` and its live descendants, while it runs: a shell without job
-    /// control (`cmd.exe /D /S /C`) keeps what it runs in its group.
+    /// control (`cmd.exe /D /S /C`) keeps what it runs in its group. It lists every process of the system.
     fn group(&self, pgrp: i32) -> Vec<ProcessStat> {
-        let Some(leader) = self.stat(pgrp) else {
-            return Vec::new();
-        };
-        let table = job::read_table().unwrap_or_default();
-        let descendants = job::descendant_job(pgrp, &table);
-        let members = table.iter().filter(|entry| {
-            descendants
-                .iter()
-                .any(|record| record.pid == entry.record.pid && record.started == entry.record.started)
-        });
-        std::iter::once(leader)
-            .chain(members.map(|entry| ProcessStat {
-                pid: entry.record.pid,
-                ppid: entry.parent,
-                pgrp,
-                session: leader.session,
-            }))
-            .collect()
+        group_in(pgrp, job::read_table().as_deref())
     }
 
     /// The stand-in foreground of the console the shell `pid` holds, among the shell's live descendants (a live
-    /// pane's: the app holds no handle on its session's job).
+    /// pane's: the app holds no handle on its session's job). It lists every process of the system.
     fn terminal_foreground(&self, pid: i32) -> Option<i32> {
-        let table = job::read_table()?;
-        let shell = table.iter().find(|entry| entry.record.pid == pid)?.record;
-        let members: Vec<ConsoleMember> = std::iter::once(shell)
-            .chain(job::descendant_job(pid, &table))
-            .map(|record| ConsoleMember {
-                pid: record.pid,
-                started: record.started,
-                argv: self.argv(record.pid),
-            })
-            .collect();
-        console_foreground(pid, &members)
+        terminal_foreground_in(pid, job::read_table().as_deref())
+    }
+
+    /// A view that lists every process one time, at its first [`ProcessTable::group`] or
+    /// [`ProcessTable::terminal_foreground`], and gives that list to each later one: the `tree` reads every pane's
+    /// foreground, and a list for each live or `--command` pane held the main thread for seconds.
+    fn shared_listing(&self) -> Option<Box<dyn ProcessTable + '_>> {
+        Some(Box::new(SharedListing::default()))
     }
 
     fn working_directory(&self, pid: i32) -> Option<String> {
@@ -159,6 +141,89 @@ impl ProcessTable for ProcTable {
         let block = read_environment(process.as_raw_handle(), environment_address(process.as_raw_handle())?)?;
         super::search_path_of(&environment_strings(&block), true)
     }
+}
+
+/// [`ProcTable`] for one pass over many panes ([`ProcessTable::shared_listing`]): the list of every process, read at
+/// the first read that needs it, answers each later [`ProcessTable::group`] and [`ProcessTable::terminal_foreground`].
+/// A process that starts after that read is not in the pass's list; the next pass lists it.
+#[derive(Default)]
+struct SharedListing {
+    /// Every process, once listed; the inner `None` when the list could not be read.
+    listed: OnceCell<Option<Vec<ProcessEntry>>>,
+}
+
+impl SharedListing {
+    fn listed(&self) -> Option<&[ProcessEntry]> {
+        self.listed.get_or_init(job::read_table).as_deref()
+    }
+}
+
+impl ProcessTable for SharedListing {
+    fn argv(&self, pid: i32) -> Option<Vec<String>> {
+        ProcTable.argv(pid)
+    }
+
+    fn stat(&self, pid: i32) -> Option<ProcessStat> {
+        ProcTable.stat(pid)
+    }
+
+    fn group(&self, pgrp: i32) -> Vec<ProcessStat> {
+        group_in(pgrp, self.listed())
+    }
+
+    fn terminal_foreground(&self, pid: i32) -> Option<i32> {
+        terminal_foreground_in(pid, self.listed())
+    }
+
+    fn working_directory(&self, pid: i32) -> Option<String> {
+        ProcTable.working_directory(pid)
+    }
+
+    fn executable_path(&self, pid: i32) -> Option<String> {
+        ProcTable.executable_path(pid)
+    }
+
+    fn search_path(&self, pid: i32) -> Option<String> {
+        ProcTable.search_path(pid)
+    }
+}
+
+/// [`ProcessTable::group`] over `listed`, every process of the system (`None` when it could not be read: the leader
+/// alone).
+fn group_in(pgrp: i32, listed: Option<&[ProcessEntry]>) -> Vec<ProcessStat> {
+    let Some(leader) = ProcTable.stat(pgrp) else {
+        return Vec::new();
+    };
+    let listed = listed.unwrap_or_default();
+    let descendants = job::descendant_job(pgrp, listed);
+    let members = listed.iter().filter(|entry| {
+        descendants
+            .iter()
+            .any(|record| record.pid == entry.record.pid && record.started == entry.record.started)
+    });
+    std::iter::once(leader)
+        .chain(members.map(|entry| ProcessStat {
+            pid: entry.record.pid,
+            ppid: entry.parent,
+            pgrp,
+            session: leader.session,
+        }))
+        .collect()
+}
+
+/// [`ProcessTable::terminal_foreground`] over `listed`, every process of the system; `None` when it could not be read.
+fn terminal_foreground_in(pid: i32, listed: Option<&[ProcessEntry]>) -> Option<i32> {
+    let listed = listed?;
+    let shell = listed.iter().find(|entry| entry.record.pid == pid)?.record;
+    let members: Vec<ConsoleMember> = std::iter::once(shell)
+        .chain(job::descendant_job(pid, listed))
+        .map(|record| ConsoleMember {
+            pid: record.pid,
+            started: record.started,
+            argv: ProcTable.argv(record.pid),
+        })
+        .collect();
+    console_foreground(pid, &members)
 }
 
 /// The longest environment block read, in UTF-16 units; a block that runs on past it is not read.
@@ -633,6 +698,24 @@ mod tests {
             assert_eq!(table.stat(pid).map(|own| own.pid), Some(pid));
         }
         assert_eq!(job::windows::WALKS.get() - walked, 0, "tool-help walks for 50 reads");
+    }
+
+    /// A live pane's foreground and a `--command` pane's descent each need every process: a `tree` that listed them
+    /// for each pane held the main thread for seconds, so its pass lists them one time.
+    #[test]
+    fn a_shared_listing_walks_the_process_list_once_for_many_reads() {
+        let table = ProcTable::new();
+        let pid = i32::try_from(std::process::id()).unwrap();
+        let walked = job::windows::WALKS.get();
+        let shared = table.shared_listing().unwrap();
+        for _ in 0..20 {
+            assert_eq!(shared.group(pid).first().map(|leader| leader.pid), Some(pid));
+            // the test's own process has no console: only the walk counts here
+            let _ = shared.terminal_foreground(pid);
+        }
+        assert_eq!(job::windows::WALKS.get() - walked, 1, "tool-help walks for 40 reads");
+        let _ = table.terminal_foreground(pid);
+        assert_eq!(job::windows::WALKS.get() - walked, 2, "the table's own read walks");
     }
 
     #[test]

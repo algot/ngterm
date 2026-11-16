@@ -455,7 +455,8 @@ impl Core {
     }
 
     /// Captures every pane of windows `ids` into its slot (see [`capture_foreground_commands`]), a live pane through
-    /// its daemon's shell; how many slots a read filled. Nothing without a process table.
+    /// its daemon's shell, the panes sharing one listing of every process ([`ProcessTable::shared_listing`]); how many
+    /// slots a read filled. Nothing without a process table.
     pub(crate) fn capture_windows(
         &mut self,
         ids: &[Uuid],
@@ -466,6 +467,8 @@ impl Core {
         let Some(table) = restore.table() else {
             return 0;
         };
+        let shared = table.shared_listing();
+        let table = shared.as_deref().unwrap_or(table);
         // an exit capture listed the leaders once, within its budget, before it began
         let read_group = match kind {
             CaptureKind::Exit => cached_foreground_group,
@@ -501,11 +504,14 @@ impl Core {
 
     /// Fills the sessions' live foreground fields of `tree`, projected from `store` (upstream's `paneForeground` and
     /// `splitPaneForeground` closures): each pane's program as `foreground`, or the recognized shell holding it as
-    /// `foregroundShell`; neither when it cannot be read.
+    /// `foregroundShell`; neither when it cannot be read. The panes share one listing of every process
+    /// ([`ProcessTable::shared_listing`]).
     pub(crate) fn project_foreground(&self, store: &AppStore, tree: &mut ControlTree) {
         let Some(table) = self.restore.table() else {
             return;
         };
+        let shared = table.shared_listing();
+        let table = shared.as_deref().unwrap_or(table);
         let live = |token: &str| live_foreground_group(&self.live, table, token);
         let reader = reader_with_live(table, self.restore.shell(), &live);
         let read = |slot: &SurfaceSlot| slot.get().and_then(|surface| reader.running_in(surface));

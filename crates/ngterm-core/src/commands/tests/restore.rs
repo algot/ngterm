@@ -217,6 +217,34 @@ fn a_capture_counts_the_programs_typed_into_shells_and_a_clear_drops_them() {
     );
 }
 
+/// The `tree` reads every pane's foreground, and on Windows a `--command` pane's read lists every process of the
+/// system (its `cmd.exe /D /S /C` wrapper's descendants): one listing for each pane held the main thread for seconds
+/// once a window had dozens of panes.
+#[test]
+fn a_tree_lists_every_process_once_for_all_its_command_panes() {
+    let mut fixture = Fixture::new(2);
+    let table = FakeProcessTable::default();
+    let ids = fixture.sessions.clone();
+    let wrappers = [100, 200, 300];
+    for wrapper in wrappers {
+        table.insert(stat(wrapper, 1, wrapper, wrapper), Some(&["/bin/sh", "-c", "cat"]));
+        table.insert(stat(wrapper + 1, wrapper, wrapper, wrapper), Some(&["cat"]));
+    }
+    let listings = table.listings();
+    fixture.core.set_process_table(Box::new(table), None);
+    for (id, wrapper) in ids.iter().zip(wrappers) {
+        install(&mut fixture.core, *id, u32::try_from(wrapper).ok());
+    }
+    let tree = fixture.core.tree(None).expect("a tree");
+    let foregrounds: Vec<_> = tree.workspaces[0]
+        .sessions
+        .iter()
+        .map(|node| node.foreground.clone())
+        .collect();
+    assert_eq!(foregrounds, vec![Some(vec!["cat".to_owned()]); 3]);
+    assert_eq!(listings.get(), 1, "process listings for one tree of three panes");
+}
+
 fn new_session(core: &mut Core, command: Option<&str>, wait: bool) -> Uuid {
     let response = send(
         core,
