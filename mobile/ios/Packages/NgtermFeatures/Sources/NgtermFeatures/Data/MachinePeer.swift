@@ -1,6 +1,6 @@
 import NgtermCore
 
-/// The app a machine runs, and what that app offers (mobile/android's `MachinePeer`).
+/// The app a machine runs, or a session is one of, and what that app offers (mobile/android's `MachinePeer`).
 ///
 /// The app is the one its last listing said (``RemoteSession/peer``), what it offers the core's
 /// ``peerCapabilities(peer:)``. A machine with none known runs ngterm, which offers everything.
@@ -10,7 +10,7 @@ public struct MachinePeer: Hashable, Sendable {
     /// What it offers, and what the user misses there.
     public let offers: PeerCapabilities
 
-    /// Whether the machine runs another app than ngterm, which the screens say with a badge and its ``note``.
+    /// Whether the app is another than ngterm, which the screens say with a badge and its ``note``.
     public var isForeign: Bool {
         kind != .ngterm
     }

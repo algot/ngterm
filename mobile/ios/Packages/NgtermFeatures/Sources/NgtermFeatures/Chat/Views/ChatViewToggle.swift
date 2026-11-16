@@ -4,7 +4,7 @@ import SwiftUI
 /// list.
 ///
 /// A toggle, checked while its panes running an agent show as a chat; a tap sets the other for that session alone.
-/// On a machine whose app has no chat view (agterm) it is off and takes no tap, its subtitle saying why. VoiceOver
+/// In a session whose app has no chat view (agterm) it is off and takes no tap, its subtitle saying why. VoiceOver
 /// reads it as a toggle.
 internal struct ChatViewToggle: View {
     internal let choice: ChatViewChoice

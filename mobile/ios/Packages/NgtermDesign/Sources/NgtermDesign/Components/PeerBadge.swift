@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// The app a machine runs when it isn't ngterm (`word`: "agterm"): the word in secondary ink inside a hairline
-/// outline, so it reads as a fact about the machine, not a status or an action.
+/// The app a machine runs, or a session is one of, when it isn't ngterm (`word`: "agterm"): the word in secondary ink
+/// inside a hairline outline, so it reads as a fact about the machine or the session, not a status or an action.
 ///
 /// It takes no tap. What the app lacks (`note`) is its VoiceOver hint and, with a pointer, its tooltip; the screen
 /// that has room says it in full too.

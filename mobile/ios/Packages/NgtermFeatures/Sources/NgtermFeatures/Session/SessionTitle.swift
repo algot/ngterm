@@ -2,8 +2,8 @@ import NgtermDesign
 import SwiftUI
 
 /// The session's title in its toolbar: its name over its state ("Duplicating" with a spinner while its Duplicate is
-/// under way), the app its machine runs when that isn't ngterm (a ``PeerBadge``) and its context, read by VoiceOver as
-/// one heading.
+/// under way), the app it is a session of when that isn't ngterm (a ``PeerBadge``) and its context, read by VoiceOver
+/// as one heading.
 internal struct SessionTitle: View {
     internal let session: AttachedSession
     internal let isDuplicating: Bool
