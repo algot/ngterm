@@ -82,7 +82,10 @@ impl ProcessTable for ProcTable {
     /// The process that stands in for group `pgrp` and its live descendants, while it runs: a shell without job
     /// control (`cmd.exe /D /S /C`) keeps what it runs in its group. It lists every process of the system.
     fn group(&self, pgrp: i32) -> Vec<ProcessStat> {
-        group_in(pgrp, job::read_table().as_deref())
+        let Some(leader) = self.stat(pgrp) else {
+            return Vec::new();
+        };
+        group_in(leader, job::read_table().as_deref())
     }
 
     /// The stand-in foreground of the console the shell `pid` holds, among the shell's live descendants (a live
@@ -168,7 +171,10 @@ impl ProcessTable for SharedListing {
     }
 
     fn group(&self, pgrp: i32) -> Vec<ProcessStat> {
-        group_in(pgrp, self.listed())
+        let Some(leader) = ProcTable.stat(pgrp) else {
+            return Vec::new();
+        };
+        group_in(leader, self.listed())
     }
 
     fn terminal_foreground(&self, pid: i32) -> Option<i32> {
@@ -188,12 +194,10 @@ impl ProcessTable for SharedListing {
     }
 }
 
-/// [`ProcessTable::group`] over `listed`, every process of the system (`None` when it could not be read: the leader
-/// alone).
-fn group_in(pgrp: i32, listed: Option<&[ProcessEntry]>) -> Vec<ProcessStat> {
-    let Some(leader) = ProcTable.stat(pgrp) else {
-        return Vec::new();
-    };
+/// [`ProcessTable::group`] of the running `leader` over `listed`, every process of the system (`None` when it could
+/// not be read: the leader alone). The caller reads the leader first, so a group whose leader is gone lists nothing.
+fn group_in(leader: ProcessStat, listed: Option<&[ProcessEntry]>) -> Vec<ProcessStat> {
+    let pgrp = leader.pgrp;
     let listed = listed.unwrap_or_default();
     let descendants = job::descendant_job(pgrp, listed);
     let members = listed.iter().filter(|entry| {
@@ -716,6 +720,29 @@ mod tests {
         assert_eq!(job::windows::WALKS.get() - walked, 1, "tool-help walks for 40 reads");
         let _ = table.terminal_foreground(pid);
         assert_eq!(job::windows::WALKS.get() - walked, 2, "the table's own read walks");
+    }
+
+    /// A foreground read whose group leader is gone (it exited a moment before) asks for that group: it lists no
+    /// process, as the leader's own handle tells that it is gone.
+    #[test]
+    fn a_group_whose_leader_is_gone_walks_no_process_list() {
+        let mut child = std::process::Command::new("cmd.exe")
+            .args(["/D", "/C", "exit 0"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        child.wait().unwrap();
+        let gone = i32::try_from(child.id()).unwrap();
+        let table = ProcTable::new();
+        let walked = job::windows::WALKS.get();
+        assert_eq!(table.group(gone), Vec::new());
+        assert_eq!(table.shared_listing().unwrap().group(gone), Vec::new());
+        assert_eq!(
+            job::windows::WALKS.get() - walked,
+            0,
+            "tool-help walks for a gone leader"
+        );
     }
 
     #[test]

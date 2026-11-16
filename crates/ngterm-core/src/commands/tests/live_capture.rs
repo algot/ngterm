@@ -163,3 +163,47 @@ fn an_exit_capture_without_a_live_pane_lists_nothing() {
     fixture.core.capture_on_exit();
     assert_eq!(host.listings(), []);
 }
+
+/// The quit capture reads every live pane's foreground on the main thread, within its budget, and on Windows each
+/// read lists every process of the system: one listing for each pane held the main thread for seconds once a window
+/// had dozens of panes, so the panes share one listing.
+#[test]
+fn an_exit_capture_lists_every_process_once_for_all_its_live_panes() {
+    let host = Arc::new(SlowListHost::new(Duration::ZERO));
+    let mut fixture = Fixture::new(2);
+    let resources = resources();
+    install(&mut fixture.core, &host, resources.path(), RestoreMode::Live);
+    fixture.core.force_restore_mode(RestoreMode::Live);
+    let table = FakeProcessTable::default();
+    let sessions = fixture.sessions.clone();
+    for (shell, session) in [1000, 2000, 3000].into_iter().zip(&sessions) {
+        let left = fixture.store().session(*session).unwrap().pane_identity;
+        host.inner.set_record(&daemon_name(left), Some(1), Some(shell), None);
+        let member = |pid, ppid| ProcessStat {
+            pid,
+            ppid,
+            pgrp: pid,
+            session: shell,
+        };
+        table.insert(member(shell, 1), Some(&["-zsh"]));
+        table.insert(member(shell + 1, shell), Some(&["claude", "41"]));
+        table.set_terminal_foreground(shell, shell + 1);
+        fixture
+            .store_mut()
+            .and_then(|store| store.session_mut(*session))
+            .unwrap()
+            .pane_slot_mut(StatusPane::Left)
+            .replace(Box::new(FakeSurface::new(uuid_string(left)).with_live_session(true)));
+    }
+    let listings = table.listings();
+    fixture.core.set_process_table(Box::new(table), None);
+    fixture.core.capture_on_exit();
+    for session in &sessions {
+        assert_eq!(captured(&fixture, *session), Some(claude()));
+    }
+    assert_eq!(
+        listings.get(),
+        1,
+        "process listings for one capture of three live panes"
+    );
+}
