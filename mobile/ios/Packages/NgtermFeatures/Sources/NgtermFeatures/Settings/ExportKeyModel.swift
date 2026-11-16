@@ -70,35 +70,45 @@ public final class ExportKeyModel {
         self.now = now
     }
 
-    /// Export private key was tapped for the key `keyId`: only once its owner has proved it is them is it unlocked.
+    /// Export private key was tapped for the key `keyId`: what an earlier unlock opened is locked first (``close()``),
+    /// and only once its owner has proved it is them is `keyId` unlocked.
     ///
     /// A device with no passcode is told to set one; one that couldn't confirm says why; backing out of the prompt
-    /// does nothing.
-    public func start(keyId: String) async {
+    /// unlocks nothing.
+    ///
+    /// - Returns: whether the owner confirmed, so the export may show.
+    @discardableResult
+    public func start(keyId: String) async -> Bool {
+        close()
         notice = nil
         guard services.auth.isSecured else {
             notice = .noPasscode
-            return
+            return false
         }
         let reason = String(localized: "Confirm it's you to export the key ngterm signs in with")
         switch await services.auth.confirm(reason: reason) {
         case .confirmed:
             unlock(keyId)
+            return true
 
         case .cancelled:
-            break
+            return false
 
         case .failed(let reason):
             notice = .authFailed(keyId: keyId, reason: reason)
+            return false
         }
     }
 
     /// Asks the owner again, after the device couldn't confirm.
-    public func retry() async {
+    ///
+    /// - Returns: whether the owner confirmed, so the export may show.
+    @discardableResult
+    public func retry() async -> Bool {
         guard case .authFailed(let keyId, _) = notice else {
-            return
+            return false
         }
-        await start(keyId: keyId)
+        return await start(keyId: keyId)
     }
 
     /// The notice has been read.

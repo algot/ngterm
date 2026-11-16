@@ -789,7 +789,9 @@ that it still reads, and the app ends ("parentEnvironment != nil").
 
   - The warning is the page's one loud part: an attention `Banner` saying what the key is and who can use it. The
     key's fingerprint is on a `ValuePlate`.
-  - The passphrase and "Passphrase again" are hidden, one **Show** for both. The rule (the core's minimum, eight
+  - The passphrase and "Passphrase again" are secure fields, one **Show** for both. Typing stays in the secure
+    fields, whose characters iOS keeps from other keyboards; Show writes each out under its field in the plate's mono,
+    read-only. The rule (the core's minimum, eight
     characters) always reads under the passphrase; what is wrong takes its place, under the field it is about, once
     an export was tried, and goes as soon as it is put right (`InlineProblem`).
   - **Export without a passphrase** is a switch on the raised ground, "Not recommended" under its name. On, the
@@ -803,9 +805,13 @@ that it still reads, and the app ends ("parentEnvironment != nil").
     next) or the problem in words. A tap on Save or Copy takes back what the one before said, so a save left without
     a place never says Saved.
   - The unlock lasts five minutes and ends when the page is left (Back, another page, Settings closed); leaving the
-    app to paste the key is not leaving the page. The key is written nowhere but the file the system places and the
-    clipboard: it waits for the file screen in a file of its own in the app's temporary directory, removed however
-    that screen ends.
+    app to paste the key is not leaving the page. Each Export private key locks first and asks afresh, and the page
+    shows only once the owner confirmed: backing out leaves every key locked. The key is written nowhere but the file
+    the system places and the clipboard: it waits for the file screen in a file of its own in the app's temporary
+    directory, removed however that screen ends, and at the next launch if the app ended first.
+  - While the app isn't in front (what the app switcher keeps of it) or the screen is recorded, mirrored or shared,
+    a plain ground covers the page and Show goes off; a captured screen says why under an `eye.slash` glyph ("Hidden
+    while the screen is recorded or shared").
 - **Diagnostics:** **Logs** (`doc.text.magnifyingglass`), pushing the Logs page (below), with what the log is for
   under it.
 - **About:** "ngterm for iOS" and the core's version in mono.

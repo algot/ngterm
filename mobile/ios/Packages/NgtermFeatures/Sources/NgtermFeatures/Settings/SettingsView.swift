@@ -36,10 +36,7 @@ public struct SettingsView: View {
                 KeysSection(model: model, facts: facts) { keyId in
                     navigation.path.append(.publicKey(keyId))
                 } onExport: { keyId in
-                    Task {
-                        await model.export.start(keyId: keyId)
-                        showExport()
-                    }
+                    startExport(keyId)
                 } onImport: {
                     model.startImport()
                     navigation.path.append(.importKey)
@@ -98,8 +95,7 @@ public struct SettingsView: View {
         }
         .onChange(of: model.newKey) { _, keyId in
             if let keyId {
-                navigation.path = [.publicKey(keyId)]
-                model.newKeyShown()
+                showNewKey(keyId)
             }
         }
     }
@@ -140,7 +136,26 @@ public struct SettingsView: View {
         _navigation = State(initialValue: SettingsNavigation(diagnostics: model.diagnostics))
     }
 
-    // pushes the export once its owner has unlocked a key
+    // opens a key just made or brought in place of what showed; an export it replaces locks again
+    private func showNewKey(_ keyId: String) {
+        let heldExport = navigation.path.contains(where: \.isExport)
+        navigation.path = [.publicKey(keyId)]
+        if heldExport {
+            model.export.close()
+        }
+        model.newKeyShown()
+    }
+
+    // asks the owner to unlock `keyId`, and shows its export once they did
+    private func startExport(_ keyId: String) {
+        Task {
+            if await model.export.start(keyId: keyId) {
+                showExport()
+            }
+        }
+    }
+
+    // pushes the export of the key its owner has just unlocked
     private func showExport() {
         if let keyId = model.export.work.keyId, !navigation.path.contains(where: \.isExport) {
             navigation.path.append(.exportKey(keyId))

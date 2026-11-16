@@ -72,20 +72,52 @@ internal struct ExportKeyModelTests {
         let key = try await test.seedKey()
         test.auth.next = [.cancelled, .failed(reason: "too many attempts")]
         let model = model()
-        await model.start(keyId: key.id)
+        #expect(await !model.start(keyId: key.id))
         #expect(model.notice == nil)
         #expect(model.work.keyId == nil)
-        await model.start(keyId: key.id)
+        #expect(await !model.start(keyId: key.id))
         #expect(model.notice == .authFailed(keyId: key.id, reason: "too many attempts"))
         #expect(model.notice?.message.contains("too many attempts") == true)
         #expect(model.work.keyId == nil)
-        await model.retry()
+        #expect(await model.retry())
         #expect(model.notice == nil)
         #expect(model.work.keyId == key.id)
         #expect(test.auth.asked.count == 3)
         // with no notice up there is nothing to try again
-        await model.retry()
+        #expect(await !model.retry())
         #expect(test.auth.asked.count == 3)
+    }
+
+    @Test("a key file an earlier run left staged is removed as the app's graph is made, before any unlock")
+    internal func leftStagedAtLaunch() throws {
+        defer { test.remove() }
+        let left = try KeyExportFiles(directory: staging).stage(Data("-----BEGIN OPENSSH PRIVATE KEY-----\n".utf8))
+        #expect(FileManager.default.fileExists(atPath: left.path))
+        _ = TestGraph(directory: test.directory)
+        #expect(staged().isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: left.path))
+    }
+
+    @Test("Export tapped again locks what an earlier unlock opened, before it asks; backing out leaves it locked")
+    internal func startLocksFirst() async throws {
+        defer { test.remove() }
+        let (model, key) = try await unlocked()
+        await model.tap(.copy)
+        #expect(test.keyClipboard.held != nil)
+        test.auth.next = [.cancelled]
+        #expect(await !model.start(keyId: key.id))
+        #expect(model.work.keyId == nil)
+        #expect(model.draft == ExportDraft())
+        #expect(test.keyClipboard.held == nil)
+        #expect(await model.start(keyId: key.id))
+        test.auth.next = [.failed(reason: "too many attempts")]
+        #expect(await !model.start(keyId: key.id))
+        #expect(model.work.keyId == nil)
+        model.draft.passphrase = FakeKeyMaker.passphrase
+        model.draft.again = FakeKeyMaker.passphrase
+        await model.tap(.copy)
+        #expect(test.keyClipboard.held == nil)
+        #expect(test.maker.exportedUnder.count == 1)
     }
 
     @Test("an unlocked key is copied under its passphrase, and Import a key reads it back")

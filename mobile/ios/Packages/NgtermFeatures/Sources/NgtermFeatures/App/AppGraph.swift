@@ -10,6 +10,7 @@ import NgtermTerminal
 ///
 /// The app makes it over the linked core, the Keychain, Application Support and the system's notifications, or over
 /// the fake core and memory for its UI tests; the tests make one over fakes. ``start()`` starts what runs on its own.
+/// Making it removes the exported key files an earlier run left staged.
 @preconcurrency
 @MainActor
 public final class AppGraph {
@@ -98,6 +99,8 @@ public final class AppGraph {
         self.keys = keys
         self.pins = pins
         self.exports = exports ?? KeyExportServices()
+        // a key an earlier run staged for the file screen stays there if that run ended before the screen did
+        self.exports.files.discardAll()
         let made = Connections(core: core, clock: clock)
         let board = clipboard ?? SystemClipboard()
         connections = made

@@ -27,8 +27,9 @@ internal struct ExportNotices: ViewModifier {
             case .authFailed:
                 Button(String(localized: "Try again")) {
                     Task {
-                        await model.retry()
-                        onUnlocked()
+                        if await model.retry() {
+                            onUnlocked()
+                        }
                     }
                 }
                 Button(String(localized: "Cancel"), role: .cancel) {

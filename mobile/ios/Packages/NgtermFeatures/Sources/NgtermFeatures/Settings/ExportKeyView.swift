@@ -8,11 +8,25 @@ import SwiftUI
 /// What the key is and who can use it, the key's fingerprint, the passphrase typed twice (what is wrong with it under
 /// the field it is about, once an export was tried), the choice to export without one (confirmed again), Save to a
 /// file (the system's screen places the file) and Copy to the clipboard, then how it went.
+///
+/// A passphrase is typed only into a secure field, which iOS keeps from other keyboards; Show writes it out under the
+/// field. While the app isn't in front (the app switcher's snapshot) or the screen is recorded or shared, a plain
+/// cover hides the page and Show goes off.
 internal struct ExportKeyView: View {
+    @Environment(\.scenePhase)
+    private var scenePhase
+    @Environment(\.isSceneCaptured)
+    private var isCaptured
+
     @Bindable internal var model: ExportKeyModel
     internal let key: AppKey
-    @State private var isPassphraseShown = false
+    @State private var isPassphraseShown: Bool
     @State private var isPlacing = false
+
+    // whether the page is hidden: what it shows could be seen where the user doesn't look
+    private var isCovered: Bool {
+        Self.isCovered(phase: scenePhase, captured: isCaptured)
+    }
 
     internal var body: some View {
         let work = model.work
@@ -42,6 +56,17 @@ internal struct ExportKeyView: View {
         .scrollDismissesKeyboard(.interactively)
         .background(Color(uiColor: .systemGroupedBackground))
         .disabled(work.isBusy)
+        .accessibilityHidden(isCovered)
+        .overlay {
+            if isCovered {
+                cover
+            }
+        }
+        .onChange(of: isCovered, initial: true) { _, covered in
+            if covered {
+                isPassphraseShown = false
+            }
+        }
         .accessibilityIdentifier("export-key-page")
         .navigationTitle(String(localized: "Export private key"))
         .navigationBarTitleDisplayMode(.inline)
@@ -64,6 +89,29 @@ internal struct ExportKeyView: View {
         } onCancellation: {
             model.placingCancelled()
         }
+    }
+
+    // a plain ground over the page; a recording or a shared screen is told why it is blank
+    private var cover: some View {
+        ZStack {
+            Color(uiColor: .systemGroupedBackground)
+                .ignoresSafeArea()
+            if isCaptured {
+                VStack(spacing: Spacing.medium) {
+                    Image(systemName: "eye.slash")
+                        .font(.largeTitle)
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                    Text("Hidden while the screen is recorded or shared")
+                        .font(Typography.note)
+                        .foregroundStyle(Palette.secondaryText.color)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: Spacing.textWidth)
+                .padding(Spacing.xLarge)
+            }
+        }
+        .accessibilityIdentifier("export-key-cover")
     }
 
     private var isConfirming: Binding<Bool> {
@@ -159,6 +207,24 @@ internal struct ExportKeyView: View {
         }
     }
 
+    /// The export of `key` over `model`, its passphrases hidden.
+    internal init(model: ExportKeyModel, key: AppKey) {
+        self.init(model: model, key: key, isPassphraseShown: false)
+    }
+
+    /// The export of `key` over `model`, the passphrases written out under their fields when `isPassphraseShown`.
+    internal init(model: ExportKeyModel, key: AppKey, isPassphraseShown: Bool) {
+        self.model = model
+        self.key = key
+        _isPassphraseShown = State(initialValue: isPassphraseShown)
+    }
+
+    /// Whether the page is hidden in `phase`, `captured` or not: whenever the app isn't in front, and while the screen
+    /// is recorded, mirrored or shared.
+    internal static func isCovered(phase: ScenePhase, captured: Bool) -> Bool {
+        phase != .active || captured
+    }
+
     private func actions(_ work: ExportWork) -> some View {
         VStack(alignment: .leading, spacing: Spacing.small) {
             BusyButton(
@@ -201,27 +267,34 @@ internal struct ExportKeyView: View {
         }
     }
 
-    // a passphrase's field on the raised ground, hidden unless Show was tapped, with `trailing` at its end
+    // a passphrase's secure field on the raised ground, with `trailing` at its end and, once Show was tapped, what was
+    // typed under it: a plain text field would hand each character to another keyboard
     private func field<Trailing: View>(
         _ title: String,
         text: Binding<String>,
         identifier: String,
         @ViewBuilder trailing: () -> Trailing
     ) -> some View {
-        HStack {
-            Group {
-                if isPassphraseShown {
-                    TextField(title, text: text)
-                } else {
-                    SecureField(title, text: text)
-                }
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                SecureField(title, text: text)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .textContentType(.password)
+                    .frame(minHeight: Spacing.hitTarget)
+                    .accessibilityIdentifier(identifier)
+                trailing()
             }
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
-            .textContentType(.password)
-            .frame(minHeight: Spacing.hitTarget)
-            .accessibilityIdentifier(identifier)
-            trailing()
+            if isPassphraseShown, !text.wrappedValue.isEmpty {
+                Text(verbatim: text.wrappedValue)
+                    .font(Typography.plateValue)
+                    .textSelection(.disabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.bottom, Spacing.small)
+                    .accessibilityLabel(String(localized: "\(title), as typed"))
+                    .accessibilityValue(text.wrappedValue)
+                    .accessibilityIdentifier("\(identifier)-shown")
+            }
         }
         .padding(.horizontal, Spacing.medium)
         .background(

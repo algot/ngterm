@@ -5,8 +5,8 @@ import Testing
 
 @testable import NgtermFeatures
 
-/// Goldens of a key's export: as it opens, with what is wrong with the passphrase, without a passphrase, and once the
-/// key was saved.
+/// Goldens of a key's export: as it opens, with what is wrong with the passphrase, its passphrases shown, without a
+/// passphrase, once the key was saved, and covered while the screen is recorded.
 @MainActor
 @Suite("key export snapshots")
 internal struct ExportKeySnapshotTests {
@@ -20,10 +20,18 @@ internal struct ExportKeySnapshotTests {
         return (model, key)
     }
 
-    private func page(_ model: ExportKeyModel, _ key: AppKey) -> some View {
+    // the page in front of the user, its screen captured or not
+    private func page(
+        _ model: ExportKeyModel,
+        _ key: AppKey,
+        isPassphraseShown: Bool = false,
+        captured: Bool = false
+    ) -> some View {
         NavigationStack {
-            ExportKeyView(model: model, key: key)
+            ExportKeyView(model: model, key: key, isPassphraseShown: isPassphraseShown)
         }
+        .environment(\.scenePhase, .active)
+        .environment(\.isSceneCaptured, captured)
     }
 
     @Test("the export as it opens", arguments: ScreenVariant.allCases)
@@ -60,5 +68,40 @@ internal struct ExportKeySnapshotTests {
         await model.tap(.save)
         model.placed(.success(URL(filePath: "/placed/ngterm-private-key")))
         ScreenSnapshot.check(page(model, key), named: "export-key-saved", variant: variant)
+    }
+
+    @Test("Show writes out what was typed under each secure field")
+    internal func shownPassphrase() async throws {
+        defer { test.remove() }
+        let (model, key) = try await unlocked()
+        model.draft.passphrase = FakeKeyMaker.passphrase
+        model.draft.again = "not the same"
+        ScreenSnapshot.check(
+            page(model, key, isPassphraseShown: true),
+            named: "export-key-shown",
+            variant: .light
+        )
+    }
+
+    @Test("a recorded or shared screen shows a plain cover in place of the page")
+    internal func captured() async throws {
+        defer { test.remove() }
+        let (model, key) = try await unlocked()
+        model.draft.passphrase = FakeKeyMaker.passphrase
+        model.draft.again = FakeKeyMaker.passphrase
+        ScreenSnapshot.check(
+            page(model, key, isPassphraseShown: true, captured: true),
+            named: "export-key-captured",
+            variant: .light
+        )
+    }
+
+    @Test("the page is covered whenever the app isn't in front, and while the screen is captured")
+    internal func coveredWhen() {
+        defer { test.remove() }
+        #expect(!ExportKeyView.isCovered(phase: .active, captured: false))
+        #expect(ExportKeyView.isCovered(phase: .active, captured: true))
+        #expect(ExportKeyView.isCovered(phase: .inactive, captured: false))
+        #expect(ExportKeyView.isCovered(phase: .background, captured: false))
     }
 }
