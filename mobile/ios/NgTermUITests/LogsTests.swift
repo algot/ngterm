@@ -1,12 +1,21 @@
 import XCTest
 
 /// Settings > Logs on the fake core, with the core's own log in a directory the test reads (mobile/android's
-/// `AppLogsE2eTest` and `AppLogsPrivacyE2eTest`).
+/// `AppLogsE2eTest`, and `AppLogsPrivacyE2eTest` for the app's own lines).
 ///
 /// The page shows its own newest line as it opens, copies the lines shown, shares the log through the system's share
 /// sheet and clears it after asking. A troubleshooting session (a key imported with its passphrase, a chat message
 /// sent to the agent, text typed into the terminal) is then told in the log, newest first, while none of what was
 /// typed, sent or imported is in the lines shown, in what Copy takes, in the file Share writes or in the log's files.
+///
+/// This holds the app's own lines. The real core imports the key, and the session runs on the fake core, which writes
+/// no line: the core's own lines about the chat message and the typed text are not in the log here.
+/// The core is the same on Android and iOS, and these tests hold its lines about input and chat:
+/// - `crates/ngterm-mobile/src/applog/tests.rs`:
+///   `every_event_reaches_the_app_and_the_log_keeps_its_kind_without_its_payload` and
+///   `the_subscriber_writes_classes_numbers_and_identity_and_redacts_the_rest`;
+/// - `crates/ngterm-mobile/src/api/pane_tests.rs`: `a_delivery_names_what_became_of_input_for_the_log`;
+/// - mobile/android's `AppLogsPrivacyE2eTest`, on a real machine through the real core.
 internal final class LogsTests: XCTestCase {
     private static let wait: TimeInterval = 15
     private static let swipes = 12
@@ -320,8 +329,8 @@ internal final class LogsTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Settings"].waitForNonExistence(timeout: Self.wait), "Settings stayed")
     }
 
-    // a message to `work`'s agent, then text typed into its terminal; the log gains far fewer lines over the typing
-    // than the text has letters
+    // a message to `work`'s agent, then text typed into its terminal; the log gains fewer lines over the typing than
+    // the text has letters. The fake core writes no line, so this holds the app's own lines: a line for each key fails
     @MainActor
     private func sendAndType(in app: XCUIApplication, logIn directory: URL) {
         FakeApp.showMachines(in: app)
