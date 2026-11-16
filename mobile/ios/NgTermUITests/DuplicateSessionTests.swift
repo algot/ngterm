@@ -5,12 +5,14 @@ import XCTest
 /// On the fake core's `split`, from a session row's context menu and from the session view's More, the copy
 /// (`session 1`, whose pane another device leads as it attaches) opens at once in this device's control, its pane's
 /// screen showing with no Take control cover; a Duplicate that fails says why and opens nothing. While one runs (the
-/// fake world holds it a while, when asked), its source says "Duplicating", and New session and every other Duplicate
-/// take no tap. In an iPad's session window the copy opens in a window of its own. An agterm Mac's session duplicates
-/// as an ngterm machine's does.
+/// fake world holds it, when asked, until the test posts the cue `duplicate-lands`), its source says "Duplicating",
+/// and New session and every other Duplicate take no tap. In an iPad's session window the copy opens in a window of
+/// its own. An agterm Mac's session duplicates as an ngterm machine's does.
 internal final class DuplicateSessionTests: XCTestCase {
     // what the fake world's first Duplicate fails with, when asked (FakeSessionWorld.duplicateRefusal)
     private static let refusal = "split could not copy work"
+    // the cue that lets the Duplicate under way land, when the fake world holds it (FakeCues.Cue.duplicateLands)
+    private static let duplicateLands = "duplicate-lands"
     // how long a press on a row holds to bring up its context menu
     private static let longPress: TimeInterval = 1
     // where a tap closes the menu that is up: low on the dimmed screen, away from the menu and the home indicator
@@ -193,6 +195,7 @@ internal final class DuplicateSessionTests: XCTestCase {
         let other = Self.rowsDuplicate("notes", in: app)
         XCTAssertFalse(other.isEnabled, "notes's Duplicate took a tap while work's ran")
         Self.closeMenu(in: app)
+        FakeApp.cue(Self.duplicateLands)
         Self.expectCopyInControl(in: app)
         XCTAssertFalse(Self.row("work", reading: "Duplicating", in: app).exists, "work still says Duplicating")
 
@@ -209,6 +212,7 @@ internal final class DuplicateSessionTests: XCTestCase {
         if newSession.exists {
             XCTAssertFalse(newSession.isEnabled, "New session beside the session took a tap while a Duplicate ran")
         }
+        FakeApp.cue(Self.duplicateLands)
         FakeApp.expect(Self.title(naming: "session 2", in: app), "the second copy's session view")
         XCTAssertFalse(Self.title(naming: "Duplicating", in: app).exists, "the copy's title still says Duplicating")
     }

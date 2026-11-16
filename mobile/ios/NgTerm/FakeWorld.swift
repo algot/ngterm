@@ -19,9 +19,9 @@
     /// after it: its question shows only once the first is answered; and, when asked, a machine `split`
     /// (`split.lan`) is saved already, with a session `work` of two panes side by side (``FakeSessionWorld``), whose
     /// origin asks a question as it is attached, and whose first pane runs Claude Code (``FakeChatWorld``), each when
-    /// asked too, its first Duplicate failing when asked; and, when asked, each Duplicate held a while; and, when
-    /// asked, a Mac running agterm, `studio` (``FakeAgtermWorld``); and, when asked, a Mac running agterm beside
-    /// ngterm, `duo` (``FakeAgtermWorld/seedBeside(_:core:keyId:)``).
+    /// asked too, its first Duplicate failing when asked; and, when asked, each Duplicate held until the test's cue
+    /// (``FakeCues/Cue/duplicateLands``); and, when asked, a Mac running agterm, `studio` (``FakeAgtermWorld``); and,
+    /// when asked, a Mac running agterm beside ngterm, `duo` (``FakeAgtermWorld/seedBeside(_:core:keyId:)``).
     ///
     /// Notifications go to memory (``FakeNotices``), and the question about notifying counts as asked unless the
     /// launch asks for it.
@@ -30,10 +30,6 @@
         internal static let buildHostKey = "SHA256:fAkEbU1Ld01h0sTkEyF0rUiTeStS0nLyN0tArEaLkEy00"
         /// The host key `signin.lan` offers (made up).
         internal static let signInHostKey = "SHA256:fAkEs1GnInh0sTkEyF0rUiTeStS0nLyN0tArEaLkEy000"
-        /// How long a Duplicate is held, when the launch asks for it.
-        internal static let duplicatePause = Duration.seconds(duplicateSeconds)
-        private static let duplicateSeconds: Int64 = 20
-
         // a key as the first run would leave it (made up: the fake core never loads it)
         private static let key = AppKey(
             id: "fake-key",
@@ -47,16 +43,22 @@
         ///
         /// The `arguments` are ``CoreChoice``'s: a key already, two programs asking to read the clipboard, `split` with
         /// its session, its question, its agent and its companion, `studio` running agterm, `duo` running both, the
-        /// question about notifying left to ask, each Duplicate held ``duplicatePause``.
+        /// question about notifying left to ask, each Duplicate held until its cue. The scripted steps wait for the
+        /// cues that a UI test posts (``FakeCues``).
         @MainActor
         internal static func graph(arguments: [String]) -> AppGraph {
-            graph(arguments: arguments, duplicatePause: Self.duplicatePause)
+            let cues = FakeCues()
+            return graph(arguments: arguments) { await cues.next($0) }
         }
 
-        /// The app's graph over the fake core, as the launch arguments ask, each Duplicate held `duplicatePause` when
-        /// they ask for it.
+        /// The app's graph over the fake core, as the launch arguments ask.
+        ///
+        /// Each scripted step that a test looks at first waits for `cue`.
         @MainActor
-        internal static func graph(arguments: [String], duplicatePause: Duration) -> AppGraph {
+        internal static func graph(
+            arguments: [String],
+            cue: @escaping @Sendable (FakeCues.Cue) async -> Void
+        ) -> AppGraph {
             let directory = FileManager.default.temporaryDirectory.appending(
                 path: "ngterm-fake-\(UUID().uuidString)",
                 directoryHint: .isDirectory
@@ -76,8 +78,8 @@
                     core: core,
                     keyId: key.id,
                     asks: arguments.contains(CoreChoice.fakeAskArgument),
-                    chats: arguments.contains(CoreChoice.fakeChatArgument),
-                    companion: arguments.contains(CoreChoice.fakeCompanionArgument)
+                    companion: arguments.contains(CoreChoice.fakeCompanionArgument),
+                    chatCue: arguments.contains(CoreChoice.fakeChatArgument) ? cue : nil
                 )
                 if arguments.contains(CoreChoice.fakeDuplicateFailsArgument) {
                     core.failNext("duplicateSession", with: .Remote(reason: FakeSessionWorld.duplicateRefusal))
@@ -93,7 +95,7 @@
                 FakeAgtermWorld.seedBeside(machines, core: core, keyId: key.id)
             }
             if arguments.contains(CoreChoice.fakeDuplicateSlowArgument) {
-                holdDuplicates(core, pause: duplicatePause)
+                holdDuplicates(core, cue: cue)
             }
             let stores = GraphStores(directory: directory)
             if !arguments.contains(CoreChoice.fakeNotificationQuestionArgument) {
@@ -119,16 +121,20 @@
             return graph
         }
 
-        // holds each Duplicate for `pause` once it is under way, so a test sees what shows meanwhile: the source's
-        // "Duplicating", and New session and every Duplicate taking no tap; the first hold is in place at launch
+        // holds each Duplicate under way until the cue `duplicateLands` comes, so a test sees what shows meanwhile: the
+        // source's "Duplicating", and New session and every Duplicate taking no tap. A clock would let a slow simulator
+        // end the hold before the test looks. The first hold is in place at launch.
         @MainActor
-        private static func holdDuplicates(_ core: FakeMobileCore, pause: Duration) {
+        private static func holdDuplicates(
+            _ core: FakeMobileCore,
+            cue: @escaping @Sendable (FakeCues.Cue) async -> Void
+        ) {
             let first = core.hold("duplicateSession")
             Task {
                 var gate = first
                 while !Task.isCancelled {
                     await gate.reached()
-                    try? await Task.sleep(for: pause)
+                    await cue(.duplicateLands)
                     gate.open()
                     gate = core.hold("duplicateSession")
                 }

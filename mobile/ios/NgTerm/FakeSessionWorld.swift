@@ -100,16 +100,18 @@
         }
 
         /// Saves the machine in `machines`, signing in with `keyId`, and gives `core` its session, whose origin asks
-        /// ``deployAsk`` when `asks`, and whose first pane runs Claude Code (``FakeChatWorld``) when `chats`; and
-        /// ``otherId`` and its companion ``companionId`` when `companion`.
+        /// ``deployAsk`` when `asks`, and whose first pane runs Claude Code (``FakeChatWorld``) when there is a
+        /// `chatCue`; and ``otherId`` and its companion ``companionId`` when `companion`.
+        ///
+        /// The agent's steps that a test looks at first wait for `chatCue`.
         @MainActor
         internal static func seed(
             _ machines: MachineStore,
             core: FakeMobileCore,
             keyId: String,
             asks: Bool,
-            chats: Bool,
-            companion: Bool
+            companion: Bool,
+            chatCue: (@Sendable (FakeCues.Cue) async -> Void)?
         ) {
             let machine = StoredMachine(
                 id: machineId,
@@ -133,12 +135,11 @@
                 }
             }
             seedCopy(core)
-            let cues = FakeCues()
-            let agent = FakeChatWorld(core: core, pace: .real) { await cues.next($0) }
+            let agent = chatCue.map { FakeChatWorld(core: core, pace: .real, cue: $0) }
             core.attachEvents[sessionId] =
                 attachEvents(of: sessionId, panes: paneIds) + (asks ? [askEvent] : [])
-                + (chats ? [FakeChatWorld.agentEvent] : [])
-            if chats {
+                + (agent == nil ? [] : [FakeChatWorld.agentEvent])
+            if agent != nil {
                 core.chatEvents[FakeChatWorld.pane] = FakeChatWorld.catchUp
             }
             core.answerEvents = [
@@ -148,8 +149,8 @@
             core.paneFactory = { [weak core] _, sessionId, paneId, _ in
                 let echo = FakeEcho(PaneRef(machineId: machineId, sessionId: sessionId, paneId: paneId), core: core)
                 let frames: FakePane.Frames = { since in echo.frames(since: since) }
-                let isAgent = chats && paneId == FakeChatWorld.pane.paneId
-                let pane = isAgent ? agent.pane(frames: frames) : FakePane(paneId: paneId, frames: frames)
+                let isAgent = paneId == FakeChatWorld.pane.paneId
+                let pane = (isAgent ? agent : nil)?.pane(frames: frames) ?? FakePane(paneId: paneId, frames: frames)
                 pane.onInput = { input in echo.take(input) }
                 return pane
             }

@@ -11,7 +11,9 @@
     ///
     /// Darwin notifications coalesce: posts of one name that come before the app's callback runs reach it as one, so
     /// they bank one step, not one each. A test therefore posts a cue again only after it has seen what the previous
-    /// post of that cue let on (ChatTests posts `chat-drop` once it sees the card, `chat-back` once it sees the strip).
+    /// post of that cue let on (ChatTests posts `chat-drop` once it sees the card, `chat-back` once it sees the strip;
+    /// DuplicateSessionTests posts `duplicate-lands` once it sees a Duplicate under way, then again for the next one
+    /// only after it sees the first copy).
     internal final class FakeCues: Sendable {
         /// The cues, by the Darwin notification's name.
         internal enum Cue: String, CaseIterable, Sendable {
@@ -19,6 +21,8 @@
             case chatDrop = "com.nickalie.ngterm.fake-cue.chat-drop"
             /// The chat's link comes back.
             case chatBack = "com.nickalie.ngterm.fake-cue.chat-back"
+            /// The Duplicate under way lands.
+            case duplicateLands = "com.nickalie.ngterm.fake-cue.duplicate-lands"
         }
 
         private struct Line {
