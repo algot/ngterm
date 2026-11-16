@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 
 /// Tells `onChange` whether the view it sits behind is in a window: true as it joins one, false as it leaves it.
 ///

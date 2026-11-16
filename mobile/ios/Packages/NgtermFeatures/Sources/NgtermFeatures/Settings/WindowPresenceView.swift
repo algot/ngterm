@@ -1,6 +1,8 @@
 import UIKit
 
-/// ``WindowPresence``'s view: empty, and it says each time it joins or leaves a window.
+/// The view of ``WindowPresence``.
+///
+/// It is empty, and it says each time it joins or leaves a window.
 internal final class WindowPresenceView: UIView {
     /// Called with whether the view is now in a window.
     internal var onChange: (@MainActor (Bool) -> Void)?
@@ -20,5 +22,9 @@ internal final class WindowPresenceView: UIView {
     override internal func didMoveToWindow() {
         super.didMoveToWindow()
         onChange?(window != nil)
+    }
+
+    deinit {
+        // nothing to release: SwiftUI drops the view with the form
     }
 }
