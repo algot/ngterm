@@ -6,8 +6,10 @@ import SwiftUI
 /// A pane's place in the session view (mobile/android's `PaneSlot`): its terminal once it is shown (the slot's first
 /// size shows it), under its cover when it can't be used as it is; or, in chat view, its chat in the terminal's place,
 /// the terminal still laid out under it at the slot's grid, unfocused and out of sight, so a chat action that takes
-/// control lays the program out for this device, under no cover but a failed show's. A turn of the pane to its
-/// terminal (`SessionModel.showTerminal(of:)`) draws that terminal focused at once, before the view changes.
+/// control lays the program out for this device, under no cover but a failed show's.
+///
+/// A turn of the pane to its terminal (`SessionModel.showTerminal(of:)`) draws that terminal focused at once, before
+/// the view changes.
 ///
 /// The selected one (`isFocused`) draws its cursor as it is, the others' go hollow, and only it says its cursor's
 /// line to VoiceOver. A touch on it, or its taking the focus, selects it; `swipe` takes a finger's sideways swipe (a
