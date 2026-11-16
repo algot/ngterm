@@ -7,8 +7,8 @@ import NgtermPlatform
 /// The app's graph over fakes, as mobile/android's `TestGraph`: the core a ``FakeMobileCore`` pinning in memory, the
 /// stores real ones in a directory of the test's own, the keys made by a ``FakeKeyMaker`` and kept in memory, the
 /// network a ``TestPathSource``, the clock a ``TestClock``, the clipboard a ``MemoryClipboard``, the notifications a
-/// ``RecordingNotices``, and the background refresh's core another ``FakeMobileCore`` (``refreshCore``), which keeps
-/// the sessions of ``core``. ``remove()`` deletes the directory.
+/// ``RecordingNotices``, the diagnostic log a ``MemoryAppLog`` (``log``), and the background refresh's core another
+/// ``FakeMobileCore`` (``refreshCore``), which keeps the sessions of ``core``. ``remove()`` deletes the directory.
 ///
 /// A graph made over another's `directory` reads the files that one wrote, as a process started afresh does.
 @MainActor
@@ -21,6 +21,7 @@ internal final class TestGraph {
     internal let clock = TestClock()
     internal let clipboard = MemoryClipboard(nil)
     internal let notices = RecordingNotices()
+    internal let log = MemoryAppLog()
     internal let core: FakeMobileCore
     internal let refreshCore: FakeMobileCore
     internal let graph: AppGraph
@@ -57,7 +58,9 @@ internal final class TestGraph {
                 refreshing.sessions = main.sessions
                 return refreshing
             },
-            clock: clock.read
+            clock: clock.read,
+            log: log,
+            logExports: directory.appending(path: "export")
         )
     }
 
@@ -89,6 +92,13 @@ internal final class TestGraph {
     /// Waits until the connections have taken every event the core handed out.
     internal func settled() async {
         await Wait.settled(connections, core)
+    }
+
+    /// The diagnostic log's lines of the component `tag`, oldest first, each as `tag: text`.
+    internal func logged(_ tag: String) -> [String] {
+        log.lines.compactMap { line in
+            line.range(of: " \(tag): ").map { String(line[line.index(after: $0.lowerBound)...]) }
+        }
     }
 
     /// Deletes the test's directory.

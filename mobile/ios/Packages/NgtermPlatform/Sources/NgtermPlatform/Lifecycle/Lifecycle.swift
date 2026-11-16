@@ -19,6 +19,7 @@ public final class Lifecycle {
     private let holds: @MainActor () -> LifecycleHold
     private let suspend: @MainActor () -> Void
     private let resume: @MainActor () -> Void
+    private let foregroundChanged: @MainActor (Bool) -> Void
     private var foreground: Set<ObjectIdentifier> = []
     private var wasShown = false
     private var isGraceRunning = false
@@ -29,14 +30,19 @@ public final class Lifecycle {
     }
 
     /// The life of an app that keeps `grace` in the background, asks `holds` what it holds, and lets go of its
-    /// connections by `suspend` and brings them back by `resume`.
+    /// connections by `suspend` and brings them back by `resume`, telling `foregroundChanged` each time the app comes
+    /// to the foreground (a first scene enters it) or leaves it (the last one left).
     @preconcurrency
     public init(
         grace: any BackgroundGrace,
         holds: @escaping @MainActor () -> LifecycleHold,
         suspend: @escaping @MainActor () -> Void,
-        resume: @escaping @MainActor () -> Void
+        resume: @escaping @MainActor () -> Void,
+        foregroundChanged: @escaping @MainActor (Bool) -> Void = { _ in
+            // nobody follows it
+        }
     ) {
+        self.foregroundChanged = foregroundChanged
         self.grace = grace
         self.holds = holds
         self.suspend = suspend
@@ -45,6 +51,9 @@ public final class Lifecycle {
 
     /// The scene `scene` came to the foreground: the grace ends, and what a suspend let go comes back.
     public func sceneEntered(_ scene: ObjectIdentifier) {
+        if foreground.isEmpty {
+            foregroundChanged(true)
+        }
         foreground.insert(scene)
         wasShown = true
         endGrace()
@@ -56,7 +65,9 @@ public final class Lifecycle {
 
     /// The scene `scene` left the foreground, or went: once none is left, the app lets go as it holds.
     public func sceneLeft(_ scene: ObjectIdentifier) {
-        foreground.remove(scene)
+        if foreground.remove(scene) != nil, foreground.isEmpty {
+            foregroundChanged(false)
+        }
         settle()
     }
 

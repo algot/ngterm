@@ -47,9 +47,24 @@ public final class SettingsModel {
         return graph.machines.machines.filter { allowed.contains($0.id) }.map(TrustedMachine.init)
     }
 
+    /// Where Settings writes its own lines of the diagnostic log.
+    public var diagnostics: Diagnostics {
+        graph.diagnostics
+    }
+
+    /// Whether the app keeps a diagnostic log to show.
+    public var hasLog: Bool {
+        graph.diagnostics.log != nil
+    }
+
     /// Settings over `graph`.
     public init(graph: AppGraph) {
         self.graph = graph
+    }
+
+    /// The Logs page's model over the app's log, its exports in the graph's directory for them; none without a log.
+    public func makeLogs() -> LogsModel? {
+        graph.diagnostics.log.map { LogsModel(log: $0, exportDirectory: graph.logExports) }
     }
 
     /// Changes the app's settings by `edit`.

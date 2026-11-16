@@ -196,7 +196,7 @@ by themselves.
 | `prominentAction()` | the filled button: the tint, with `onTint` for its label |
 | `ngtermTheme()` | the tint and the fonts on a view tree |
 | `ValuePlate` | a value compared character by character (a key's line, a fingerprint, a command) under its label, mono and selectable, with its actions under it, on the grouped ground's raised surface |
-| `CopyButton` | puts a value on the clipboard, then says Copied for 2 s (VoiceOver says it too) |
+| `CopyButton` | puts a value on the clipboard, then says Copied for 2 s (VoiceOver says it too), and tells its caller it copied |
 | `InlineProblem` | what is wrong, said where it happened (under a field, under a step): the failed glyph and the fix, in `failed` |
 
 Rules the components hold to:
@@ -741,10 +741,72 @@ inline `Picker`); a switch is the system's `Toggle`, tinted copper.
 - **A key just made or brought** opens its public half (the first run's screen, pushed) with, under it, "Then switch
   your machines", what to do first, and **Use for every machine** (prominent); once every machine uses it, "Every
   machine signs in with this key." The machines connected keep their connections and sign in with it next time.
+- **Diagnostics:** **Logs** (`doc.text.magnifyingglass`), pushing the Logs page (below), with what the log is for
+  under it.
 - **About:** "ngterm for iOS" and the core's version in mono.
 - **States:** the stores are read at launch, so there is no loading state; a change a store couldn't write is a failed
   banner at the sheet's foot, dismissible, the setting left as it was. The one exception is a clipboard **Ask again**:
   it still takes effect until the app closes, and the banner says so.
+
+### Logs (`Logs/`)
+
+Settings > Diagnostics > Logs: the diagnostic log the mobile core keeps (`crates/ngterm-mobile` `applog`) and the app
+adds its own lines to (`Diagnostics`). The reader has a problem to report, so the page answers three things in order:
+what is in here, can I send it, and what happened last. Android's page (`mobile/android/DESIGN.md` > Logs) says the
+same in Material; this one is an inset grouped `List`.
+
+| First pass | Why it was generic, or wrong for iOS | Revised to |
+|---|---|---|
+| Android's one selectable plate of every line | one long text in a list cell doesn't scroll lazily, and VoiceOver reads it as one block | a row per line, under its day as a section header: the system's own way of grouping by date |
+| A terminal-black console of raw lines | a second terminal beside the real one, and raw timestamps bury the event | the system's grouped ground; a line cut to its time, its component and what happened |
+| Copy, Share and Clear in the toolbar or a menu | the page's whole job behind an icon or a tap | action rows at the top, as iOS's own Settings lists actions over data |
+| The privacy note as a grey footer | the one thing a person checks before sharing a log, in the faintest text | two sentences in body text, primary ink, heading the actions |
+| The list row's own `Label` for the actions | at accessibility text sizes it lays the words out narrower than they need and cuts them ("Copy line") | the glyph in a column of its own, the words beside it wrapping at the row's width (`LogsActionLabelStyle`) |
+| Levels as tinted rows or dots | color alone carries meaning | a warning or an error says so: the attention or failed glyph and the word ("warning", "error"), in its tone |
+
+```
++--------------------------------------+
+| < Settings        Logs               |
+|  The log holds what the app and its  |
+|  connections did: ...                |
+|  It never holds what you type, ...   |
+| +----------------------------------+ |
+| | ⧉ Copy lines shown               | |
+| | ↑ Share log                      | |
+| | 🗑 Clear logs                     | |
+| +----------------------------------+ |
+|  9 lines, 1 KB. Newest first, UTC.   |
+|  2026-11-15                          |
+| +----------------------------------+ |
+| | 10:12:44 nav                     | |
+| | settings page=logs               | |
+| | 10:12:21 link ◆ warning          | |
+| | reconnecting delay=4 machine=m1  | |
+| +----------------------------------+ |
++--------------------------------------+
+```
+
+- **What it holds:** the actions' header, body text in primary ink, never collapsed: what the log holds, then what it
+  never holds (typed text, terminal output, chat messages, keys, passphrases, host key fingerprints). They are the
+  log's contract: the core keeps those out by construction, and the app's own lines hold to the same.
+- **Actions,** each a row, 44 pt (`LogsActions`), the glyph in its own column and the words wrapping beside it: **Copy
+  lines shown** (a `CopyButton`: the lines shown and no other, as the log wrote them, oldest first; "Copied" for 2 s),
+  **Share log** (a `ShareLink`: the whole log as `ngterm-log.txt`, written when the app picked asks for it, a file of
+  its own each time the share sheet asks, which it does more than once and at the same time, so an app that got an
+  earlier share never reads a later log; the page deletes earlier pages' exports as it opens, never one a share sheet
+  may still read), and **Clear logs** in `failed`, behind `confirmingDestructive` ("Clear logs?", what is lost, **Clear
+  logs**); the log then starts with a line saying it was cleared.
+- **Extent:** the actions' footer (`FormHint` note): how many lines and how big, newest first, times in UTC. A log
+  longer than the page reads (its newest 48 KiB, at most 300 lines) says so, and that Copy takes these while Share
+  sends all of it.
+- **A line:** its time (`address` mono, `secondaryText`), its component (`plateLabel`), and for a warning or an error
+  the tone's glyph and word (`statusWord`); under them what happened with its `key=value` fields as written, in
+  `address` mono, wrapping anywhere and selectable. VoiceOver reads a row as one element. Each day is a section, its
+  date the `FormHint` heading.
+- **States:** the log is read again each time the page opens and the app comes back to it, after the page's own line
+  is written, so the newest line is the page's own (`settings page=logs`). "Reading the log" with a spinner the first
+  time; "Nothing is logged yet." with nothing in it; a Share that couldn't write its file is a failed `Banner` at the
+  page's foot, dismissible, saying so and what to do (free storage and share again, or copy the lines shown).
 
 ### Notifications
 

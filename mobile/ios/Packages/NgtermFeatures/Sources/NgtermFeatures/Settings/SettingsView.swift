@@ -17,11 +17,11 @@ public struct SettingsView: View {
 
     private let coreVersion: String
     @State private var model: SettingsModel
-    @State private var path: [SettingsPage] = []
+    @State private var navigation: SettingsNavigation
 
     /// The body of the view.
     public var body: some View {
-        NavigationStack(path: $path) {
+        NavigationStack(path: $navigation.path) {
             Form {
                 TerminalSection(model: model)
                 ChoiceSections(model: model)
@@ -29,10 +29,13 @@ public struct SettingsView: View {
                 NotificationsSection(model: model)
                 ClipboardSection(model: model)
                 KeysSection(model: model) { keyId in
-                    path.append(.publicKey(keyId))
+                    navigation.path.append(.publicKey(keyId))
                 } onImport: {
                     model.startImport()
-                    path.append(.importKey)
+                    navigation.path.append(.importKey)
+                }
+                if model.hasLog {
+                    DiagnosticsSection()
                 }
                 AboutSection(coreVersion: coreVersion)
             }
@@ -59,6 +62,9 @@ public struct SettingsView: View {
                 .padding(Spacing.large)
             }
         }
+        .onAppear {
+            navigation.shown()
+        }
         .task {
             await model.readPermission()
         }
@@ -71,7 +77,7 @@ public struct SettingsView: View {
         }
         .onChange(of: model.newKey) { _, keyId in
             if let keyId {
-                path = [.publicKey(keyId)]
+                navigation.path = [.publicKey(keyId)]
                 model.newKeyShown()
             }
         }
@@ -98,6 +104,7 @@ public struct SettingsView: View {
     internal init(model: SettingsModel, coreVersion: String) {
         self.coreVersion = coreVersion
         _model = State(initialValue: model)
+        _navigation = State(initialValue: SettingsNavigation(diagnostics: model.diagnostics))
     }
 
     @ViewBuilder
@@ -116,6 +123,11 @@ public struct SettingsView: View {
             } else {
                 // the key is gone: there is nothing to show
                 Color(uiColor: .systemGroupedBackground)
+            }
+
+        case .logs:
+            if let logs = model.makeLogs() {
+                LogsView(model: logs)
             }
         }
     }

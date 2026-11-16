@@ -24,7 +24,7 @@
     /// when asked, a Mac running agterm beside ngterm, `duo` (``FakeAgtermWorld/seedBeside(_:core:keyId:)``).
     ///
     /// Notifications go to memory (``FakeNotices``), and the question about notifying counts as asked unless the
-    /// launch asks for it.
+    /// launch asks for it. The diagnostic log is the core's own, in the launch's directory or the one it names.
     internal enum FakeWorld {
         /// The host key `build-01.lan` offers (made up).
         internal static let buildHostKey = "SHA256:fAkEbU1Ld01h0sTkEyF0rUiTeStS0nLyN0tArEaLkEy00"
@@ -101,6 +101,7 @@
             if !arguments.contains(CoreChoice.fakeNotificationQuestionArgument) {
                 try? stores.notificationPrefs.markPermissionAsked()
             }
+            let logs = logDirectory(arguments: arguments) ?? directory
             let graph = AppGraph(
                 machines: machines,
                 settings: SettingsStore(directory: directory),
@@ -109,7 +110,9 @@
                 stores: stores,
                 core: core,
                 notices: FakeNotices(),
-                clipboard: clipboard(arguments: arguments)
+                clipboard: clipboard(arguments: arguments),
+                log: AppLogs.open(in: logs.appending(path: "log", directoryHint: .isDirectory)),
+                logExports: logs.appending(path: "export", directoryHint: .isDirectory)
             )
             if arguments.contains(CoreChoice.fakeClipboardReadArgument) {
                 let pane = PaneRef(machineId: "build-01", sessionId: "docs-site", paneId: "P1")
@@ -119,6 +122,15 @@
                 core.emit(read(pane: next, canRemember: false))
             }
             return graph
+        }
+
+        // the directory the launch asks the log to be kept in, if any
+        private static func logDirectory(arguments: [String]) -> URL? {
+            guard let flag = arguments.firstIndex(of: CoreChoice.fakeLogArgument), arguments.indices.contains(flag + 1)
+            else {
+                return nil
+            }
+            return URL(filePath: arguments[flag + 1], directoryHint: .isDirectory)
         }
 
         // holds each Duplicate under way until the cue `duplicateLands` comes, so a test sees what shows meanwhile: the

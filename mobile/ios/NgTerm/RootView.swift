@@ -67,7 +67,13 @@ internal struct RootView: View {
         // the first run decides: a cover while there is no key, or while the keys still can't be read (why, with
         // Retry, never the welcome)
         let firstRun = OnboardingModel(keys: graph.keys)
-        _scaffold = State(initialValue: ScaffoldModel(windows: windows, needsOnboarding: firstRun.step != .done))
+        _scaffold = State(
+            initialValue: ScaffoldModel(
+                windows: windows,
+                needsOnboarding: firstRun.step != .done,
+                diagnostics: graph.diagnostics
+            )
+        )
         _machines = State(initialValue: MachinesModel(graph: graph))
         _onboarding = State(initialValue: firstRun)
     }

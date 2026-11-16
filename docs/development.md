@@ -1091,6 +1091,10 @@ as before, with no error. A Windows origin can't be reached at all yet, as above
 - Background App Refresh lists each machine's sessions and notifies the agents that turned waiting or done, without
   attaching.
 - On an iPad each session opens in a window of its own.
+- Its Settings > Logs is Android's (`Logs/` in its features package): the log is in Application Support, kept out of
+  backups, and Share hands the system's share sheet a file of its own each time. An Objective-C exception is logged
+  as it ends the process; any other crash (a Swift trap, a signal) is logged at the next start, from the report the
+  system delivers then (MetricKit): its exception type, signal and top frame, never its reason.
 - Its key is kept in the Keychain; its design system is `mobile/ios/DESIGN.md`; it ships through TestFlight to the
   App Store ([docs/ios-release.md](ios-release.md)).
 

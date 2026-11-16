@@ -9,12 +9,14 @@ public struct CopyButton: View {
     @State private var isCopied = false
     private let text: String
     private let title: String
+    private let onCopy: @MainActor () -> Void
 
     /// The body of the view.
     public var body: some View {
         Button {
             UIPasteboard.general.string = text
             isCopied = true
+            onCopy()
             AccessibilityNotification.Announcement(String(localized: "Copied", bundle: .module)).post()
         } label: {
             Label(
@@ -35,9 +37,17 @@ public struct CopyButton: View {
         }
     }
 
-    /// Copies `text`; `title` is the button's words (Copy unless given).
-    public init(_ text: String, title: String? = nil) {
+    /// Copies `text`, then calls `onCopy`; `title` is the button's words (Copy unless given).
+    @preconcurrency
+    public init(
+        _ text: String,
+        title: String? = nil,
+        onCopy: @escaping @MainActor () -> Void = {
+            // nothing follows a copy
+        }
+    ) {
         self.text = text
         self.title = title ?? String(localized: "Copy", bundle: .module)
+        self.onCopy = onCopy
     }
 }

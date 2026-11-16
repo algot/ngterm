@@ -11,6 +11,8 @@ public typealias AgentCommand = NgtermCoreBindings.AgentCommand
 public typealias AgentCommandKind = NgtermCoreBindings.AgentCommandKind
 /// What became of a chat action on a pane's agent.
 public typealias AgentInputOutcome = NgtermCoreBindings.AgentInputOutcome
+/// The diagnostic log: the core's lines and the app's own, in files that survive a restart.
+public typealias AppLogProtocol = NgtermCoreBindings.AppLogProtocol
 /// The user's answer to an ask: a button, typed text or the choices picked.
 public typealias AskReply = NgtermCoreBindings.AskReply
 /// A cell of a pane's grid: `x` its column, `y` its row in the viewport.
@@ -49,6 +51,10 @@ public typealias ClipboardWriteStatus = NgtermCoreBindings.ClipboardWriteStatus
 public typealias KeyError = NgtermCoreBindings.KeyError
 /// A private key in OpenSSH form, with the line for the machine's `authorized_keys` and its fingerprint.
 public typealias KeyPair = NgtermCoreBindings.KeyPair
+/// Why the diagnostic log could not be exported.
+public typealias LogError = NgtermCoreBindings.LogError
+/// A diagnostic log line's level.
+public typealias LogLevel = NgtermCoreBindings.LogLevel
 /// A machine the app knows, as it stores it and passes it in.
 public typealias Machine = NgtermCoreBindings.Machine
 /// A machine's connection.

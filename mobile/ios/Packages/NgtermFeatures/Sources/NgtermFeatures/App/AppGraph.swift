@@ -55,6 +55,10 @@ public final class AppGraph {
     public let refresh: StatusRefresh
     /// Whether the device is online; it nudges the core when a network comes up.
     public let network: NetworkMonitor
+    /// Where the app writes its own lines of the diagnostic log.
+    public let diagnostics: Diagnostics
+    /// Where the Logs page writes the files it shares.
+    public let logExports: URL
     /// Whether ``start()`` has run: before it the core has connected nothing.
     public private(set) var isStarted = false
     // the trusted machines and the sessions' own chat views, read again with the other stores
@@ -64,7 +68,8 @@ public final class AppGraph {
     /// The graph over its parts: `core` connects, `stores` keep the small state, and `notices` (the system's unless a
     /// test gives its own) takes the notifications; `pathSource` (the system's unless a test gives its own) tells the
     /// network; programs write and read `clipboard` (the system's unless a test gives its own); a background refresh
-    /// runs on a core `refreshCore` makes (none: it refreshes nothing); and a reconnect counts down by `clock`.
+    /// runs on a core `refreshCore` makes (none: it refreshes nothing); a reconnect counts down by `clock`; and the
+    /// app's own lines go to the diagnostic `log` (none: nowhere), whose shared files are written under `logExports`.
     @preconcurrency
     public init(
         machines: MachineStore,
@@ -77,8 +82,13 @@ public final class AppGraph {
         pathSource: (any PathSource)? = nil,
         clipboard: (any TerminalClipboard)? = nil,
         refreshCore: (@MainActor () throws -> any MobileCoreClient)? = nil,
-        clock: @escaping @Sendable () -> Date = { Date() }
+        clock: @escaping @Sendable () -> Date = { Date() },
+        log: (any AppLogProtocol)? = nil,
+        logExports: URL = FileManager.default.temporaryDirectory.appending(path: "logs-export")
     ) {
+        let lines = Diagnostics(log: log)
+        diagnostics = lines
+        self.logExports = logExports
         self.machines = machines
         self.settings = settings
         self.keys = keys
@@ -98,7 +108,8 @@ public final class AppGraph {
             live: streams,
             panes: shown,
             settings: settings,
-            store: stores.sessionChatViews
+            store: stores.sessionChatViews,
+            diagnostics: lines
         )
         clipboardTrust = stores.clipboardTrust
         clipboardReads = ClipboardReads(connections: made, trust: stores.clipboardTrust, clipboard: board)
@@ -128,6 +139,8 @@ public final class AppGraph {
         )
         network = NetworkMonitor(source: pathSource ?? SystemPathSource()) {
             made.networkChanged()
+        } onOnline: { isOnline in
+            lines.info(.app, isOnline ? "network online" : "network offline")
         }
     }
 

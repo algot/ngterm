@@ -22,37 +22,6 @@ import Observation
 @MainActor
 @Observable
 public final class ChatModel {
-    /// What a chat model reads besides its pane's events: the core, the pane's handle, whether the agent works on a
-    /// turn, how many times the machine's link came back, and what to do once the chat ended.
-    public struct Sources {
-        /// The core.
-        public let core: any MobileCoreClient
-        /// The pane's handle while it is shown.
-        public let handle: @MainActor () -> (any PaneClient)?
-        /// Whether the session's agent status says the pane's agent works on a turn.
-        public let isWorking: @MainActor () -> Bool
-        /// How many times the pane's machine's link has come up.
-        public let connects: @MainActor () -> Int
-        /// The chat (the one given) ended, or never opened.
-        public let onEnded: @MainActor (ChatModel) -> Void
-
-        /// The sources given.
-        @preconcurrency
-        public init(
-            core: any MobileCoreClient,
-            handle: @escaping @MainActor () -> (any PaneClient)?,
-            isWorking: @escaping @MainActor () -> Bool,
-            connects: @escaping @MainActor () -> Int,
-            onEnded: @escaping @MainActor (ChatModel) -> Void
-        ) {
-            self.core = core
-            self.handle = handle
-            self.isWorking = isWorking
-            self.connects = connects
-            self.onEnded = onEnded
-        }
-    }
-
     /// The pane the chat is of.
     public let pane: PaneRef
     /// The chat as the screen shows it.
@@ -184,6 +153,8 @@ public final class ChatModel {
     public func send() {
         let text = composer.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !snapshot.awaitsCard else {
+            let why = text.isEmpty ? "the field is empty" : "a card waits for an answer"
+            sources.diagnostics.info(.chatUI, "message not sent: \(why)")
             return
         }
         let field = composer
@@ -355,9 +326,11 @@ public final class ChatModel {
         call: @escaping @Sendable (any PaneClient) async throws -> AgentInputOutcome
     ) {
         guard !snapshot.isBusy else {
+            sources.diagnostics.info(.chatUI, "action not sent: another one is on its way")
             return
         }
         guard let target = sources.handle() else {
+            sources.diagnostics.warn(.chatUI, "action not sent: the pane is not shown")
             snapshot.problem = .closed
             return
         }
@@ -378,6 +351,7 @@ public final class ChatModel {
     }
 
     private func acted(card: String?, problem: ChatProblem?, goneIfNotOnScreen: Bool, onDone: (Bool) -> Void) {
+        sources.diagnostics.info(.chatUI, "action result=\(problem?.logName ?? "sent")")
         onDone(problem == nil)
         let isGone = problem == nil || (goneIfNotOnScreen && problem == .notOnScreen)
         if let card, isGone {

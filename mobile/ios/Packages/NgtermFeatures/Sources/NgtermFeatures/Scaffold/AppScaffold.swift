@@ -8,6 +8,8 @@ import SwiftUI
 /// one. Settings opens as a sheet from the machines' toolbar, and the onboarding covers everything on the first run.
 /// The columns come from the caller, with the ``ScaffoldModel`` in their environment.
 public struct AppScaffold<Machines: View, Sessions: View, Session: View, Settings: View, Onboarding: View>: View {
+    @Environment(\.horizontalSizeClass)
+    private var sizeClass
     @Bindable private var model: ScaffoldModel
     private let machines: Machines
     private let sessions: (String) -> Sessions
@@ -60,6 +62,9 @@ public struct AppScaffold<Machines: View, Sessions: View, Session: View, Setting
                 .environment(model)
         }
         .ngtermTheme()
+        .onChange(of: sizeClass, initial: true) { _, now in
+            model.isCompact = now == .compact
+        }
     }
 
     /// The frame over `model`, with its columns (`machines`; a machine's `sessions`; a `session`), the `settings`

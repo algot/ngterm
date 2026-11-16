@@ -45,6 +45,9 @@ internal struct CoreChoice {
     /// With the fake core, the launch argument that saves a Mac running agterm beside ngterm, a session of each
     /// (``FakeAgtermWorld/seedBeside(_:core:keyId:)``).
     internal static let fakeAgtermBesideArgument = "-ngterm-fake-agterm-beside"
+    /// With the fake core, the launch argument whose next argument is the directory the diagnostic log and its
+    /// shared files go to (`log/` and `export/` in it), for a UI test to read them; else the launch's own.
+    internal static let fakeLogArgument = "-ngterm-fake-log"
 
     // the public key's comment, which shows in a machine's authorized_keys: whose key it is ("ngterm@iPhone")
     @MainActor private static var keyComment: String {
@@ -72,6 +75,8 @@ internal struct CoreChoice {
 
     @MainActor
     private static func liveGraph() -> AppGraph {
+        // opened before the core, so the core's first lines are in it
+        let log = AppLogs.open(in: .applicationSupportDirectory.appending(path: "logs", directoryHint: .isDirectory))
         let pins = KeychainHostKeys()
         let core: LiveMobileCore
         do {
@@ -86,10 +91,13 @@ internal struct CoreChoice {
             keys: AppKeys(store: KeyStore(), vault: KeychainKeyVault(), maker: CoreKeyMaker(), comment: keyComment),
             pins: pins,
             stores: GraphStores(),
-            core: core
-        ) {
-            // a refresh's own core: the app's keeps what it holds, or what a suspend set aside
-            try LiveMobileCore(vault: KeychainKeyVault(), hosts: pins)
-        }
+            core: core,
+            refreshCore: {
+                // a refresh's own core: the app's keeps what it holds, or what a suspend set aside
+                try LiveMobileCore(vault: KeychainKeyVault(), hosts: pins)
+            },
+            log: log,
+            logExports: .temporaryDirectory.appending(path: "logs-export", directoryHint: .isDirectory)
+        )
     }
 }

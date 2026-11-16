@@ -7,7 +7,7 @@ import NgtermPlatform
 /// suspend); coming back is the graph's ``AppGraph/resume()`` (asks open again, then the core's resume, whose
 /// reconnects reattach). A refresh is asked for while sessions are
 /// attached, and runs only while the core is suspended or not yet started: in the foreground or the grace, the streams
-/// tell the statuses themselves.
+/// tell the statuses themselves. The app coming to the foreground and leaving it are lines of the diagnostic log.
 @preconcurrency
 @MainActor
 public final class AppLifecycle {
@@ -30,6 +30,8 @@ public final class AppLifecycle {
             graph.suspend()
         } resume: {
             graph.resume()
+        } foregroundChanged: { isInForeground in
+            graph.diagnostics.info(.app, isInForeground ? "in the foreground" : "in the background")
         }
         connections.watchAttached { [weak self] attached in
             self?.attachedChanged(attached)

@@ -52,13 +52,15 @@ public final class PaneChats {
     @ObservationIgnored private let settings: SettingsStore
     @ObservationIgnored private let store: SessionChatViewsStore
     @ObservationIgnored private let filter: @MainActor (String, [AgentCommand]) -> [AgentCommand]
+    @ObservationIgnored private let diagnostics: Diagnostics
     // how many times each machine's link has come up, by id: a chat asked for while it was down opens on the next
     @ObservationIgnored private var connects: [String: Int] = [:]
     @ObservationIgnored private var drafts: [PaneRef: Draft] = [:]
     @ObservationIgnored private var following: Task<Void, Never>?
 
     /// The chats over `connections`, of the agents `live` announces in the panes `panes` shows, each session's chat
-    /// view Settings' (`settings`) unless `store` keeps its own; a `/` menu ranks with `filter`.
+    /// view Settings' (`settings`) unless `store` keeps its own; a `/` menu ranks with `filter`; the chats tell
+    /// `diagnostics` why an action was not sent and what became of one that was.
     @preconcurrency
     public init(
         connections: Connections,
@@ -66,10 +68,12 @@ public final class PaneChats {
         panes: SessionPanes,
         settings: SettingsStore,
         store: SessionChatViewsStore,
+        diagnostics: Diagnostics = Diagnostics(),
         filter: @escaping @MainActor (String, [AgentCommand]) -> [AgentCommand] = { query, items in
             filterCommands(query: query, items: items)
         }
     ) {
+        self.diagnostics = diagnostics
         self.connections = connections
         self.live = live
         self.panes = panes
@@ -274,7 +278,8 @@ public final class PaneChats {
             connects: { [weak self] in self?.connects[machineId] ?? 0 },
             onEnded: { [weak self] chat in
                 self?.ended(chat, opened: opened)
-            }
+            },
+            diagnostics: diagnostics
         )
         return ChatModel(pane: pane, sources: sources, filter: filter)
     }

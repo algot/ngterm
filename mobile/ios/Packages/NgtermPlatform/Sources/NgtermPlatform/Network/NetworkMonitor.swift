@@ -3,7 +3,8 @@ import Observation
 
 /// Whether the device has a network, and a nudge to the core whenever a path comes up.
 ///
-/// ``isOnline`` says whether there is a network. The nudge comes for a new path (its preferred interface changed,
+/// ``isOnline`` says whether there is a network, and a change of it (the first path's included) is told on its own.
+/// The nudge comes for a new path (its preferred interface changed,
 /// Wi-Fi to cellular, say, or its gateways did, one Wi-Fi to another) or one regained after none; the core then
 /// retries at once what waits to reconnect.
 ///
@@ -18,13 +19,22 @@ public final class NetworkMonitor {
     public private(set) var isOnline = true
     @ObservationIgnored private let source: any PathSource
     @ObservationIgnored private let onChange: @MainActor () -> Void
+    @ObservationIgnored private let onOnline: @MainActor (Bool) -> Void
     @ObservationIgnored private var last: NetworkPath?
 
-    /// A monitor that calls `onChange` for each new or regained path `source` reports.
+    /// A monitor that calls `onChange` for each new or regained path `source` reports, and `onOnline` with whether
+    /// the device is online for the first path and each change after.
     @preconcurrency
-    public init(source: any PathSource, onChange: @escaping @MainActor () -> Void) {
+    public init(
+        source: any PathSource,
+        onChange: @escaping @MainActor () -> Void,
+        onOnline: @escaping @MainActor (Bool) -> Void = { _ in
+            // nobody follows it
+        }
+    ) {
         self.source = source
         self.onChange = onChange
+        self.onOnline = onOnline
     }
 
     /// A monitor that calls the core's ``MobileCoreClient/networkChanged()`` for each new or regained path
@@ -52,6 +62,9 @@ public final class NetworkMonitor {
         let previous = last
         last = path
         isOnline = path.isSatisfied
+        if previous?.isSatisfied != path.isSatisfied {
+            onOnline(path.isSatisfied)
+        }
         guard let previous, path.isSatisfied else {
             return
         }

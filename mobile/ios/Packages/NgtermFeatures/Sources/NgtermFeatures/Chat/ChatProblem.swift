@@ -29,6 +29,32 @@ public enum ChatProblem: Equatable, Sendable {
         self == .notOnScreen || self == .dialogOpen || self == .unconfirmed
     }
 
+    /// The problem's class in the log, as Android names it: never the core's reason.
+    public var logName: String {
+        switch self {
+        case .closed:
+            "Closed"
+
+        case .dialogOpen:
+            "DialogOpen"
+
+        case .leadRefused:
+            "LeadRefused"
+
+        case .notOnScreen:
+            "NotOnScreen"
+
+        case .notReading:
+            "NotReading"
+
+        case .refused:
+            "Refused"
+
+        case .unconfirmed:
+            "Unconfirmed"
+        }
+    }
+
     /// What became of an action the core answered: none when it was sent.
     public init?(_ outcome: AgentInputOutcome) {
         switch outcome {

@@ -10,26 +10,72 @@ import SwiftUI
 @Observable
 public final class ScaffoldModel {
     /// The machine whose sessions show, by its id in the app's store.
-    public var machine: String?
+    public var machine: String? {
+        didSet {
+            noteDestination()
+        }
+    }
     /// The session that shows: setting it takes it from any other main window, which then shows it no more.
     public var session: SessionWindowID? {
         didSet {
             windows.show(session, in: ObjectIdentifier(self))
+            noteDestination()
         }
     }
     /// The column a compact width shows: the stack's top.
-    public var compactColumn: NavigationSplitViewColumn = .sidebar
+    public var compactColumn: NavigationSplitViewColumn = .sidebar {
+        didSet {
+            noteDestination()
+        }
+    }
+    /// Whether the window is compact, a stack showing one column at a time.
+    public var isCompact = false {
+        didSet {
+            noteDestination()
+        }
+    }
     /// Which columns a regular width shows: all three where they fit.
     ///
     /// An iPad held upright has room for two, so the machines start hidden there, and the empty sessions column
     /// offers Show machines.
     public var columnVisibility: NavigationSplitViewVisibility = .all
     /// Settings is open.
-    public var isSettingsPresented = false
+    public var isSettingsPresented = false {
+        didSet {
+            noteDestination()
+        }
+    }
     /// The first run's onboarding covers the app: there is nowhere to go without a key.
     public var isOnboardingPresented: Bool
     /// Where every session is drawn, shared by every scene.
     public let windows: SessionWindows
+    @ObservationIgnored private let diagnostics: Diagnostics
+    // the destination the log was last told
+    @ObservationIgnored private var noted: ScaffoldDestination?
+
+    /// Where the window is, as the log names it: Settings while it is open, else the column a compact stack shows on
+    /// top, or the furthest a regular width shows.
+    public var destination: ScaffoldDestination {
+        if isSettingsPresented {
+            return .settings
+        }
+        if isCompact {
+            switch compactColumn {
+            case .detail:
+                return .session
+
+            case .content:
+                return .sessions
+
+            default:
+                return .machines
+            }
+        }
+        if session != nil {
+            return .session
+        }
+        return machine == nil ? .machines : .sessions
+    }
 
     /// Where the session this window shows is drawn: here, unless it has a window of its own by now, or another main
     /// window took it over.
@@ -43,9 +89,11 @@ public final class ScaffoldModel {
         columnVisibility != .all
     }
 
-    /// A window showing nothing yet, the onboarding over it when `needsOnboarding`.
-    public init(windows: SessionWindows, needsOnboarding: Bool = false) {
+    /// A window showing nothing yet, the onboarding over it when `needsOnboarding`, telling `diagnostics` where it
+    /// goes.
+    public init(windows: SessionWindows, needsOnboarding: Bool = false, diagnostics: Diagnostics = Diagnostics()) {
         self.windows = windows
+        self.diagnostics = diagnostics
         isOnboardingPresented = needsOnboarding
     }
 
@@ -88,6 +136,16 @@ public final class ScaffoldModel {
         if compactColumn == .detail {
             compactColumn = .content
         }
+    }
+
+    // the log gets a line each time the destination changes, never what the window shows there
+    private func noteDestination() {
+        let now = destination
+        guard now != noted else {
+            return
+        }
+        noted = now
+        diagnostics.info(.nav, "destination=\(now)")
     }
 
     isolated deinit {
