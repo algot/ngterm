@@ -17,35 +17,6 @@ import XCTest
 /// app anew and hands the machine to the test through the test runner's environment. Without it the test is skipped.
 /// The log is the app's own, in its data container on the simulator, which the test runner reads beside its own.
 internal final class LogsOnAMachineTests: XCTestCase {
-    private static let connectWait: TimeInterval = 60
-    private static let answerWait: TimeInterval = 20
-    private static let appIdentifier = "com.nickalie.ngterm.ios"
-    private static let label = "qa-logs-mac"
-    private static let session = "qa-sess-mk5n"
-    // typed at the shell: the shell prints `typed` back, so it is in the terminal twice
-    private static let typed = "qa-typed-mk9x"
-    private static let command = "echo \(typed)"
-    private static let agent = "e2e-claude"
-    private static let chatMarker = "qa-chat-mk3p"
-    private static let chatText = "\(chatMarker) please look at the build"
-    // what the log tells of the session: the core's lines, then the app's
-    private static let told = [
-        "host key trusted and pinned",
-        "machine connected",
-        "new session",
-        "attached",
-        "input delivery=sent",
-        "pane agent announced",
-        "action=prompt",
-        "chat events",
-        "destination=session",
-        "settings page=logs",
-    ]
-    // a line about input in the log's file, whole: its time, its level, its tag, then its delivery, kind and pane
-    private static let inputLine = try? NSRegularExpression(
-        pattern: #"^\S+ [IWE] input: input delivery=[a-z-]+ kind=(key|text|paste) pane=[0-9A-Za-z-]+$"#
-    )
-
     /// The machine `scripts/test-ios-e2e.sh` started, as the test runner's environment names it.
     private struct Machine {
         let host: String
@@ -78,23 +49,6 @@ internal final class LogsOnAMachineTests: XCTestCase {
         let log: URL
         let export: URL
 
-        static func ofTheApp() -> Self? {
-            let containers = URL(filePath: NSHomeDirectory()).deletingLastPathComponent()
-            let files = FileManager.default
-            let all = (try? files.contentsOfDirectory(at: containers, includingPropertiesForKeys: nil)) ?? []
-            let app = all.first { container in
-                let metadata = container.appending(path: ".com.apple.mobile_container_manager.metadata.plist")
-                let identifier = NSDictionary(contentsOf: metadata)?["MCMMetadataIdentifier"] as? String
-                return identifier == appIdentifier
-            }
-            return app.map {
-                Self(
-                    log: $0.appending(path: "Library/Application Support/logs", directoryHint: .isDirectory),
-                    export: $0.appending(path: "tmp/logs-export", directoryHint: .isDirectory)
-                )
-            }
-        }
-
         // the log as the app keeps it: its file and the one it rotated to
         var files: String {
             LogsPage.files(under: log).joined(separator: "\n")
@@ -107,6 +61,82 @@ internal final class LogsOnAMachineTests: XCTestCase {
         // the file the last Share wrote
         var exported: String? {
             LogsPage.files(under: export).last
+        }
+
+        static func ofTheApp() -> Self? {
+            let containers = URL(filePath: NSHomeDirectory()).deletingLastPathComponent()
+            let manager = FileManager.default
+            let all = (try? manager.contentsOfDirectory(at: containers, includingPropertiesForKeys: nil)) ?? []
+            let app = all.first { container in
+                let metadata = container.appending(path: ".com.apple.mobile_container_manager.metadata.plist")
+                let plist = (try? Data(contentsOf: metadata)).flatMap { data in
+                    try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
+                }
+                let identifier = plist?["MCMMetadataIdentifier"] as? String
+                return identifier == appIdentifier
+            }
+            return app.map { container in
+                Self(
+                    log: container.appending(path: "Library/Application Support/logs", directoryHint: .isDirectory),
+                    export: container.appending(path: "tmp/logs-export", directoryHint: .isDirectory)
+                )
+            }
+        }
+    }
+
+    private static let connectWait: TimeInterval = 60
+    private static let answerWait: TimeInterval = 20
+    private static let appIdentifier = "com.nickalie.ngterm.ios"
+    private static let label = "qa-logs-mac"
+    private static let session = "qa-sess-mk5n"
+    // typed at the shell: the shell prints `typed` back, so it is in the terminal twice
+    private static let typed = "qa-typed-mk9x"
+    private static let command = "echo \(typed)"
+    private static let agent = "e2e-claude"
+    private static let chatMarker = "qa-chat-mk3p"
+    private static let chatText = "\(chatMarker) please look at the build"
+    // what the log tells of the session: the core's lines, then the app's
+    private static let told = [
+        "host key trusted and pinned",
+        "machine connected",
+        "new session",
+        "attached",
+        "input delivery=sent",
+        "pane agent announced",
+        "action=prompt",
+        "chat events",
+        "destination=session",
+        "settings page=logs",
+    ]
+    // a line about input in the log's file, whole: its time, its level, its tag, then its delivery, kind and pane
+    private static let inputLine = try? NSRegularExpression(
+        pattern: #"^\S+ [IWE] input: input delivery=[a-z-]+ kind=(key|text|paste) pane=[0-9A-Za-z-]+$"#
+    )
+
+    // a form's field, its old text (a default port) replaced by `text`
+    @MainActor
+    private static func fill(_ identifier: String, with text: String, in app: XCUIApplication) {
+        let field = app.textFields[identifier]
+        FakeApp.expect(field, identifier)
+        field.tap()
+        let old = field.value as? String ?? ""
+        let placeholder = field.placeholderValue ?? ""
+        if !old.isEmpty, old != placeholder {
+            field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: old.count))
+        }
+        field.typeText(text)
+    }
+
+    // a line about input: how it was delivered, its kind and its pane, and there is one
+    private static func assertInputLinesHoldNoText(_ what: String, _ log: String) {
+        let input = log.split(whereSeparator: \.isNewline).map(String.init).filter { $0.contains(" input: ") }
+        XCTAssertFalse(input.isEmpty, "\(what) tell nothing of the input:\n\(log)")
+        for line in input {
+            let whole = NSRange(line.startIndex..., in: line)
+            XCTAssertNotNil(
+                inputLine?.firstMatch(in: line, range: whole),
+                "\(what) hold a line about input with more than its delivery:\n\(line)"
+            )
         }
     }
 
@@ -212,20 +242,6 @@ internal final class LogsOnAMachineTests: XCTestCase {
         XCTAssertTrue(connected.waitForExistence(timeout: Self.connectWait), "the machine never read Connected")
     }
 
-    // a form's field, its old text (a default port) replaced by `text`
-    @MainActor
-    private static func fill(_ identifier: String, with text: String, in app: XCUIApplication) {
-        let field = app.textFields[identifier]
-        FakeApp.expect(field, identifier)
-        field.tap()
-        let old = field.value as? String ?? ""
-        let placeholder = field.placeholderValue ?? ""
-        if !old.isEmpty, old != placeholder {
-            field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: old.count))
-        }
-        field.typeText(text)
-    }
-
     // New named session on the machine, landing in its terminal; the first attach asks about notifying: not now
     @MainActor
     private func openANewSession(in app: XCUIApplication) {
@@ -295,19 +311,6 @@ internal final class LogsOnAMachineTests: XCTestCase {
             timeout: Self.connectWait
         )
         XCTAssertEqual(came, .completed, "the terminal never showed \(what): \(terminal.value ?? "")")
-    }
-
-    // a line about input: how it was delivered, its kind and its pane, and there is one
-    private static func assertInputLinesHoldNoText(_ what: String, _ log: String) {
-        let input = log.split(whereSeparator: \.isNewline).map(String.init).filter { $0.contains(" input: ") }
-        XCTAssertFalse(input.isEmpty, "\(what) tell nothing of the input:\n\(log)")
-        for line in input {
-            let whole = NSRange(line.startIndex..., in: line)
-            XCTAssertNotNil(
-                inputLine?.firstMatch(in: line, range: whole),
-                "\(what) hold a line about input with more than its delivery:\n\(line)"
-            )
-        }
     }
 
     @MainActor

@@ -10,13 +10,17 @@ internal enum LogsPage {
     /// How often a tap that can reach nothing is tried again.
     internal static let tries = 3
     private static let swipes = 12
+    // Settings' page swiped down to its foot, then back up
+    private static let revealSwipes = swipes + swipes
     // how often the list is swiped through at most, and after how many swipes that bring no new line it is at its foot
     private static let listSwipes = 60
     private static let stillSwipes = 2
     // how long a press on a field is held to bring up its edit menu
     private static let menuPress: TimeInterval = 1.2
     // where a tap outside an iPad's popover lands: near the screen's left edge and foot
-    private static let outsidePopover = CGVector(dx: 0.03, dy: 0.9)
+    private static let outsideX: CGFloat = 0.03
+    private static let outsideY: CGFloat = 0.9
+    private static let outsidePopover = CGVector(dx: outsideX, dy: outsideY)
     // a log Cancel cleared shows its one line, saying so: a kept log shows more
     private static let clearedLines = 1
     // a line of a private key's body, which is in no form of the log: longer than this
@@ -32,8 +36,10 @@ internal enum LogsPage {
         return lines(under: page)
     }
 
-    /// Every line the page shows, top first, scrolled through: the list makes rows only as they come on screen. The
-    /// page is then back at its top. A line that two rows show alike is taken once.
+    /// Every line the page shows, top first, scrolled through.
+    ///
+    /// The list makes rows only as they come on screen. The page is then back at its top. A line that two rows show
+    /// alike is taken once.
     @MainActor
     internal static func allShownLines(in app: XCUIApplication) -> [String] {
         let list = app.collectionViews["logs-list"]
@@ -88,7 +94,7 @@ internal enum LogsPage {
     @MainActor
     internal static func reveal(_ element: XCUIElement, in app: XCUIApplication) {
         let form = app.collectionViews["settings-form"]
-        for swipe in 0..<(swipes * 2) where !(element.exists && element.isHittable) {
+        for swipe in 0..<revealSwipes where !(element.exists && element.isHittable) {
             if swipe < swipes {
                 form.swipeUp()
             } else {
@@ -97,8 +103,10 @@ internal enum LogsPage {
         }
     }
 
-    /// The clipboard's text, which Copy put there, as Settings' Import a key takes it in its field: the test runner,
-    /// in the background, can't read the clipboard itself. Logs is left for Settings' own page, where it ends.
+    /// The clipboard's text, which Copy put there.
+    ///
+    /// Settings' Import a key takes it in its field: the test runner, in the background, can't read the clipboard
+    /// itself. Logs is left for Settings' own page, where it ends.
     @MainActor
     internal static func pasted(in app: XCUIApplication) -> String {
         app.buttons["BackButton"].firstMatch.tap()
@@ -188,8 +196,9 @@ internal enum LogsPage {
             .compactMap { try? String(contentsOf: $0, encoding: .utf8) }
     }
 
-    /// `log` holds none of `secrets` (what each is → its text), no line of `key`'s body, no key's armor and no
-    /// fingerprint.
+    /// Fails when `log` holds a secret.
+    ///
+    /// The secrets are `secrets` (what each is → its text), a line of `key`'s body, a key's armor and a fingerprint.
     internal static func assertClean(_ what: String, _ log: String, secrets: [String: String], key: String) {
         for (name, secret) in secrets {
             XCTAssertFalse(log.contains(secret), "\(what) hold \(name):\n\(log)")
