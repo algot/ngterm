@@ -59,6 +59,9 @@ internal struct ChatHandoverTests {
         #expect(!terminals[1].isFirstResponder)
         #expect(keyboard.chatField == nil, "the terminal has the keyboard now, not the field")
         #expect(!keyboard.takeChatHandover(), "taken once")
+        under.insertText("l")
+        let pane = try #require(under.pane as? FakePane)
+        #expect(pane.inputs.contains(.typed("l")), "a key typed before the view draws it focused went nowhere")
 
         // the pane's terminal isn't on screen yet: the handover waits for it
         _ = under.resignFirstResponder()

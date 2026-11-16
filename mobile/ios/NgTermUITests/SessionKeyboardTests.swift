@@ -156,8 +156,8 @@ internal final class SessionKeyboardTests: XCTestCase {
         Self.expectTyping(in: app, "the chat opened first")
     }
 
-    // `work` opens on its chat; Show terminal hands the prompt field's keyboard to the pane's terminal, and Show chat
-    // hands it back to the field, the pane keeping one terminal under its chat
+    // `work` opens on its chat; Show terminal hands the prompt field's keyboard to the pane's terminal, which takes
+    // the keys typed at once, and Show chat hands it back to the field, the pane keeping one terminal under its chat
     @MainActor
     internal func testAPaneTurningToItsTerminalAndBackKeepsTheTyping() {
         let app = openSplit(arguments: ["-ngterm-fake-chat"])
@@ -166,9 +166,9 @@ internal final class SessionKeyboardTests: XCTestCase {
         let viewSwitch = app.descendants(matching: .any)["session-view-switch"].firstMatch
         FakeApp.expect(viewSwitch, "Show terminal")
         viewSwitch.tap()
-        Self.expectFocus(on: "P1", in: app, "the terminal shown in the chat's place")
         Self.type("ls", in: app)
         FakeApp.expect(Self.screen("P1", in: app, typed: "ls"), "the typing on the terminal, with no tap")
+        Self.expectFocus(on: "P1", in: app, "the terminal shown in the chat's place")
         viewSwitch.tap()
         Self.expectTyping(in: app, "the chat shown again")
     }

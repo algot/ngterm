@@ -1,3 +1,4 @@
+import NgtermCoreFakes
 import NgtermDesign
 import NgtermPlatform
 import NgtermTerminal
@@ -82,6 +83,31 @@ internal struct PaneTurnTests {
         model.pick(ChatWorld.pane.paneId, .chat)
         await Wait.until { keyboard.chatField != nil && !terminal.isFirstResponder }
         #expect(keyboard.target == nil)
+    }
+
+    @Test("the keys typed as the terminal takes the prompt's keyboard, before the view changes, reach the program")
+    internal func typingAtOnce() async throws {
+        let world = ChatWorld()
+        defer { world.remove() }
+        let keyboard = TerminalKeyboard(hardware: HardwareKeyboard(fixed: true))
+        let (window, terminal) = try await Self.open(world, keyboard: keyboard)
+        defer { window.isHidden = true }
+        let pane = try #require(world.fakePane)
+
+        let model = SessionModel(graph: world.graph, key: SessionWorld.key, keyboard: keyboard)
+        model.showTerminal(of: ChatWorld.pane.paneId)
+        #expect(terminal.isFirstResponder, "the keyboard goes from the field straight to the terminal")
+        terminal.insertText("l")
+        terminal.insertText("s")
+        let typed = pane.inputs.filter { input in
+            if case .typed = input {
+                return true
+            }
+            return false
+        }
+        #expect(typed == [.typed("l"), .typed("s")], "the first keys after Show terminal went nowhere")
+        await Wait.until { terminal.drawsFocused }
+        #expect(terminal.isFirstResponder)
     }
 
     @Test("the chat's own Show terminal gives the terminal the prompt's keyboard before the view changes")
