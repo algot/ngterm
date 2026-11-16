@@ -38,8 +38,10 @@ internal struct ChatHandoverTests {
         defer { window.isHidden = true }
         let keyboard = TerminalKeyboard(hardware: HardwareKeyboard(fixed: false))
         let terminals = (0..<2).map { _ in
+            // a pane with a terminal, which takes input
+            let pane = FakePane { since in RowBufferWriter(columns: 40, rows: 10, seq: since + 1).bytes() }
             let view = TerminalView(
-                pane: FakePane(),
+                pane: pane,
                 palette: .copper,
                 textSize: TerminalRig.textSize,
                 keyboard: keyboard

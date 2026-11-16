@@ -76,7 +76,9 @@ internal struct PaneTurnTests {
         #expect(terminal.isFirstResponder, "the keyboard goes from the field straight to the terminal")
         #expect(keyboard.target === terminal)
         #expect(terminal.softKeyboardWanted, "the field had the soft keyboard")
-        await Wait.until { terminal.drawsFocused }
+        // the view update showing the terminal ran: it alone has the terminal read its cursor's line aloud
+        await Wait.until { terminal.readsAloud }
+        #expect(terminal.drawsFocused)
         #expect(terminal.isFirstResponder)
         await Wait.until { keyboard.chatField == nil }
 
@@ -106,7 +108,9 @@ internal struct PaneTurnTests {
             return false
         }
         #expect(typed == [.typed("l"), .typed("s")], "the first keys after Show terminal went nowhere")
-        await Wait.until { terminal.drawsFocused }
+        // the view update showing the terminal ran: it alone has the terminal read its cursor's line aloud
+        await Wait.until { terminal.readsAloud }
+        #expect(terminal.drawsFocused)
         #expect(terminal.isFirstResponder)
     }
 
@@ -142,7 +146,9 @@ internal struct PaneTurnTests {
         #expect(terminal.isFirstResponder, "the keyboard goes from the field straight to the terminal")
         #expect(keyboard.target === terminal)
         #expect(terminal.softKeyboardWanted, "the field had the soft keyboard")
-        await Wait.until { terminal.drawsFocused }
+        // the view update showing the terminal ran: it alone has the terminal read its cursor's line aloud
+        await Wait.until { terminal.readsAloud }
+        #expect(terminal.drawsFocused)
         #expect(terminal.isFirstResponder)
     }
 }
