@@ -894,6 +894,7 @@ mod tests {
     use std::sync::mpsc;
 
     use super::*;
+    use crate::ProcessTable as _;
 
     #[test]
     fn main_loop_runs_tasks_in_order_on_its_own_thread() {
@@ -1113,6 +1114,111 @@ mod tests {
         assert_eq!(output.stdout, b"ran");
         assert_eq!(entries, 1, "the source is removed");
         assert!(write_executable(&dir.join("missing/script"), "").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_install_is_an_error_that_names_the_copy() {
+        let dir = std::env::temp_dir().join(format!("ngterm-host-copy-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("source");
+        std::fs::write(&source, "").unwrap();
+        let to = dir.join("missing/copy");
+        let error = copy_executable(&source, &to).unwrap_err();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(
+            error.to_string().starts_with(&format!("install {}: ", to.display())),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn surface_has_no_selection_until_it_is_realized() {
+        let surface = FakeSurface::new("pane-1").with_realized(false);
+        surface.probe().set_lines(["line".to_owned()]);
+        let mut surface: Box<dyn Surface> = Box::new(surface);
+        assert!(!surface.binding_action("select_all"));
+        assert_eq!(surface.read_selection(), None);
+    }
+
+    #[test]
+    fn default_fakes_are_new_ones() {
+        assert!(FakeSessionHost::default().is_available());
+        assert!(FakeSessionHost::default().list().unwrap().is_empty());
+        let launcher = FakeProcessLauncher::default();
+        let pid = launcher.launch(&LaunchSpec::default(), Box::new(|_| ())).unwrap().pid;
+        assert_eq!(pid, FakeProcessLauncher::FIRST_PID);
+    }
+
+    #[test]
+    fn session_host_lists_again_after_it_heals() {
+        let host = FakeSessionHost::new();
+        host.insert("ngterm-a", "$ ");
+        host.fail_list("live session list timed out");
+        assert!(host.list().is_err());
+        host.heal_list();
+        assert_eq!(host.list().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn unavailable_session_host_kills_nothing() {
+        let host = FakeSessionHost::unavailable();
+        assert!(matches!(host.kill("ngterm-a", false), KillOutcome::Failed(_)));
+    }
+
+    fn process_table() -> FakeProcessTable {
+        let table = FakeProcessTable::default();
+        let stat = |pid, pgrp| crate::ProcessStat {
+            pid,
+            ppid: 1,
+            pgrp,
+            session: 10,
+        };
+        table.insert(stat(10, 10), Some(&["zsh"]));
+        table.insert(stat(11, 11), Some(&["vim", "notes"]));
+        table.insert(stat(12, 11), None);
+        table.set_terminal_foreground(10, 11);
+        table.set_working_directory(11, "/work");
+        table.set_executable_path(11, "/usr/bin/vim");
+        table.set_search_path(11, "/usr/bin");
+        table
+    }
+
+    #[test]
+    fn process_table_lists_one_time_for_each_group_or_foreground_read() {
+        let table = process_table();
+        let listings = table.listings();
+        let pids = |stats: Vec<crate::ProcessStat>| stats.iter().map(|stat| stat.pid).collect::<Vec<_>>();
+        assert_eq!(pids(table.group(11)), [11, 12]);
+        assert_eq!(table.terminal_foreground(10), Some(11));
+        assert_eq!(table.terminal_foreground(11), None);
+        assert_eq!(listings.get(), 3);
+        assert_eq!(table.argv(11), Some(vec!["vim".to_owned(), "notes".to_owned()]));
+        assert_eq!(table.stat(12).map(|stat| stat.pgrp), Some(11));
+        assert_eq!(listings.get(), 3, "argv and stat read one process");
+    }
+
+    #[test]
+    fn a_shared_listing_reads_the_table_and_lists_one_time() {
+        let table = process_table();
+        let listings = table.listings();
+        let view = table.shared_listing().unwrap();
+        assert_eq!(view.argv(11), Some(vec!["vim".to_owned(), "notes".to_owned()]));
+        assert_eq!(view.argv(12), None);
+        assert_eq!(view.stat(12).map(|stat| stat.pgrp), Some(11));
+        assert_eq!(view.working_directory(11).as_deref(), Some("/work"));
+        assert_eq!(view.executable_path(11).as_deref(), Some("/usr/bin/vim"));
+        assert_eq!(view.search_path(11).as_deref(), Some("/usr/bin"));
+        assert_eq!(listings.get(), 0, "no read so far needs a listing");
+        assert_eq!(view.terminal_foreground(10), Some(11));
+        let group = view.group(11);
+        assert_eq!(group.iter().map(|stat| stat.pid).collect::<Vec<_>>(), [11, 12]);
+        assert!(view.group(99).is_empty());
+        assert_eq!(listings.get(), 1);
+        drop(view);
+        let view = table.shared_listing().unwrap();
+        assert_eq!(view.terminal_foreground(10), Some(11));
+        assert_eq!(listings.get(), 2, "each view lists one time");
     }
 
     #[cfg(windows)]
