@@ -100,12 +100,13 @@ public final class TerminalView: UIView {
 
     /// Whether the terminal has the focus: an unfocused one shows its cursor as a hollow block.
     ///
-    /// The session view draws its selected pane focused: one that becomes so in a window takes the keyboard's focus
-    /// when the last selected one handed it over (``TerminalKeyboard/handOver()``). One the selection leaves finishes
-    /// its composition there and types nowhere after, though it keeps the first responder until the next pane takes
-    /// it, its chords still moving on: the next may have no terminal yet, or none it could show. A chat that declines
-    /// its bare focus for want of a hardware keyboard is the exception: the terminal lets the focus go, its extra keys
-    /// with it.
+    /// The session view draws its selected pane focused, its terminal under a chat not until the pane turns to it
+    /// (``TerminalKeyboard/handOver(to:)``, which draws it focused before the view changes): one that becomes so in a
+    /// window takes the keyboard's focus when the last selected one handed it over (``TerminalKeyboard/handOver()``).
+    /// One the selection leaves finishes its composition there and types nowhere after, though it keeps the first
+    /// responder until the next pane takes it, its chords still moving on: the next may have no terminal yet, or none
+    /// it could show. A chat that declines its bare focus for want of a hardware keyboard is the exception: the
+    /// terminal lets the focus go, its extra keys with it.
     public var drawsFocused = true {
         willSet {
             focusWillMove(drawingFocused: newValue)

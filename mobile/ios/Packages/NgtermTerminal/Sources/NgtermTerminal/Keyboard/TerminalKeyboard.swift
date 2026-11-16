@@ -289,10 +289,17 @@ public final class TerminalKeyboard {
 
     // a keyboard came or went: the extra keys show or stand aside, and one that came with nothing holding the keyboard
     // gives the selected pane the focus, now or as it comes on (a chat takes it as it sees the keyboard come); a text
-    // field of the app's own, a sheet's over the session, keeps it, and no pane takes it from there later
+    // field of the app's own, a sheet's over the session, keeps it, and no pane takes it from there later; one that
+    // went before a pane took that focus takes it back, so the pane waits for a tap
     private func hardwareChanged() {
         target?.reloadInputViews()
-        guard hardware.isAttached, target == nil, chatField == nil else {
+        guard target == nil, chatField == nil else {
+            return
+        }
+        guard hardware.isAttached else {
+            if handingOver == .focus {
+                handingOver = nil
+            }
             return
         }
         guard !otherHoldsKeyboard() else {

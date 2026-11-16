@@ -6,7 +6,8 @@ import SwiftUI
 /// A pane's place in the session view (mobile/android's `PaneSlot`): its terminal once it is shown (the slot's first
 /// size shows it), under its cover when it can't be used as it is; or, in chat view, its chat in the terminal's place,
 /// the terminal still laid out under it at the slot's grid, unfocused and out of sight, so a chat action that takes
-/// control lays the program out for this device, under no cover but a failed show's.
+/// control lays the program out for this device, under no cover but a failed show's. A turn of the pane to its
+/// terminal (`SessionModel.showTerminal(of:)`) draws that terminal focused at once, before the view changes.
 ///
 /// The selected one (`isFocused`) draws its cursor as it is, the others' go hollow, and only it says its cursor's
 /// line to VoiceOver. A touch on it, or its taking the focus, selects it; `swipe` takes a finger's sideways swipe (a
@@ -114,7 +115,9 @@ internal struct PaneSlot: View {
         return PaneShowKey(ref: spot.ref, width: size.width, height: size.height, waits: waits)
     }
 
-    // the pane's terminal; under a chat (`isChat`) it is never drawn focused, so it takes no keyboard
+    // the pane's terminal; under a chat (`isChat`) it is drawn unfocused and takes no keyboard, except as the pane
+    // turns to it (`SessionModel.showTerminal(of:)`): it then takes the prompt field's keyboard and is drawn focused
+    // before the view changes
     private func terminal(_ shown: ShownPane, isChat: Bool) -> some View {
         let paneId = spot.id
         let select = actions.select

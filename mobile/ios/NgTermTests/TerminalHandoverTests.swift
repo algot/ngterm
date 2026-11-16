@@ -115,6 +115,22 @@ internal struct TerminalHandoverTests {
         #expect(keyboard.target === selected)
     }
 
+    @Test("a hardware keyboard that goes before a new session's terminal came on leaves it to wait for a tap")
+    internal func keyboardGoesBeforeTerminal() throws {
+        let window = try Self.window()
+        defer { window.isHidden = true }
+        let hardware = HardwareKeyboard(fixed: true)
+        let keyboard = TerminalKeyboard(hardware: hardware)
+        hardware.update(attached: false)
+        let selected = Self.terminal(keyboard, focused: true)
+        window.addSubview(selected)
+        #expect(!selected.isFirstResponder)
+        #expect(keyboard.target == nil)
+
+        hardware.update(attached: true)
+        #expect(selected.isFirstResponder, "a keyboard that comes again gives the focus again")
+    }
+
     @Test("a keyboard the system reports after the session opened gives its selected terminal the focus, now or later")
     internal func keyboardReportedLate() throws {
         let window = try Self.window()
