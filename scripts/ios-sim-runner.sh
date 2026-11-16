@@ -4,8 +4,10 @@
 # scripts/setup-ios.sh), through `xcrun simctl spawn`, and exits with the binary's exit status as simctl reports it:
 # 128 + the signal when a signal ended it (an abort is 134), as a shell reports one.
 #
-# The simulator is booted when it isn't (`simctl bootstatus -b`, which waits until it is up) and left booted, so the
-# next binary of the same `cargo test` doesn't pay for another boot; `xcrun simctl shutdown ngterm-phone` stops it.
+# `scripts/setup-ios.sh --simulator` readies the simulator before each binary: it waits for the runtime disk images,
+# makes the simulator again when it is gone and boots it when it isn't (`simctl bootstatus -b`, which waits until it
+# is up). It is left booted, so the next binary of the same `cargo test` doesn't pay for another boot; `xcrun simctl
+# shutdown ngterm-phone` stops it.
 # The binary runs inside the simulator with the host's file system visible, so absolute paths baked in at compile
 # time (`env!("CARGO_MANIFEST_DIR")`) resolve; its working directory is the simulator's data directory, not the
 # package's. Its environment is the simulator's own plus what is forwarded: RUST_BACKTRACE and every RUST_TEST_*
@@ -30,27 +32,14 @@ fi
 # shellcheck source=lib/native.sh
 source "$(dirname "$0")/lib/native.sh" # sources build/pins.env too
 
-# The UDID of the simulator named $1 on the pinned runtime: `simctl list devices` lists it as "    <name> (<udid>)
-# (<state>)" under the runtime's "-- iOS <version> --" header.
-simulator_udid() {
-  xcrun simctl list devices 2>/dev/null | awk -v header="-- iOS $IOS_SIMULATOR_RUNTIME --" -v name="    $1 (" '
-    /^-- / { inside = ($0 == header); next }
-    inside && index($0, name) == 1 {
-      rest = substr($0, length(name) + 1)
-      print substr(rest, 1, index(rest, ")") - 1)
-      exit
-    }'
-}
-
 executable="$1"
 shift
 [[ -f "$executable" ]] || die "no executable at $executable"
 # simctl searches a relative path on the device too: hand it the host path
 [[ "$executable" == /* ]] || executable="$PWD/$executable"
 
-udid="$(simulator_udid "$IOS_SIM_PHONE_NAME")"
-[[ -n "$udid" ]] || die "no simulator $IOS_SIM_PHONE_NAME on iOS $IOS_SIMULATOR_RUNTIME: run scripts/setup-ios.sh"
-xcrun simctl bootstatus "$udid" -b >/dev/null || die "cannot boot simulator $IOS_SIM_PHONE_NAME ($udid)"
+udid="$("$(dirname "$0")/setup-ios.sh" --simulator "$IOS_SIM_PHONE_NAME")" ||
+  die "the simulator $IOS_SIM_PHONE_NAME on iOS $IOS_SIMULATOR_RUNTIME is not ready (see above)"
 
 for name in $(compgen -e); do
   case "$name" in

@@ -280,17 +280,6 @@ project_xcodebuild() {
 # the packages (the project's EXCLUDED_ARCHS covers its own targets only)
 SIMULATOR_BUILD=(-scheme NgTerm -configuration Debug -destination "generic/platform=iOS Simulator" ARCHS=arm64)
 
-# The UDID of the simulator named $1 on the pinned runtime (as scripts/ios-sim-runner.sh finds it).
-simulator_udid() {
-  xcrun simctl list devices 2>/dev/null | awk -v header="-- iOS $IOS_SIMULATOR_RUNTIME --" -v name="    $1 (" '
-    /^-- / { inside = ($0 == header); next }
-    inside && index($0, name) == 1 {
-      rest = substr($0, length(name) + 1)
-      print substr(rest, 1, index(rest, ")") - 1)
-      exit
-    }'
-}
-
 # The Swift sources swift-format and the suppression check read: everything under mobile/ios but the generated
 # bindings and build output. SwiftLint picks the same files through .swiftlint.yml's included and excluded, which
 # leave the package manifests out too.
@@ -386,8 +375,9 @@ run_test_plan() {
       phone) [[ "$name" == "$IOS_SIM_PHONE_NAME" ]] || continue ;;
       tablet) [[ "$name" == "$IOS_SIM_TABLET_NAME" ]] || continue ;;
     esac
-    udid="$(simulator_udid "$name")"
-    [[ -n "$udid" ]] || die "no $name simulator on iOS $IOS_SIMULATOR_RUNTIME: run scripts/setup-ios.sh"
+    # found, made again when it is gone, and booted right before the run: a CI Mac's simulators can still come and go
+    udid="$("$NATIVE_ROOT/scripts/setup-ios.sh" --simulator "$name")" ||
+      die "the $name simulator on iOS $IOS_SIMULATOR_RUNTIME is not ready (see above)"
     quiet_keyboard_introduction "$udid"
     destinations+=(-destination "id=$udid")
   done

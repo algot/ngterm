@@ -25,19 +25,37 @@
 #   - a simulator UI test and a snapshot test run there with the screen locked, from an ssh-started shell
 #     (docs/spikes/20261103-ios-locked-screen/run.sh records the probe), so the Mac can gate them as CI does.
 #
+# A CI Mac's CoreSimulator mounts the runtime disk images for minutes after the machine starts. Until it is done, the
+# pinned runtime and the simulators made on it can disappear from simctl and xcodebuild, and xcodebuild can abort on
+# the device set's notifications (GitHub's xcode-27 image 20261112.0361.1, 2026-11-16). So the script waits for every
+# runtime disk image to be ready before it looks at the runtime, and --simulator does the same right before each use.
+#
 # Usage: scripts/setup-ios.sh           set up what is missing
 #        scripts/setup-ios.sh --check   change nothing: when what a build needs (the pinned Xcode, the Rust iOS
 #                                       targets, the pinned simulator runtime and SwiftLint) is in place, print the
 #                                       DEVELOPER_DIR export (and the PATH one for a vendored SwiftLint) and exit 0,
 #                                       else list what is missing and exit 1 (the iOS build evals the exports)
+#        scripts/setup-ios.sh --simulator <name>
+#                                       make simulator <name> (IOS_SIM_PHONE_NAME or IOS_SIM_TABLET_NAME) ready for a
+#                                       run: wait for the runtime disk images, create the simulator again when it is
+#                                       gone, boot it and wait until it is up, then print its UDID (build-ios.sh and
+#                                       ios-sim-runner.sh call it right before each test run)
 set -euo pipefail
 
 CHECK=0
+SIMULATOR=""
 case "${1:-}" in
   "") ;;
   --check) CHECK=1 ;;
+  --simulator)
+    [[ $# -eq 2 ]] || {
+      echo "usage: scripts/setup-ios.sh --simulator <name>" >&2
+      exit 2
+    }
+    SIMULATOR="$2"
+    ;;
   *)
-    echo "usage: scripts/setup-ios.sh [--check]" >&2
+    echo "usage: scripts/setup-ios.sh [--check | --simulator <name>]" >&2
     exit 2
     ;;
 esac
@@ -104,6 +122,63 @@ runtime_installed() {
       END { exit !found }'
 }
 
+# How long to wait for the runtime disk images, in seconds: CI's took up to about 4 minutes after the machine started.
+SETTLE_SECONDS=600
+
+# What the simulator service is not ready with, one line each: the runtime disk images whose state (`simctl runtime
+# list -j`) is not yet "Ready", and the pinned runtime when it has a disk image but is not available yet. Prints
+# nothing when it is ready.
+unready_simulator_service() {
+  local images
+  if ! images="$(xcrun simctl runtime list -j 2>/dev/null)" ||
+    ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$images"; then
+    echo "the simulator service does not list the runtime disk images (xcrun simctl runtime list -j)"
+    return 0
+  fi
+  jq -r '.[] | select(.state != "Ready") | "runtime disk image \(.runtimeIdentifier) \(.version): \(.state)"' \
+    <<<"$images"
+  if jq -e --arg id "$RUNTIME_ID" 'any(.[]; .runtimeIdentifier == $id)' >/dev/null <<<"$images" &&
+    ! runtime_installed; then
+    echo "$RUNTIME_ID: not available yet"
+  fi
+}
+
+# Wait until the simulator service is ready (unready_simulator_service prints nothing), for up to SETTLE_SECONDS. It
+# prints what it waits for each time that changes, and fails when the time runs out.
+wait_for_simulator_service() {
+  local deadline=$((SECONDS + SETTLE_SECONDS)) unready shown=""
+  if ! command -v jq >/dev/null; then
+    echo "jq, which macOS has had since 15, is missing: the runtime disk images cannot be read" >&2
+    return 1
+  fi
+  while true; do
+    unready="$(unready_simulator_service)"
+    [[ -n "$unready" ]] || return 0
+    if [[ "$unready" != "$shown" ]]; then
+      echo "waiting for the simulator service:" >&2
+      awk '{ print "  " $0 }' <<<"$unready" >&2
+      shown="$unready"
+    fi
+    if ((SECONDS >= deadline)); then
+      echo "the simulator service is not ready after $SETTLE_SECONDS s" >&2
+      return 1
+    fi
+    sleep 5
+  done
+}
+
+# What simctl knows of the runtimes and the simulators, for a failure's log.
+print_simulator_state() {
+  {
+    echo "the runtime disk images:"
+    xcrun simctl runtime list 2>&1 || true
+    echo "the runtimes:"
+    xcrun simctl list runtimes 2>&1 || true
+    echo "the simulators on iOS $IOS_SIMULATOR_RUNTIME:"
+    simulators_on_runtime || true
+  } >&2
+}
+
 installed_rust_targets() {
   if command -v rustup >/dev/null; then
     # rustup picks the toolchain from the working directory: run it in the checkout, so the rust-toolchain.toml pin
@@ -125,6 +200,83 @@ find_swiftlint() {
 
 swiftlint_version_of() {
   "$1" version 2>/dev/null | head -n1
+}
+
+# The simulators on the pinned runtime, one "<name> (<udid>) (<state>)" line each: `simctl list devices` lists them as
+# "    <name> (<udid>) (<state>)" under the runtime's "-- iOS 27.0 --" header.
+simulators_on_runtime() {
+  xcrun simctl list devices 2>/dev/null | awk -v header="-- iOS $IOS_SIMULATOR_RUNTIME --" '
+    /^-- / { inside = ($0 == header); next }
+    inside && sub(/^    /, "") { sub(/ +$/, ""); print }'
+}
+
+# The UDID of the simulator named $1 on the pinned runtime, and its state with --state ("<udid> <state>"); prints
+# nothing when there is none.
+simulator_udid() {
+  simulators_on_runtime | awk -v name="$1 (" -v state="${2:-}" '
+    index($0, name) == 1 {
+      rest = substr($0, length(name) + 1)
+      udid = substr(rest, 1, index(rest, ")") - 1)
+      if (state == "") {
+        print udid
+      } else {
+        n = split(rest, parts, "(")
+        sub(/\)$/, "", parts[n])
+        print udid " " parts[n]
+      }
+      exit
+    }'
+}
+
+simulator_exists() {
+  [[ -n "$(simulator_udid "$1")" ]]
+}
+
+# Create simulator $1 of device type $2 on the pinned runtime unless it exists.
+ensure_simulator() {
+  local name="$1" device="$2"
+  if simulator_exists "$name"; then
+    return 0
+  fi
+  if ! runtime_installed; then
+    could_not "simulator $name: the iOS $IOS_SIMULATOR_RUNTIME runtime is not installed"
+    return 0
+  fi
+  if xcrun simctl create "$name" "$device" "$RUNTIME_ID" >/dev/null; then
+    did "created simulator $name ($device, iOS $IOS_SIMULATOR_RUNTIME)"
+  else
+    could_not "create simulator $name (xcrun simctl create failed)"
+  fi
+}
+
+# --simulator: make simulator $1 ready for a run and print its UDID (see the usage above).
+ready_simulator() {
+  local name="$1" device xcode udid state boot
+  case "$name" in
+    "$IOS_SIM_PHONE_NAME") device="$IOS_SIM_PHONE" ;;
+    "$IOS_SIM_TABLET_NAME") device="$IOS_SIM_TABLET" ;;
+    *) die "scripts/setup-ios.sh --simulator: no simulator $name ($IOS_SIM_PHONE_NAME or $IOS_SIM_TABLET_NAME)" ;;
+  esac
+  xcode="$(find_xcode)" || die "Xcode $IOS_XCODE_VERSION (found: $xcode): $XCODE_ADVICE"
+  export DEVELOPER_DIR="$xcode"
+  if ! wait_for_simulator_service || ! runtime_installed; then
+    print_simulator_state
+    die "simulator $name: the iOS $IOS_SIMULATOR_RUNTIME runtime is not available (run scripts/setup-ios.sh)"
+  fi
+  ensure_simulator "$name" "$device"
+  ((${#COULD_NOT[@]} == 0)) || die "simulator $name: ${COULD_NOT[*]}"
+  udid="$(simulator_udid "$name")"
+  if ! boot="$(xcrun simctl bootstatus "$udid" -b 2>&1)"; then
+    echo "$boot" >&2
+    print_simulator_state
+    die "simulator $name ($udid): it did not boot"
+  fi
+  state="$(simulator_udid "$name" --state)"
+  if [[ "$state" != "$udid Booted" ]]; then
+    print_simulator_state
+    die "simulator $name ($udid) is not booted after its boot (simctl lists: ${state:-no such simulator})"
+  fi
+  echo "$udid"
 }
 
 XCODE_ADVICE="install Xcode $IOS_XCODE_VERSION (the App Store or developer.apple.com/download/applications), then run \
@@ -177,6 +329,10 @@ if ((CHECK)); then
   check_build_toolchain
   exit
 fi
+if [[ -n "$SIMULATOR" ]]; then
+  ready_simulator "$SIMULATOR"
+  exit
+fi
 
 ensure_rust_targets() {
   if ! command -v rustup >/dev/null; then
@@ -202,36 +358,10 @@ ensure_runtime() {
   fi
   echo "downloading the iOS $IOS_SIMULATOR_RUNTIME simulator runtime (arm64, about 8 GB)..." >&2
   if xcodebuild -downloadPlatform iOS -buildVersion "$IOS_SIMULATOR_RUNTIME" -architectureVariant arm64 >&2 &&
-    runtime_installed; then
+    wait_for_simulator_service && runtime_installed; then
     did "installed the iOS $IOS_SIMULATOR_RUNTIME simulator runtime"
   else
     could_not "install the iOS $IOS_SIMULATOR_RUNTIME simulator runtime (xcodebuild -downloadPlatform iOS)"
-  fi
-}
-
-# Whether a simulator named $1 exists on the pinned runtime: `simctl list devices` lists it as "    <name> (<udid>)
-# (<state>)" under the runtime's "-- iOS 27.0 --" header.
-simulator_exists() {
-  xcrun simctl list devices 2>/dev/null | awk -v header="-- iOS $IOS_SIMULATOR_RUNTIME --" -v name="    $1 (" '
-    /^-- / { inside = ($0 == header); next }
-    inside && index($0, name) == 1 { found = 1 }
-    END { exit !found }'
-}
-
-# Create simulator $1 of device type $2 on the pinned runtime unless it exists.
-ensure_simulator() {
-  local name="$1" device="$2"
-  if simulator_exists "$name"; then
-    return 0
-  fi
-  if ! runtime_installed; then
-    could_not "simulator $name: the iOS $IOS_SIMULATOR_RUNTIME runtime is not installed"
-    return 0
-  fi
-  if xcrun simctl create "$name" "$device" "$RUNTIME_ID" >/dev/null; then
-    did "created simulator $name ($device, iOS $IOS_SIMULATOR_RUNTIME)"
-  else
-    could_not "create simulator $name (xcrun simctl create failed)"
   fi
 }
 
@@ -286,9 +416,15 @@ ensure_zig() {
 XCODE=""
 if XCODE="$(find_xcode)"; then
   export DEVELOPER_DIR="$XCODE"
-  ensure_runtime
-  ensure_simulator "$IOS_SIM_PHONE_NAME" "$IOS_SIM_PHONE"
-  ensure_simulator "$IOS_SIM_TABLET_NAME" "$IOS_SIM_TABLET"
+  # a runtime the service has not loaded yet would look missing, and be downloaded again
+  if wait_for_simulator_service; then
+    ensure_runtime
+    ensure_simulator "$IOS_SIM_PHONE_NAME" "$IOS_SIM_PHONE"
+    ensure_simulator "$IOS_SIM_TABLET_NAME" "$IOS_SIM_TABLET"
+  else
+    print_simulator_state
+    could_not "the simulator runtime and simulators: the simulator service is not ready (see above)"
+  fi
 else
   could_not "Xcode $IOS_XCODE_VERSION (found: $XCODE): $XCODE_ADVICE"
   XCODE=""

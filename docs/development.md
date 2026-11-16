@@ -743,8 +743,11 @@ the pinned Xcode and exports it as `DEVELOPER_DIR` (the selected one stays as it
 `ngterm-tablet` simulators on it, installs SwiftLint into the vendor root and checks for the libghostty-vt build's
 pinned Zig. It doesn't install Xcode, which needs an Apple ID. It is idempotent, reports what it did and could not do
 (exit 1), and prints the `DEVELOPER_DIR` and `PATH` lines to export; `--check` changes nothing and fails when a
-piece is missing. Its header has the notes for a Mac reached over ssh (rustup's `PATH`, a host that can't reach
-`ziglang.org`).
+piece is missing. Before it looks at the runtime, it waits until each runtime disk image is ready: a CI Mac mounts
+them for minutes after it starts, and until then the runtime and its simulators can disappear. `--simulator <name>`
+does the same right before a test run: it creates the simulator again if it is gone, boots it and prints its UDID
+(`build-ios.sh` and `ios-sim-runner.sh` call it). Its header has the notes for a Mac reached over ssh (rustup's
+`PATH`, a host that can't reach `ziglang.org`).
 
 ## Build and run
 
@@ -1092,6 +1095,7 @@ as before, with no error. A Windows origin can't be reached at all yet, as above
 
 ```sh
 scripts/setup-ios.sh [--check]    # the pinned toolchain (iOS toolchain); build-ios.sh takes its exports itself
+scripts/setup-ios.sh --simulator ngterm-phone   # the phone simulator made again if gone, booted; prints its UDID
 scripts/build-ios.sh [--profile release|debug] [--no-xcode] [lint|build|test|coverage|ui|archive...]   # default: build
 scripts/build-ios.sh lint test    # the lint gate, then the Unit and UI test plans on both simulators, as CI checks them
 scripts/build-ios.sh coverage     # the Unit plan alone, its line coverage summary and floor check, as test measures it

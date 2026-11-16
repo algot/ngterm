@@ -39,8 +39,11 @@
 #
 # Every job that builds sets up the same way: the pinned Zig and the libghostty-vt prefix (scripts/build-ghostty-vt.sh,
 # which setup-ios.sh then finds), then the iOS toolchain (scripts/setup-ios.sh: the Rust iOS targets, the phone and
-# tablet simulators, SwiftLint). `unit` and `ui` end with their tests counted per simulator, so the split can be
-# checked against `scripts/build-ios.sh test`, which runs both plans whole.
+# tablet simulators, SwiftLint). The simulator runtimes of the image are mounted for minutes after the Mac starts, and
+# until then the pinned runtime and the simulators on it can disappear: setup-ios.sh waits for them, and each test run
+# readies its simulators right before it starts (setup-ios.sh --simulator: made again when gone, booted). `unit` and
+# `ui` end with their tests counted per simulator, so the split can be checked against `scripts/build-ios.sh test`,
+# which runs both plans whole.
 #
 # The vendor root (the pinned Zig, its global cache, the libghostty-vt prefixes and the vendored SwiftLint) and cargo's
 # registry and target directory are cached as cross-platform.yml's macOS leg caches them, under keys of this image;
@@ -285,6 +288,20 @@ jobs:
           cp "$(dirname "$(dirname "$worker")")"/_diag/Runner_*.log mobile/ios/build/host-diagnostics/ || true
           grep -hE 'renew|[Cc]ancel|Abandon|[Ee]xception|[Ss]hutdown' mobile/ios/build/host-diagnostics/Runner_*.log |
             grep -v 'Successfully renew' || true
+      # what the simulator service did: the runtime disk images and simulators as simctl lists them now, and the log of
+      # the processes that mount the runtimes and keep the device set, which names what made a runtime or a simulator
+      # go away
+      - &simulator-log
+        name: keep the simulator service's state and log
+        if: failure() || cancelled()
+        timeout-minutes: 10
+        run: |
+          mkdir -p mobile/ios/build/host-diagnostics
+          { xcrun simctl runtime list -v; xcrun simctl list runtimes; xcrun simctl list devices; } \
+            >mobile/ios/build/host-diagnostics/simulators.txt 2>&1 || true
+          log show --last 3h --style compact \
+            --predicate 'process IN {"CoreSimulatorService", "simdiskimaged", "cryptexd", "mobileassetd"}' \
+            >mobile/ios/build/host-diagnostics/simulator-service.log 2>&1 || true
       - &upload-failure-diffs
         name: upload the failed snapshots and attachments
         if: failure() || cancelled() || hashFiles('mobile/ios/build/retried-tests.txt') != ''
@@ -333,6 +350,7 @@ jobs:
       - *upload-results
       - *export-attachments
       - *runner-log
+      - *simulator-log
       - *upload-failure-diffs
 
   # what the unit and ui jobs kept, under the names a run of one job gave them
