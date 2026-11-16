@@ -78,6 +78,17 @@ class AndroidClipboardTest {
     }
 
     @Test
+    fun aKeyTheAppExportedToTheClipboardReadsAsSensitive() {
+        val key = "-----BEGIN OPENSSH PRIVATE KEY-----\nmade up\n-----END OPENSSH PRIVATE KEY-----\n"
+        AndroidKeyExports(context).copy(key.toByteArray())
+
+        val taken = clipboard.take(listOf("text/plain"), list = false)
+
+        assertEquals("a program's read of an exported key asks, also when trusted", true, taken.sensitive)
+        assertEquals(keys(listOf(part("text/plain", key))), keys(taken.contents))
+    }
+
+    @Test
     fun textHtmlAndAnImageAreKeptAndReadBackByTypeInTheRequestedOrder() {
         val parts =
             listOf(
