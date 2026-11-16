@@ -1135,10 +1135,11 @@ mod tests {
     #[test]
     fn surface_has_no_selection_until_it_is_realized() {
         let surface = FakeSurface::new("pane-1").with_realized(false);
-        surface.probe().set_lines(["line".to_owned()]);
-        let mut surface: Box<dyn Surface> = Box::new(surface);
-        assert!(!surface.binding_action("select_all"));
+        let probe = surface.probe();
+        probe.set_selection(Some("line"));
         assert_eq!(surface.read_selection(), None);
+        probe.set_realized(true);
+        assert_eq!(surface.read_selection().as_deref(), Some("line"));
     }
 
     #[test]
@@ -1163,7 +1164,13 @@ mod tests {
     #[test]
     fn unavailable_session_host_kills_nothing() {
         let host = FakeSessionHost::unavailable();
-        assert!(matches!(host.kill("ngterm-a", false), KillOutcome::Failed(_)));
+        host.insert("ngterm-a", "$ ");
+        assert_eq!(
+            host.kill("ngterm-a", false),
+            KillOutcome::Failed("the session host is not available".to_owned())
+        );
+        assert!(host.kills().is_empty());
+        assert!(host.session("ngterm-a").is_some());
     }
 
     fn process_table() -> FakeProcessTable {
