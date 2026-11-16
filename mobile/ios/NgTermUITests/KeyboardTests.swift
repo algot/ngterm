@@ -8,6 +8,8 @@ internal final class KeyboardTests: XCTestCase {
     private static let wait: TimeInterval = 15
     // how long the slide-to-type introduction gets to come up after the keyboard, which it follows within a moment
     private static let introductionWait: TimeInterval = 5
+    // how far apart a wait reads a line of the bench, which draws its lines again five times a second
+    private static let readBeat: TimeInterval = 0.2
 
     // the extra key named `name`
     @MainActor
@@ -29,15 +31,27 @@ internal final class KeyboardTests: XCTestCase {
         XCTAssertTrue(introduction.waitForNonExistence(timeout: wait), "the slide-to-type introduction stayed")
     }
 
+    // Reads the bench's `line` again until its text `matches` or the wait ends, and returns the last text read. The
+    // test reads the line itself: an XCTNSPredicateExpectation that reads the line once before the app updates it then
+    // captures the element's debug description, and on a loaded simulator that capture can use all the wait, so the
+    // expectation reads the line no second time.
+    @MainActor
+    private static func read(_ line: String, in app: XCUIApplication, until matches: (String) -> Bool) -> String {
+        let element = app.staticTexts[line]
+        let end = Date.now.addingTimeInterval(wait)
+        var text = element.label
+        while !matches(text), Date.now < end {
+            _ = XCTWaiter.wait(for: [XCTestExpectation(description: "a beat")], timeout: readBeat)
+            text = element.label
+        }
+        return text
+    }
+
     // waits until the bench's `line` reads `text`
     @MainActor
     private static func expect(_ line: String, reads text: String, in app: XCUIApplication) {
-        let reading = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "label == %@", text),
-            object: app.staticTexts[line]
-        )
-        let result = XCTWaiter.wait(for: [reading], timeout: wait)
-        XCTAssertEqual(result, .completed, "\(line) reads '\(app.staticTexts[line].label)', not '\(text)'")
+        let label = read(line, in: app) { $0 == text }
+        XCTAssertEqual(label, text, "\(line) reads '\(label)', not '\(text)'")
     }
 
     @MainActor
@@ -91,11 +105,8 @@ internal final class KeyboardTests: XCTestCase {
         Self.expect("bench-keys", reads: "key_c/2 arrow_left/0", in: app)
         let grid = app.staticTexts["bench-grid"].label
         app.typeKey("=", modifierFlags: .command)
-        let bigger = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "label != %@", grid),
-            object: app.staticTexts["bench-grid"]
-        )
-        XCTAssertEqual(XCTWaiter.wait(for: [bigger], timeout: Self.wait), .completed, "⌘= made the text no bigger")
+        let bigger = Self.read("bench-grid", in: app) { $0 != grid }
+        XCTAssertNotEqual(bigger, grid, "⌘= made the text no bigger")
         app.typeKey("0", modifierFlags: .command)
         Self.expect("bench-grid", reads: grid, in: app)
         app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [.command, .option])
