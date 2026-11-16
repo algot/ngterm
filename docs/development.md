@@ -743,8 +743,9 @@ the pinned Xcode and exports it as `DEVELOPER_DIR` (the selected one stays as it
 `ngterm-tablet` simulators on it, installs SwiftLint into the vendor root and checks for the libghostty-vt build's
 pinned Zig. It doesn't install Xcode, which needs an Apple ID. It is idempotent, reports what it did and could not do
 (exit 1), and prints the `DEVELOPER_DIR` and `PATH` lines to export; `--check` changes nothing and fails when a
-piece is missing. Before it looks at the runtime, it waits until each runtime disk image is ready: a CI Mac mounts
-them for minutes after it starts, and until then the runtime and its simulators can disappear. `--simulator <name>`
+piece is missing. Before it looks at the runtime, it waits until no runtime disk image is in a transition (mounting,
+verifying, ...): a CI Mac mounts them for minutes after it starts, and until then the runtime and its simulators can
+disappear. An image that stays unusable does not stop it. `--simulator <name>`
 does the same right before a test run: it creates the simulator again if it is gone, boots it and prints its UDID
 (`build-ios.sh` and `ios-sim-runner.sh` call it). Its header has the notes for a Mac reached over ssh (rustup's
 `PATH`, a host that can't reach `ziglang.org`).

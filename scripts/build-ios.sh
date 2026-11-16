@@ -350,18 +350,11 @@ action_build() {
 # Tells the keyboard of the simulator $1 that its slide-to-type introduction was shown. A simulator made or erased since
 # shows that introduction the first time a keyboard that can slide to type comes up, over the soft keyboard's lower
 # half and the extra keys, and it stays until its Continue is tapped: the taps the UI tests make there land on it, and
-# the keys type nothing (KeyboardTests). The system writes the same preference once it has shown the introduction. A
-# booted simulator takes it through its own preferences daemon; a shut-down one in its preferences file, so it needn't
-# boot before xcodebuild boots it.
+# the keys type nothing (KeyboardTests). The system writes the same preference once it has shown the introduction. The
+# simulator is booted (setup-ios.sh --simulator boots it right before), so its preferences daemon takes the setting.
 quiet_keyboard_introduction() {
-  local key=DidShowContinuousPathIntroduction preferences
-  # grep reads to the end (no -q), so simctl isn't cut short by SIGPIPE, which pipefail would count as a failure
-  if xcrun simctl list devices booted | grep -F "($1)" >/dev/null; then
-    xcrun simctl spawn "$1" defaults write com.apple.keyboard.preferences "$key" -bool true
-  else
-    preferences="$HOME/Library/Developer/CoreSimulator/Devices/$1/data/Library/Preferences"
-    mkdir -p "$preferences" && defaults write "$preferences/com.apple.keyboard.preferences.plist" "$key" -bool true
-  fi || die "couldn't set simulator $1's keyboard preferences"
+  xcrun simctl spawn "$1" defaults write com.apple.keyboard.preferences DidShowContinuousPathIntroduction -bool true ||
+    die "couldn't set simulator $1's keyboard preferences"
 }
 
 # Run test plan $1 on the phone and tablet simulators, one after the other (or on --device's alone), into

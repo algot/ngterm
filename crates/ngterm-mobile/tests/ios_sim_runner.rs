@@ -1,23 +1,35 @@
-//! `scripts/ios-sim-runner.sh`, cargo's runner of the `aarch64-apple-ios-sim` target: it boots the pinned phone
-//! simulator, runs the executable there through `xcrun simctl spawn` with its arguments, forwards `RUST_BACKTRACE` and
-//! `RUST_TEST_*` (as `SIMCTL_CHILD_*`) and nothing else, and exits with the executable's status.
+//! `scripts/ios-sim-runner.sh`, cargo's runner of the `aarch64-apple-ios-sim` target, and
+//! `scripts/setup-ios.sh --simulator`, which the runner and `scripts/build-ios.sh` call right before each test run.
 //!
-//! Every case runs the real script with stub `uname` and `xcrun` first on a `PATH` that holds nothing else but
-//! `/usr/bin` and `/bin`, in a cleared environment, so nothing here needs a simulator; the stub `xcrun` logs each call,
-//! and its `simctl spawn` prints what the spawned process would get and exits with the status the case asks for. The
-//! real runner on a real simulator is what `cargo test --target aarch64-apple-ios-sim` uses (Task 2 of the iOS plan).
-//! Unix hosts only: the script is macOS-only, and the stub `uname` lets Linux run it too.
+//! `--simulator <name>` waits while a runtime disk image is in a transition, creates the simulator on the pinned runtime
+//! again when it is gone, boots it, makes sure that simctl lists it as booted, and prints only its UDID. The runner
+//! then runs the executable on that phone through `xcrun simctl spawn` with its arguments, forwards `RUST_BACKTRACE`
+//! and `RUST_TEST_*` (as `SIMCTL_CHILD_*`) and nothing else, and exits with the executable's status.
+//!
+//! Every case runs the real scripts with stub `uname`, `xcode-select`, `xcodebuild` and `xcrun` first on a `PATH` that
+//! holds nothing else but `/usr/bin` and `/bin`, in a cleared environment, so nothing here needs a simulator. The stub
+//! `xcrun` logs each call and keeps the simulators in a file: `simctl create` adds one, and `simctl bootstatus` marks
+//! one booted unless the case says the boot does not take. Its `simctl spawn` prints what the spawned process would
+//! get and exits with the status the case asks for. The real runner on a real simulator is what
+//! `cargo test --target aarch64-apple-ios-sim` uses (Task 2 of the iOS plan). Unix hosts only: the scripts are
+//! macOS-only, and the stub `uname` lets Linux run them too (with the host's `jq`, which macOS has in `/usr/bin`).
 #![cfg(unix)]
 
-/// The stubs, the scratch directory and the run of the script.
+/// The stubs, the scratch directory and the runs of the scripts.
 #[cfg(test)]
 mod host {
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
     use std::process::{Command, Output};
+    use std::sync::mpsc;
+    use std::time::Duration;
 
     pub(super) const UDID: &str = "0F6F99AC-7E30-476E-BCD5-248A5CD003BC";
+    /// The UDID of a simulator that `simctl create` makes.
+    pub(super) const NEW_UDID: &str = "A1B2C3D4-0000-4000-8000-00000000C0DE";
+    /// Longer than one poll of the service wait (5 s), much shorter than its limit (600 s).
+    const DEADLINE: Duration = Duration::from_secs(60);
 
     pub(super) fn repo_root() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -35,10 +47,62 @@ mod host {
         values[0].to_owned()
     }
 
+    /// The identifier of the iOS runtime of `version`.
+    pub(super) fn runtime_id(version: &str) -> String {
+        format!("com.apple.CoreSimulator.SimRuntime.iOS-{}", version.replace('.', "-"))
+    }
+
+    /// The `xcrun simctl list runtimes` line of an available iOS runtime of `version`.
+    pub(super) fn runtime_line(version: &str) -> String {
+        format!("iOS {version} ({version} - 24A100) - {}", runtime_id(version))
+    }
+
+    /// A `simctl runtime list -j` answer: one disk image of each (runtime version, state).
+    pub(super) fn images(entries: &[(&str, &str)]) -> String {
+        let images: Vec<String> = entries
+            .iter()
+            .enumerate()
+            .map(|(index, (version, state))| {
+                format!(
+                    r#""IMAGE-{index}": {{"runtimeIdentifier": "{}", "version": "{version}", "state": "{state}"}}"#,
+                    runtime_id(version)
+                )
+            })
+            .collect();
+        format!("{{{}}}", images.join(", "))
+    }
+
     fn write_stub(dir: &Path, name: &str, body: &str) {
         let path = dir.join(name);
         fs::write(&path, format!("#!/bin/sh\n{body}")).unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    /// What the stubs report: the pinned phone on the pinned runtime, ready, unless a case changes one field.
+    pub(super) struct World {
+        /// The `simctl list devices` text at the start.
+        pub(super) devices: String,
+        /// The `simctl runtime list -j` answers, one for each call; the last one repeats.
+        pub(super) images: Vec<String>,
+        /// The `simctl list runtimes` lines.
+        pub(super) runtimes: Vec<String>,
+        /// Whether `simctl bootstatus -b` makes the simulator booted.
+        pub(super) boots: bool,
+        /// The exit status of `simctl spawn`.
+        pub(super) status: i32,
+    }
+
+    impl World {
+        pub(super) fn ready() -> Self {
+            let version = pin("IOS_SIMULATOR_RUNTIME");
+            Self {
+                devices: devices(),
+                images: vec![images(&[(version.as_str(), "Ready")])],
+                runtimes: vec![runtime_line(&version)],
+                boots: true,
+                status: 0,
+            }
+        }
     }
 
     pub(super) struct Run {
@@ -57,55 +121,129 @@ mod host {
         pub(super) fn stderr(&self) -> String {
             String::from_utf8_lossy(&self.output.stderr).into_owned()
         }
+
+        /// The `xcrun` calls that change something: all but the `list` ones.
+        pub(super) fn changes(&self) -> Vec<String> {
+            self.log
+                .lines()
+                .filter(|line| !line.starts_with("simctl list ") && !line.starts_with("simctl runtime list"))
+                .map(str::to_owned)
+                .collect()
+        }
     }
 
-    /// The runner over `devices` (the `simctl list devices` text), run from a scratch directory on `executable`
-    /// (relative to it) and `args`, with `env` set, its `simctl spawn` exiting with `status`.
-    pub(super) fn run(devices: &str, executable: &str, args: &[&str], env: &[(&str, &str)], status: i32) -> Run {
+    /// The xcrun stub: it logs each call and keeps the simulators in `$STUB_DIR/devices`.
+    fn xcrun_stub(world: &World) -> String {
+        let header = format!("-- iOS {} --", pin("IOS_SIMULATOR_RUNTIME"));
+        let boot = if world.boots {
+            r#"sed "s/($3) (Shutdown)/($3) (Booted)/" "$STUB_DIR/devices" >"$STUB_DIR/devices.new"
+  mv "$STUB_DIR/devices.new" "$STUB_DIR/devices""#
+        } else {
+            ":"
+        };
+        format!(
+            r#"echo "$*" >>"$STUB_DIR/xcrun.log"
+case "$1 $2 $3" in
+  'simctl runtime list')
+    n=$(($(cat "$STUB_DIR/image-calls") + 1))
+    echo "$n" >"$STUB_DIR/image-calls"
+    if [ -f "$STUB_DIR/images-$n.json" ]; then cat "$STUB_DIR/images-$n.json"; else cat "$STUB_DIR/images-last.json"; fi
+    exit 0 ;;
+  'simctl list runtimes') printf '== Runtimes ==\n'; cat "$STUB_DIR/runtimes"; exit 0 ;;
+  'simctl list devices') cat "$STUB_DIR/devices"; exit 0 ;;
+esac
+case "$1 $2" in
+  'simctl create') printf '%s\n    %s ({NEW_UDID}) (Shutdown)\n' '{header}' "$3" >>"$STUB_DIR/devices"; echo {NEW_UDID}; exit 0 ;;
+  'simctl bootstatus')
+  {boot}
+    exit 0 ;;
+  'simctl spawn') env | grep '^SIMCTL_CHILD_' | sort; exit {} ;;
+esac
+exit 0
+"#,
+            world.status
+        )
+    }
+
+    /// `script` (relative to scripts/) with `args`, run from a scratch directory over `world`, with `env` set. The run
+    /// fails the case when it takes longer than DEADLINE.
+    pub(super) fn run_script(world: &World, script: &str, args: &[&str], env: &[(&str, &str)]) -> Run {
         let scratch = tempfile::tempdir().unwrap();
         let stubs = scratch.path().join("stubs");
+        let developer_dir = scratch.path().join("Xcode.app/Contents/Developer");
         fs::create_dir_all(&stubs).unwrap();
+        fs::create_dir_all(&developer_dir).unwrap();
         fs::create_dir_all(scratch.path().join("deps")).unwrap();
         fs::write(scratch.path().join("deps/tests"), "").unwrap();
-        write_stub(&stubs, "uname", "echo Darwin\n");
-        let log = scratch.path().join("xcrun.log");
-        fs::write(&log, "").unwrap();
+        fs::write(scratch.path().join("devices"), &world.devices).unwrap();
+        fs::write(scratch.path().join("runtimes"), world.runtimes.join("\n") + "\n").unwrap();
+        fs::write(scratch.path().join("image-calls"), "0\n").unwrap();
+        for (index, answer) in world.images.iter().enumerate() {
+            fs::write(scratch.path().join(format!("images-{}.json", index + 1)), answer).unwrap();
+        }
+        fs::write(scratch.path().join("images-last.json"), world.images.last().unwrap()).unwrap();
+        fs::write(scratch.path().join("xcrun.log"), "").unwrap();
         write_stub(
             &stubs,
-            "xcrun",
+            "uname",
+            "case \"$1\" in -m) echo arm64 ;; *) echo Darwin ;; esac\n",
+        );
+        write_stub(
+            &stubs,
+            "xcode-select",
+            "[ \"$1\" = -p ] && echo \"$STUB_DEVELOPER_DIR\"\n",
+        );
+        write_stub(
+            &stubs,
+            "xcodebuild",
             &format!(
-                r#"echo "$*" >>"$STUB_LOG"
-if [ "$1 $2 $3" = 'simctl list devices' ]; then printf '%s\n' '{devices}'; exit 0; fi
-if [ "$1 $2" = 'simctl spawn' ]; then
-  env | grep '^SIMCTL_CHILD_' | sort
-  exit {status}
-fi
-exit 0
-"#
+                "[ \"$1\" = -version ] && printf 'Xcode %s\\nBuild version 27B52\\n' {}\n",
+                pin("IOS_XCODE_VERSION")
             ),
         );
+        write_stub(&stubs, "xcrun", &xcrun_stub(world));
         let mut command = Command::new("bash");
         command
-            .arg(repo_root().join("scripts/ios-sim-runner.sh"))
-            .arg(executable)
+            .arg(repo_root().join("scripts").join(script))
             .args(args)
             .current_dir(scratch.path())
             .env_clear()
             .env("PATH", format!("{}:/usr/bin:/bin", stubs.display()))
             .env("HOME", scratch.path())
-            .env("STUB_LOG", &log);
+            .env("TMPDIR", scratch.path())
+            .env("NGTERM_VENDOR", scratch.path().join("vendor"))
+            .env("STUB_DIR", scratch.path())
+            .env("STUB_DEVELOPER_DIR", &developer_dir);
         for (name, value) in env {
             command.env(name, value);
         }
-        let output = command.output().unwrap();
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || sender.send(command.output()));
+        let output = receiver
+            .recv_timeout(DEADLINE)
+            .unwrap_or_else(|_| panic!("scripts/{script} {args:?} ran for more than {DEADLINE:?}"))
+            .unwrap();
         // the runner's $PWD is the physical directory (the environment has no PWD), and macOS's temporary directory
         // is behind a symlink
-        let executable = fs::canonicalize(scratch.path()).unwrap().join(executable);
+        let executable = fs::canonicalize(scratch.path())
+            .unwrap()
+            .join(args.first().unwrap_or(&""));
         Run {
             output,
-            log: fs::read_to_string(&log).unwrap(),
+            log: fs::read_to_string(scratch.path().join("xcrun.log")).unwrap(),
             executable,
         }
+    }
+
+    /// The runner on `executable` (relative to the scratch directory) and `args`, over `world`, with `env` set.
+    pub(super) fn runner(world: &World, executable: &str, args: &[&str], env: &[(&str, &str)]) -> Run {
+        let all: Vec<&str> = std::iter::once(executable).chain(args.iter().copied()).collect();
+        run_script(world, "ios-sim-runner.sh", &all, env)
+    }
+
+    /// `scripts/setup-ios.sh --simulator <name>` over `world`.
+    pub(super) fn simulator(world: &World, name: &str) -> Run {
+        run_script(world, "setup-ios.sh", &["--simulator", name], &[])
     }
 
     /// `simctl list devices` with the pinned phone on the pinned runtime, beside a same-named one on another runtime.
@@ -122,12 +260,12 @@ exit 0
 
 use std::process::Command;
 
-use host::{UDID, devices, pin, repo_root, run};
+use host::{NEW_UDID, UDID, World, images, pin, repo_root, runner, runtime_id, runtime_line, simulator};
 
 #[test]
 fn it_runs_the_executable_on_the_pinned_phone_and_forwards_only_rusts_test_variables() {
-    let run = run(
-        &devices(),
+    let run = runner(
+        &World::ready(),
         "deps/tests",
         &["--exact", "a test"],
         &[
@@ -137,14 +275,11 @@ fn it_runs_the_executable_on_the_pinned_phone_and_forwards_only_rusts_test_varia
             ("RUST_LOG", "debug"),
             ("OTHER", "x"),
         ],
-        0,
     );
     assert!(run.output.status.success(), "{}", run.stderr());
-    let lines: Vec<String> = run.log.lines().map(str::to_owned).collect();
     assert_eq!(
-        lines,
+        run.changes(),
         [
-            "simctl list devices".to_owned(),
             format!("simctl bootstatus {UDID} -b"),
             format!("simctl spawn {UDID} {} --exact a test", run.executable.display()),
         ],
@@ -168,27 +303,71 @@ fn it_runs_the_executable_on_the_pinned_phone_and_forwards_only_rusts_test_varia
 #[test]
 fn it_exits_with_the_executables_status() {
     for status in [1, 101, 134] {
-        let run = run(&devices(), "deps/tests", &[], &[], status);
+        let run = runner(
+            &World {
+                status,
+                ..World::ready()
+            },
+            "deps/tests",
+            &[],
+            &[],
+        );
         assert_eq!(run.output.status.code(), Some(status), "{}", run.stderr());
     }
 }
 
 #[test]
-fn a_missing_simulator_names_the_setup_script_and_spawns_nothing() {
+fn a_missing_simulator_is_created_again_and_the_executable_runs_on_it() {
     let elsewhere = format!(
         "== Devices ==\n-- iOS 18.0 --\n    {} ({UDID}) (Shutdown)\n",
         pin("IOS_SIM_PHONE_NAME")
     );
-    let run = run(&elsewhere, "deps/tests", &[], &[], 0);
+    let run = runner(
+        &World {
+            devices: elsewhere,
+            ..World::ready()
+        },
+        "deps/tests",
+        &[],
+        &[],
+    );
+    assert!(run.output.status.success(), "{}", run.stderr());
+    assert_eq!(
+        run.changes(),
+        [
+            format!(
+                "simctl create {} {} {}",
+                pin("IOS_SIM_PHONE_NAME"),
+                pin("IOS_SIM_PHONE"),
+                runtime_id(&pin("IOS_SIMULATOR_RUNTIME"))
+            ),
+            format!("simctl bootstatus {NEW_UDID} -b"),
+            format!("simctl spawn {NEW_UDID} {}", run.executable.display()),
+        ]
+    );
+}
+
+#[test]
+fn a_simulator_that_is_not_booted_after_its_boot_spawns_nothing() {
+    let run = runner(
+        &World {
+            boots: false,
+            ..World::ready()
+        },
+        "deps/tests",
+        &[],
+        &[],
+    );
     assert!(!run.output.status.success());
-    assert!(run.stderr().contains("scripts/setup-ios.sh"), "{}", run.stderr());
+    let stderr = run.stderr();
+    assert!(stderr.contains("is not booted after its boot"), "{stderr}");
+    assert!(stderr.contains("is not ready"), "{stderr}");
     assert!(!run.log.contains("spawn"), "{}", run.log);
-    assert!(!run.log.contains("bootstatus"), "{}", run.log);
 }
 
 #[test]
 fn a_missing_executable_or_no_arguments_fails_before_the_simulator() {
-    let missing = run(&devices(), "deps/absent", &[], &[], 0);
+    let missing = runner(&World::ready(), "deps/absent", &[], &[]);
     assert!(!missing.output.status.success());
     assert!(
         missing.stderr().contains("no executable at deps/absent"),
@@ -202,4 +381,99 @@ fn a_missing_executable_or_no_arguments_fails_before_the_simulator() {
         .unwrap();
     assert_eq!(output.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&output.stderr).contains("usage:"));
+}
+
+#[test]
+fn simulator_prints_only_the_udid_of_the_booted_simulator() {
+    let tablet = pin("IOS_SIM_TABLET_NAME");
+    let world = World {
+        devices: format!("{}    {tablet} ({NEW_UDID}) (Booted)\n", host::devices()),
+        ..World::ready()
+    };
+    let phone = simulator(&world, &pin("IOS_SIM_PHONE_NAME"));
+    assert!(phone.output.status.success(), "{}", phone.stderr());
+    assert_eq!(
+        phone.stdout(),
+        format!("{UDID}\n"),
+        "build-ios.sh puts it in -destination id="
+    );
+    let tablet = simulator(&world, &tablet);
+    assert!(tablet.output.status.success(), "{}", tablet.stderr());
+    assert_eq!(tablet.stdout(), format!("{NEW_UDID}\n"));
+    assert_eq!(tablet.changes(), [format!("simctl bootstatus {NEW_UDID} -b")]);
+}
+
+#[test]
+fn simulator_refuses_an_unknown_name() {
+    let run = simulator(&World::ready(), "ngterm-watch");
+    assert!(!run.output.status.success());
+    let stderr = run.stderr();
+    assert!(stderr.contains(&pin("IOS_SIM_PHONE_NAME")), "{stderr}");
+    assert!(stderr.contains(&pin("IOS_SIM_TABLET_NAME")), "{stderr}");
+    assert_eq!(run.log, "");
+    assert_eq!(run.stdout(), "");
+}
+
+#[test]
+fn simulator_waits_while_a_runtime_disk_image_mounts() {
+    let version = pin("IOS_SIMULATOR_RUNTIME");
+    let run = simulator(
+        &World {
+            images: vec![
+                images(&[(version.as_str(), "Mounting")]),
+                images(&[(version.as_str(), "Ready")]),
+            ],
+            ..World::ready()
+        },
+        &pin("IOS_SIM_PHONE_NAME"),
+    );
+    assert!(run.output.status.success(), "{}", run.stderr());
+    let stderr = run.stderr();
+    assert!(stderr.contains("waiting for the simulator service"), "{stderr}");
+    assert!(stderr.contains("Mounting"), "{stderr}");
+    assert_eq!(run.stdout(), format!("{UDID}\n"));
+}
+
+#[test]
+fn simulator_does_not_wait_for_images_that_stay_unusable() {
+    let version = pin("IOS_SIMULATOR_RUNTIME");
+    let run = simulator(
+        &World {
+            images: vec![images(&[
+                ("26.5", "Unusable - Other Failure: Duplicate of IMAGE-1"),
+                ("26.4", "Deleting"),
+                ("26.3", "Unknown"),
+                (version.as_str(), "Ready"),
+            ])],
+            ..World::ready()
+        },
+        &pin("IOS_SIM_PHONE_NAME"),
+    );
+    assert!(run.output.status.success(), "{}", run.stderr());
+    assert!(!run.stderr().contains("waiting"), "{}", run.stderr());
+    assert_eq!(run.stdout(), format!("{UDID}\n"));
+}
+
+#[test]
+fn simulator_fails_at_once_on_an_unavailable_runtime() {
+    let version = pin("IOS_SIMULATOR_RUNTIME");
+    let run = simulator(
+        &World {
+            runtimes: vec![format!(
+                "{} (unavailable, runtime profile not found)",
+                runtime_line(&version)
+            )],
+            ..World::ready()
+        },
+        &pin("IOS_SIM_PHONE_NAME"),
+    );
+    assert!(!run.output.status.success());
+    let stderr = run.stderr();
+    assert!(stderr.contains("run scripts/setup-ios.sh"), "{stderr}");
+    assert!(
+        !stderr.contains("waiting"),
+        "a lasting fault is not waited for:\n{stderr}"
+    );
+    assert_eq!(run.changes(), Vec::<String>::new());
+    assert_eq!(run.stdout(), "");
 }

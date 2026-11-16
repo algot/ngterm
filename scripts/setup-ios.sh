@@ -27,8 +27,9 @@
 #
 # A CI Mac's CoreSimulator mounts the runtime disk images for minutes after the machine starts. Until it is done, the
 # pinned runtime and the simulators made on it can disappear from simctl and xcodebuild, and xcodebuild can abort on
-# the device set's notifications (GitHub's xcode-27 image 20261112.0361.1, 2026-11-16). So the script waits for every
-# runtime disk image to be ready before it looks at the runtime, and --simulator does the same right before each use.
+# the device set's notifications (GitHub's xcode-27 image 20261112.0361.1, 2026-11-16). So the script waits until no
+# runtime disk image is in a transition (mounting, verifying, ...) before it looks at the runtime, and --simulator does
+# the same right before each use (unready_simulator_service tells what it waits for).
 #
 # Usage: scripts/setup-ios.sh           set up what is missing
 #        scripts/setup-ios.sh --check   change nothing: when what a build needs (the pinned Xcode, the Rust iOS
@@ -125,9 +126,22 @@ runtime_installed() {
 # How long to wait for the runtime disk images, in seconds: CI's took up to about 4 minutes after the machine started.
 SETTLE_SECONDS=600
 
-# What the simulator service is not ready with, one line each: the runtime disk images whose state (`simctl runtime
-# list -j`) is not yet "Ready", and the pinned runtime when it has a disk image but is not available yet. Prints
-# nothing when it is ready.
+# Whether `simctl list runtimes` lists the pinned runtime at all, available or "(unavailable, ...)".
+runtime_listed() {
+  xcrun simctl list runtimes 2>/dev/null | awk -v id=" - $RUNTIME_ID" '
+      { at = index($0, id); rest = substr($0, at + length(id)) }
+      at && (rest == "" || index(rest, " ") == 1) { found = 1 }
+      END { exit !found }'
+}
+
+# What the simulator service is not ready with, one line each. Prints nothing when it is ready. It waits only for what
+# ends on its own:
+#   - a runtime disk image (`simctl runtime list -j`) in a transition state of CoreSimulator: Copying, Mounting,
+#     Verifying or Unmounting. "Unusable - <cause>", "Deleting" and "Unknown" can stay for good, so it does not wait
+#     for them.
+#   - the pinned runtime, when its disk image is "Ready" but `simctl list runtimes` does not list it yet. A runtime
+#     that it lists as "(unavailable, ...)" is a lasting fault: ensure_runtime downloads it again, and --simulator
+#     fails at once.
 unready_simulator_service() {
   local images
   if ! images="$(xcrun simctl runtime list -j 2>/dev/null)" ||
@@ -135,10 +149,10 @@ unready_simulator_service() {
     echo "the simulator service does not list the runtime disk images (xcrun simctl runtime list -j)"
     return 0
   fi
-  jq -r '.[] | select(.state != "Ready") | "runtime disk image \(.runtimeIdentifier) \(.version): \(.state)"' \
-    <<<"$images"
-  if jq -e --arg id "$RUNTIME_ID" 'any(.[]; .runtimeIdentifier == $id)' >/dev/null <<<"$images" &&
-    ! runtime_installed; then
+  jq -r '.[] | select((.state // "") | test("^(Copying|Mounting|Verifying|Unmounting)"))
+    | "runtime disk image \(.runtimeIdentifier) \(.version): \(.state)"' <<<"$images"
+  if jq -e --arg id "$RUNTIME_ID" 'any(.[]; .runtimeIdentifier == $id and .state == "Ready")' >/dev/null \
+    <<<"$images" && ! runtime_listed; then
     echo "$RUNTIME_ID: not available yet"
   fi
 }
