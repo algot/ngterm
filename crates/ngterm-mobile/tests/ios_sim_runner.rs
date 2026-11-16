@@ -12,7 +12,8 @@
 //! one booted unless the case says the boot does not take. Its `simctl spawn` prints what the spawned process would
 //! get and exits with the status the case asks for. The real runner on a real simulator is what
 //! `cargo test --target aarch64-apple-ios-sim` uses (Task 2 of the iOS plan). Unix hosts only: the scripts are
-//! macOS-only, and the stub `uname` lets Linux run them too (with the host's `jq`, which macOS has in `/usr/bin`).
+//! macOS-only, and the stub `uname` lets Linux run them too. They use the host's `jq` in `/usr/bin`: macOS has it, and a
+//! Linux host needs it installed (the `unit-coverage` job of `linux.yml` installs it).
 #![cfg(unix)]
 
 /// The stubs, the scratch directory and the runs of the scripts.

@@ -256,7 +256,8 @@ jobs:
   # this job's own reports. The default features need WPE WebKit, so it runs in the wpe job's Arch container (the same
   # digest, Arch Linux Archive snapshot and pacman-archive), privileged for WebKit's bubblewrap sandbox, with the
   # conformance jobs' packages and setup (the pinned weston where Arch's lacks --fake-seat, lavapipe), node for
-  # ngterm-app's OpenCode plugin tests and GStreamer for the html_overlay harness's audio case; the tests run as an
+  # ngterm-app's OpenCode plugin tests, GStreamer for the html_overlay harness's audio case and jq for ngterm-mobile's
+  # ios_sim_runner tests (setup-ios.sh reads the runtime disk images with it); the tests run as an
   # unprivileged user (see its step) on a private Xvfb and session bus. The display, node and udmabuf tests are
   # required; what needs a DRM render node, which the runner lacks (ngterm-wpe's dmabuf mode, the external texture's
   # Mesa GPU case), reports itself skipped, as in the wpe job. A failed test fails the job after the report and the floors
@@ -301,7 +302,7 @@ jobs:
             weston dbus xorg-server-xvfb xorg-xauth mesa vulkan-swrast \
             pixman libinput libevdev libdrm cairo pango libpng hwdata seatd lcms2 \
             python zsh fish at-spi2-core gobject-introspection pkgconf gcc \
-            gst-plugins-base gst-plugins-good nodejs
+            gst-plugins-base gst-plugins-good nodejs jq
       - uses: actions/checkout@v7
       # the runner owns the workspace, the container runs as root: without this git refuses the checkout
       - name: git trusts the checkout
