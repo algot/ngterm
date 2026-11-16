@@ -113,12 +113,20 @@ internal final class LogsOnAMachineTests: XCTestCase {
         pattern: #"^\S+ [IWE] input: input delivery=[a-z-]+ kind=(key|text|paste) pane=[0-9A-Za-z-]+$"#
     )
 
-    // a form's field, its old text (a default port) replaced by `text`
+    // a form's field, its old text (a default port) replaced by `text`. An iPad's number pad (the port's) is a
+    // popover: a tap outside it only closes it, so the next field is tapped again until it has the keyboard
     @MainActor
     private static func fill(_ identifier: String, with text: String, in app: XCUIApplication) {
         let field = app.textFields[identifier]
         FakeApp.expect(field, identifier)
-        field.tap()
+        var focused = false
+        for _ in 0..<LogsPage.tries where !focused {
+            field.tap()
+            let hasKeyboard = NSPredicate(format: "hasKeyboardFocus == true")
+            let focus = XCTNSPredicateExpectation(predicate: hasKeyboard, object: field)
+            focused = XCTWaiter.wait(for: [focus], timeout: LogsPage.offerWait) == .completed
+        }
+        XCTAssertTrue(focused, "\(identifier) never took the keyboard")
         let old = field.value as? String ?? ""
         let placeholder = field.placeholderValue ?? ""
         if !old.isEmpty, old != placeholder {
