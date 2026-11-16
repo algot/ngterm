@@ -1,0 +1,299 @@
+#!/usr/bin/env bash
+# The iOS app's end-to-end UI tests (mobile/ios/NgTermUITests, those that take a machine: LogsOnAMachineTests) on a
+# pinned simulator, through the app's real core, against a real machine: a private ngterm-headless behind a private,
+# unprivileged sshd on the Mac's 127.0.0.1, which the simulator reaches as the Mac's own loopback. The iOS sibling of
+# scripts/test-android-e2e.sh, and on the Mac only.
+#
+# It takes the iOS build lock for the whole run, as scripts/build-ios.sh does (one xcodebuild at a time on a Mac), and
+# runs build-ios.sh's build under it. It builds ngterm-headless, ngtermctl and ngterm-session, stages them
+# (scripts/stage.sh) into a scratch directory under cargo's target dir, starts the instance in a private state dir and
+# home there (every NGTERM_* stripped, so nothing it starts can reach an ngterm the script was started from), makes a
+# throwaway host key and a client key under a throwaway passphrase, installs the app anew on the simulator (the app
+# removed, the simulator's keychain reset: a test signs in as from a fresh install), and runs each test with the
+# machine in the test runner's environment (TEST_RUNNER_IOS_E2E_*: host, port, user, the client key's file, its
+# passphrase and its fingerprint). The machine's PATH also holds `e2e-claude`, the mobile e2e's stand-in Claude Code in
+# its standalone form (crates/ngterm-mobile/tests/support/fake_agent.py --standalone), which a test starts in a
+# session's shell as a person starts Claude Code.
+#
+# On exit it stops the instance and sshd by the pids they recorded, ends every session of the private namespace through
+# that namespace's own session server and removes the namespace's directory. The scratch directory is removed after a
+# pass and kept after a failure (headless.log, sshd/sshd.log). With --evidence DIR, each test's result bundle summary
+# and attachments (screenshots, the log text it read) and the instance's log are copied into DIR.
+#
+# Usage: scripts/test-ios-e2e.sh [--profile release|debug] [--device phone|tablet] [--evidence DIR] [TEST...]
+#   --profile  the cargo profile of the app's core (build-ios.sh's; default: release)
+#   --device   the pinned simulator (default: phone)
+#   TEST: a class or Class/method of NgTermUITests (default: LogsOnAMachineTests), each run on its own after a fresh
+#   install. MOBILE_E2E_WORK_ROOT overrides where the scratch directory is made (default: cargo's target dir); keep it
+#   short, since the private control socket lives under it.
+set -euo pipefail
+
+# shellcheck source=lib/native.sh
+source "$(dirname "$0")/lib/native.sh" # sources build/pins.env too
+
+usage() {
+  die "usage: scripts/test-ios-e2e.sh [--profile release|debug] [--device phone|tablet] [--evidence DIR] [TEST...]"
+}
+
+ARGS=("$@") # for the re-run under the build lock
+PROFILE=release
+DEVICE=phone
+EVIDENCE=
+TESTS=()
+while (($#)); do
+  case "$1" in
+    --profile)
+      (($# >= 2)) && [[ "$2" == debug || "$2" == release ]] || usage
+      PROFILE="$2"
+      shift 2
+      ;;
+    --device)
+      (($# >= 2)) && [[ "$2" == phone || "$2" == tablet ]] || usage
+      DEVICE="$2"
+      shift 2
+      ;;
+    --evidence)
+      (($# >= 2)) || usage
+      EVIDENCE="$2"
+      shift 2
+      ;;
+    -h | --help | -*) usage ;;
+    *)
+      TESTS+=("$1")
+      shift
+      ;;
+  esac
+done
+((${#TESTS[@]})) || TESTS=(LogsOnAMachineTests)
+[[ "$(uname -s)" == Darwin ]] || die "scripts/test-ios-e2e.sh: the iOS e2e test runs on macOS (Xcode)"
+# the evidence directory is made and resolved now, before anything starts and before the cd below
+if [[ -n "$EVIDENCE" ]]; then
+  mkdir -p "$EVIDENCE" 2>/dev/null && [[ -w "$EVIDENCE" ]] || die "cannot write the evidence directory $EVIDENCE"
+  EVIDENCE="$(cd "$EVIDENCE" && pwd)"
+fi
+
+# The build lock, as build-ios.sh takes it (its header says why); build-ios.sh, run below with BUILD_IOS_LOCK_HELD
+# set, then runs under this run's hold.
+LOCK="${XDG_CACHE_HOME:-$HOME/.cache}/ngterm/build-ios.flock"
+if [[ "${BUILD_IOS_LOCK_HELD:-}" != "$LOCK" ]]; then
+  mkdir -p "$(dirname "$LOCK")"
+  lockf -ks -t 0 "$LOCK" true || echo "test-ios-e2e.sh: waiting for the build lock ($LOCK)" >&2
+  BUILD_IOS_LOCK_HELD="$LOCK" exec lockf -k "$LOCK" "$BASH" "$0" ${ARGS[@]+"${ARGS[@]}"}
+fi
+export BUILD_IOS_LOCK_HELD
+
+cd "$NATIVE_ROOT"
+SSHD=/usr/sbin/sshd
+[[ -x "$SSHD" ]] || die "no sshd on this Mac"
+
+scripts/build-ios.sh --profile "$PROFILE" build
+eval "$(scripts/setup-ios.sh --check)"
+TARGET="${CARGO_TARGET_DIR:-$NATIVE_ROOT/target}"
+cargo build -p ngterm-headless -p ngterm-ctl -p ngterm-session
+
+ROOT="${MOBILE_E2E_WORK_ROOT:-$TARGET}"
+mkdir -p "$ROOT"
+WORK="$(mktemp -d "$ROOT/ie2e.XXXXXX")"
+WORK="$(cd "$WORK" && pwd -P)"
+USER_NAME="$(id -un)"
+PRIVATE=(env -i "NGTERM_STATE_DIR=$WORK/s" "HOME=$WORK/home" "PATH=$WORK/bin:$WORK/stage/bin:/usr/bin:/bin"
+  SHELL=/bin/bash "USER=$USER_NAME" "LOGNAME=$USER_NAME" LANG=en_US.UTF-8)
+PORT=
+BUILD_DIR="$NATIVE_ROOT/mobile/ios/build"
+
+# whether pid $1 still runs a command line holding $2
+runs() {
+  [[ -n "$1" ]] && ps -p "$1" -o command= 2>/dev/null | grep -qF -- "$2"
+}
+
+# The instance and sshd, by the pids they recorded and only while those pids still run this run's binary or config;
+# the private namespace's live sessions, ended through its own session server, and its directory once that server,
+# left empty, has gone (after its idle grace; the namespace is this run's alone, hashed from its private state dir).
+reap() {
+  local session="$WORK/stage/bin/ngterm-session" pid names namespace i
+  if [[ -s "$WORK/headless.pid" ]]; then
+    pid="$(<"$WORK/headless.pid")"
+    if runs "$pid" "$WORK/stage/bin/ngterm-headless"; then
+      kill -TERM "$pid" 2>/dev/null || true
+    fi
+  fi
+  if [[ -s "$WORK/sshd/sshd.pid" ]]; then
+    pid="$(<"$WORK/sshd/sshd.pid")"
+    if runs "$pid" "$WORK/sshd/sshd_config"; then
+      kill -TERM "$pid" 2>/dev/null || true
+    fi
+  fi
+  if [[ -s "$WORK/live-dir" && -x "$session" ]]; then
+    namespace="$(<"$WORK/live-dir")"
+    names="$("${PRIVATE[@]}" "NGTERM_LIVE_DIR=$namespace" "$session" list --short 2>/dev/null || true)"
+    # shellcheck disable=SC2086 # one session name per word
+    [[ -z "$names" ]] || "${PRIVATE[@]}" "NGTERM_LIVE_DIR=$namespace" "$session" kill --force $names \
+      >/dev/null 2>&1 || true
+    for ((i = 0; i < 300; i++)); do
+      [[ -e "$namespace/server.sock" ]] || break
+      sleep 0.1
+    done
+    if [[ -e "$namespace/server.sock" ]]; then
+      echo "→ the session server of $namespace is still running; it and the directory are left behind" >&2
+    else
+      rm -rf "$namespace"
+    fi
+  fi
+}
+on_exit() {
+  local status=$?
+  reap
+  [[ -z "$EVIDENCE" ]] || cp "$WORK/headless.log" "$EVIDENCE/" 2>/dev/null || true
+  if ((status == 0)); then
+    rm -rf "$WORK"
+  else
+    echo "→ ios e2e failed; its scratch directory is kept: $WORK" >&2
+  fi
+}
+trap on_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+SOCKET="$WORK/s/ngterm.sock"
+((${#SOCKET} <= 103)) || die "the control socket path is too long ($SOCKET): set a shorter MOBILE_E2E_WORK_ROOT"
+scripts/stage.sh "$WORK/stage" --profile debug
+mkdir -p "$WORK/s" "$WORK/home" "$WORK/sshd" "$WORK/bin" "$WORK/client"
+printf '#!/bin/sh\nexec %q -I %q --standalone "$@"\n' "$(command -v python3)" \
+  "$NATIVE_ROOT/crates/ngterm-mobile/tests/support/fake_agent.py" >"$WORK/bin/e2e-claude"
+chmod 755 "$WORK/bin/e2e-claude"
+
+# the instance's live namespace: /tmp/ngterm-live-<FNV-1a 64 of the resolved state dir> (ngterm_core::live)
+python3 -I - "$WORK/s" >"$WORK/live-dir" <<'EOF'
+import os, sys
+h = 14695981039346656037
+for b in os.fsencode(os.path.realpath(sys.argv[1])):
+    h = ((h ^ b) * 1099511628211) % (1 << 64)
+print(f"/tmp/ngterm-live-{h:016x}", end="")
+EOF
+
+"${PRIVATE[@]}" "$WORK/stage/bin/ngterm-headless" --skip-agent-setup </dev/null >"$WORK/headless.log" 2>&1 &
+echo $! >"$WORK/headless.pid"
+for ((i = 0; i < 300; i++)); do
+  "${PRIVATE[@]}" "$WORK/stage/bin/ngtermctl" live tree --json --socket "$SOCKET" >/dev/null 2>&1 && break
+  ((i < 299)) || die "the private ngterm-headless never answered: $WORK/headless.log"
+  sleep 0.1
+done
+
+# the client key under a passphrase the test types and then looks for in the log; the key's file is read by the test
+# runner, which runs as this user on this Mac
+PASSPHRASE="qa-pass-$(python3 -I -c 'import secrets; print(secrets.token_hex(4))')"
+ssh-keygen -q -t ed25519 -N '' -C ngterm-e2e-host -f "$WORK/sshd/host_ed25519"
+ssh-keygen -q -t ed25519 -N "$PASSPHRASE" -C ngterm-e2e-client -f "$WORK/client/id_ed25519"
+FINGERPRINT="$(ssh-keygen -lf "$WORK/client/id_ed25519.pub" | awk '{ print $2 }')"
+FINGERPRINT="${FINGERPRINT#SHA256:}"
+cp "$WORK/client/id_ed25519.pub" "$WORK/sshd/authorized_keys"
+cat >"$WORK/force-command.sh" <<EOF
+#!/bin/sh
+export NGTERM_STATE_DIR='$WORK/s'
+export HOME='$WORK/home'
+export PATH='$WORK/bin:$WORK/stage/bin:/usr/bin:/bin'
+exec /bin/sh -c "\$SSH_ORIGINAL_COMMAND"
+EOF
+chmod 755 "$WORK/force-command.sh"
+
+# a free port is taken back from the kernel before sshd binds it, so another process may win it: three tries
+for ((try = 0; try < 3; try++)); do
+  PORT="$(python3 -I -c '
+import socket
+one = socket.socket()
+one.bind(("127.0.0.1", 0))
+print(one.getsockname()[1])')"
+  # the account's login shell runs the forced command, reading its startup files from HOME: this machine's
+  cat >"$WORK/sshd/sshd_config" <<EOF
+ListenAddress 127.0.0.1
+Port $PORT
+HostKey "$WORK/sshd/host_ed25519"
+PidFile "$WORK/sshd/sshd.pid"
+AuthorizedKeysFile "${WORK//%/%%}/sshd/authorized_keys"
+AuthenticationMethods publickey
+PubkeyAuthentication yes
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+AllowUsers $USER_NAME
+StrictModes no
+PermitUserRC no
+PermitUserEnvironment no
+PermitTTY yes
+AllowTcpForwarding no
+AllowAgentForwarding no
+X11Forwarding no
+PrintMotd no
+UsePAM no
+SetEnv "HOME=$WORK/home"
+ForceCommand '$WORK/force-command.sh'
+LogLevel VERBOSE
+EOF
+  env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin "$SSHD" -D -f "$WORK/sshd/sshd_config" -E "$WORK/sshd/sshd.log" \
+    </dev/null >/dev/null 2>&1 &
+  for ((i = 0; i < 150; i++)); do
+    banner="$(python3 -I -c '
+import socket, sys
+try:
+    print(socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=2).recv(4).decode(errors="replace"))
+except OSError:
+    pass' "$PORT")"
+    [[ "$banner" == SSH- ]] && break 2
+    sleep 0.1
+  done
+  [[ -s "$WORK/sshd/sshd.pid" ]] && kill -TERM "$(<"$WORK/sshd/sshd.pid")" 2>/dev/null || true
+  PORT=
+done
+[[ -n "$PORT" ]] || die "sshd never answered: $WORK/sshd/sshd.log"
+
+case "$DEVICE" in
+  phone) NAME="$IOS_SIM_PHONE_NAME" ;;
+  tablet) NAME="$IOS_SIM_TABLET_NAME" ;;
+esac
+UDID="$(xcrun simctl list devices 2>/dev/null | awk -v header="-- iOS $IOS_SIMULATOR_RUNTIME --" -v name="    $NAME (" '
+  /^-- / { inside = ($0 == header); next }
+  inside && index($0, name) == 1 { rest = substr($0, length(name) + 1); print substr(rest, 1, index(rest, ")") - 1); exit }')"
+[[ -n "$UDID" ]] || die "no $NAME simulator on iOS $IOS_SIMULATOR_RUNTIME: run scripts/setup-ios.sh"
+
+# The environment xcodebuild gets: the caller's, without NGTERM_* and what would forward it into a simulator
+# (build-ios.sh's), and with the machine for the test runner.
+UNSET_NGTERM=()
+while IFS= read -r name; do
+  UNSET_NGTERM+=(-u "$name")
+done < <(env | sed -nE 's/^((SIMCTL_CHILD_|TEST_RUNNER_)?NGTERM_[A-Za-z0-9_]*)=.*/\1/p')
+MACHINE=(TEST_RUNNER_IOS_E2E_HOST=127.0.0.1 "TEST_RUNNER_IOS_E2E_PORT=$PORT" "TEST_RUNNER_IOS_E2E_USER=$USER_NAME"
+  "TEST_RUNNER_IOS_E2E_KEY=$WORK/client/id_ed25519" "TEST_RUNNER_IOS_E2E_PASSPHRASE=$PASSPHRASE"
+  "TEST_RUNNER_IOS_E2E_FINGERPRINT=$FINGERPRINT")
+
+status=0
+for test in "${TESTS[@]}"; do
+  echo "→ $test on $NAME" >&2
+  # a fresh install: booted first, so the removal and the keychain reset reach the device; the keyboard's
+  # slide-to-type introduction marked as shown (it would cover the keys a test taps)
+  xcrun simctl bootstatus "$UDID" -b >/dev/null
+  xcrun simctl spawn "$UDID" defaults write com.apple.keyboard.preferences DidShowContinuousPathIntroduction -bool true
+  xcrun simctl uninstall "$UDID" com.nickalie.ngterm.ios 2>/dev/null || true
+  xcrun simctl keychain "$UDID" reset
+  bundle="$BUILD_DIR/e2e-${test//\//-}-$DEVICE.xcresult"
+  rm -rf "$bundle"
+  env ${UNSET_NGTERM[@]+"${UNSET_NGTERM[@]}"} "${MACHINE[@]}" caffeinate -is xcodebuild test \
+    -project mobile/ios/NgTerm.xcodeproj -derivedDataPath "$BUILD_DIR/DerivedData" \
+    -onlyUsePackageVersionsFromResolvedFile -scheme NgTerm -configuration Debug -testPlan UI \
+    -destination "id=$UDID" -parallel-testing-enabled NO -resultBundlePath "$bundle" \
+    "-only-testing:NgTermUITests/$test" -quiet || status=1
+  # a test that found no machine skips itself: here that is a failure, as is a run that passed nothing
+  xcrun xcresulttool get test-results summary --path "$bundle" 2>/dev/null | python3 -I -c '
+import json, sys
+summary = json.load(sys.stdin)
+passed, skipped = summary.get("passedTests", 0), summary.get("skippedTests", 0)
+failed = summary.get("failedTests", 0)
+print(f"→ {passed} passed, {failed} failed, {skipped} skipped", file=sys.stderr)
+sys.exit(0 if passed > 0 and skipped == 0 else 1)' || status=1
+  if [[ -n "$EVIDENCE" ]]; then
+    out="$EVIDENCE/${test//\//-}-$DEVICE"
+    mkdir -p "$out"
+    xcrun xcresulttool get test-results tests --path "$bundle" >"$out/tests.json" 2>/dev/null || true
+    xcrun xcresulttool export attachments --path "$bundle" --output-path "$out" >/dev/null 2>&1 || true
+  fi
+done
+((status == 0)) || die "→ ios e2e failed"
+echo "→ ios e2e passed" >&2

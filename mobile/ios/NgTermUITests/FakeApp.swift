@@ -1,6 +1,6 @@
 import XCTest
 
-/// The app on the fake core, as the UI tests launch and drive it.
+/// The app on the fake core (or on its real one, for a test on a real machine), as the UI tests launch and drive it.
 internal enum FakeApp {
     // how long a screen may take to come
     private static let wait: TimeInterval = 30
@@ -33,6 +33,18 @@ internal enum FakeApp {
     /// Launches the app as ``launch(withKey:for:)`` does, with the launch arguments `arguments` besides.
     @MainActor
     internal static func launch(withKey: Bool, arguments: [String], for test: XCTestCase) -> XCUIApplication {
+        start(["-ngterm-fake-core"] + (withKey ? ["-ngterm-fake-key"] : []) + arguments, for: test)
+    }
+
+    /// Launches the app on its real core for `test`, as ``launch(withKey:for:)`` turns an iPad: what it finds is what
+    /// the simulator's install holds (``LogsOnAMachineTests``, after `scripts/test-ios-e2e.sh` installs it anew).
+    @MainActor
+    internal static func launchOnTheRealCore(for test: XCTestCase) -> XCUIApplication {
+        start([], for: test)
+    }
+
+    @MainActor
+    private static func start(_ arguments: [String], for test: XCTestCase) -> XCUIApplication {
         let isPad = UIDevice.current.userInterfaceIdiom == .pad
         if isPad {
             XCUIDevice.shared.orientation = .landscapeLeft
@@ -41,7 +53,7 @@ internal enum FakeApp {
             }
         }
         let app = XCUIApplication()
-        app.launchArguments = ["-ngterm-fake-core"] + (withKey ? ["-ngterm-fake-key"] : []) + arguments
+        app.launchArguments = arguments
         app.launch()
         if isPad {
             expectLandscape(app)
