@@ -6,9 +6,9 @@ import SwiftUI
 ///
 /// The sheet (mobile/android's `ClipboardReadPrompt`) names the machine and the session the read comes from, shows what
 /// it would hand over (read when the sheet comes up, which may bring up iOS's own question about pasting from another
-/// app), and offers Allow, Always allow on the machine, or Deny; a read that would hand over a clip marked sensitive
-/// is asked for that one read. Swiping it away denies; a sheet whose read went
-/// (answered elsewhere, or dismissed by the core) goes by itself.
+/// app; while an exported private key may be there, only that it may be), and offers Allow, Always allow on the
+/// machine, or Deny; a read that would hand over a clip marked sensitive is asked for that one read. Swiping it away
+/// denies; a sheet whose read went (answered elsewhere, or dismissed by the core) goes by itself.
 internal struct ClipboardReadPrompt: ViewModifier {
     internal let graph: AppGraph
     @State private var shown: ClipboardRead?
@@ -42,13 +42,15 @@ internal struct ClipboardReadPrompt: ViewModifier {
         let machine = graph.machines.machine(id: pane.machineId)?.title ?? pane.machineId
         let listed = graph.connections.trees[pane.machineId]?.first { $0.id == pane.sessionId }
         let session = listed?.name ?? pane.sessionId
+        let preview = reads.preview(read)
         return ClipboardReadQuestion(
             canRemember: read.canRemember,
             machine: machine,
             session: session,
-            preview: reads.preview(read).contents,
+            preview: preview.contents,
             listed: read.list,
-            once: reads.asksOnce(read)
+            once: reads.asksOnce(read),
+            concealed: preview.mayHoldKey
         ) { remember in
             reads.allow(read, remember: remember)
         } onAlways: { remember in

@@ -322,7 +322,9 @@ recognizers; what is new to iOS is the system's: the edit menu, the text beam, t
   still holds it, or any item marked concealed, which a key copied before the app last ended carries), each clip
   counts as marked sensitive (above), whatever mark it has: a read that would hand over data asks, also on a machine
   allowed always and for a program holding a grant, and its answer is for that one read. Always is not offered, so
-  no machine is trusted and no grant is kept; the machine's other reads waiting still ask.
+  no machine is trusted and no grant is kept; the machine's other reads waiting still ask. The plate shows nothing of
+  what was copied then, and has no **Show what you copied**: a `key` glyph and "Your clipboard may hold the private
+  key you exported, or another item marked secret, so it isn't shown here."
 - **A program writing the clipboard** isn't asked about (Ghostty's `clipboard-write = allow`): its text, HTML and
   images land on the general pasteboard as one item, and the program learns the outcome once the pasteboard took it. A
   write of none of those types is refused as unsupported, only a write with nothing in it clears, and a write to the

@@ -70,6 +70,10 @@ internal struct ClipboardReadsKeyTests {
         #expect(answers() == [answer(1, allowed()), answer(4, allowed(available: ["text/plain"]))])
         // a copied key counts as a clip marked sensitive: its Allow is for the one read, the other read still asks
         #expect(reads.asksOnce(reads.pending[0]))
+        // the prompt shows only that the key may be there, and its Allow hands over what was read
+        let shown = reads.preview(reads.pending[0])
+        #expect(shown.mayHoldKey)
+        #expect(shown.contents == [ClipboardPart(mime: "text/plain", data: Data(key.utf8))])
         reads.allowAlways(reads.pending[0])
         #expect(reads.pending.map(\.readId) == [3])
         #expect(reads.asksOnce(reads.pending[0]))
@@ -82,5 +86,7 @@ internal struct ClipboardReadsKeyTests {
         await request(5)
         #expect(reads.pending.isEmpty)
         #expect(answers().last == answer(5, allowed([Self.copied])))
+        await request(6, pane: PaneRef(machineId: "m2", sessionId: "s3", paneId: "P3"))
+        #expect(!reads.preview(reads.pending[0]).mayHoldKey)
     }
 }

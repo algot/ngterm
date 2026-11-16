@@ -53,6 +53,7 @@ internal struct PromptSnapshotTests {
                 ClipboardPart(mime: "image/png", data: ClipboardFixtures.redPNG),
             ],
             listed: false,
+            concealed: false,
             onAllow: ScreenSnapshot.ignoreChoice,
             onAlways: ScreenSnapshot.ignoreChoice,
             onDeny: ScreenSnapshot.ignore
@@ -84,11 +85,33 @@ internal struct PromptSnapshotTests {
             session: "docs-site",
             preview: [],
             listed: true,
+            concealed: false,
             onAllow: ScreenSnapshot.ignoreChoice,
             onAlways: ScreenSnapshot.ignoreChoice,
             onDeny: ScreenSnapshot.ignore
         )
         ScreenSnapshot.check(question, named: "clipboard-none", variant: .light)
+    }
+
+    @Test("a program asks to read the clipboard while an exported key may be on it")
+    internal func clipboardKey() {
+        let key = ClipboardPart(
+            mime: "text/plain",
+            data: Data("-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjE=\n".utf8)
+        )
+        let question = ClipboardReadQuestion(
+            canRemember: false,
+            machine: "build-01",
+            session: "docs-site",
+            preview: [key],
+            listed: false,
+            once: true,
+            concealed: true,
+            onAllow: ScreenSnapshot.ignoreChoice,
+            onAlways: ScreenSnapshot.ignoreChoice,
+            onDeny: ScreenSnapshot.ignore
+        )
+        ScreenSnapshot.check(question, named: "clipboard-key", variant: .light)
     }
 
     @Test("a changed host key stops the connection", arguments: ScreenVariant.allCases)

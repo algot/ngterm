@@ -52,6 +52,8 @@ internal struct CoreChoice {
     internal static let fakeLogArgument = "-ngterm-fake-log"
     /// With the fake core, the launch argument that leaves the device without a passcode, so no key is exported.
     internal static let fakeNoPasscodeArgument = "-ngterm-fake-no-passcode"
+    /// With the fake core, the launch argument that has the owner's first check fail, so Try again can be tested.
+    internal static let fakeAuthFailsOnceArgument = "-ngterm-fake-auth-fails-once"
     /// With the fake core, the launch argument whose next one names the file an exported key is offered under, so a
     /// test saves a file of its own run.
     internal static let fakeExportNameArgument = "-ngterm-fake-export-name"

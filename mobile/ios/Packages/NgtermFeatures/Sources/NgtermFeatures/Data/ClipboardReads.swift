@@ -13,10 +13,10 @@ import Observation
 /// key may be on the clipboard (`keyCopied`), each clip counts as marked sensitive.
 ///
 /// The prompt shows what the read would hand over (``preview(_:)``), and its Allow hands over exactly that (Ghostty's
-/// macOS form). Every read gets an answer: a read the core dismisses (its pane hidden, its link lost, its program
-/// ended: the core denied it) leaves ``pending``, and the app denies the reads of a session it detaches, of a machine
-/// whose connection drops, of a pane whose program ends, and all of them before it suspends the core
-/// (``denyAll()``).
+/// macOS form); while an exported key may be there, the prompt shows only that it may be. Every read gets an answer:
+/// a read the core dismisses (its pane hidden, its link lost, its program ended: the core denied it) leaves
+/// ``pending``, and the app denies the reads of a session it detaches, of a machine whose connection drops, of a pane
+/// whose program ends, and all of them before it suspends the core (``denyAll()``).
 @preconcurrency
 @MainActor
 @Observable
@@ -50,7 +50,7 @@ public final class ClipboardReads {
         connections: Connections,
         trust: ClipboardTrustStore,
         clipboard: any TerminalClipboard,
-        keyCopied: @escaping @MainActor () -> Bool = { false }
+        keyCopied: @escaping @MainActor () -> Bool
     ) {
         self.connections = connections
         self.trust = trust
@@ -206,7 +206,7 @@ public final class ClipboardReads {
     }
 
     private func consent(for read: ClipboardRead, _ taken: ClipboardSnapshot) -> ClipboardReadConsent {
-        consent(for: read, discloses: !taken.contents.isEmpty, sensitive: taken.sensitive)
+        consent(for: read, discloses: !taken.contents.isEmpty, sensitive: taken.sensitive || taken.mayHoldKey)
     }
 
     private func consent(for read: ClipboardRead, discloses: Bool, sensitive: Bool) -> ClipboardReadConsent {
@@ -225,7 +225,8 @@ public final class ClipboardReads {
         return ClipboardSnapshot(
             contents: taken.contents,
             available: Array(taken.types.prefix(Self.maxListed)),
-            sensitive: taken.sensitive
+            sensitive: taken.sensitive,
+            mayHoldKey: !read.listOnly && !read.mimes.isEmpty && keyCopied()
         )
     }
 

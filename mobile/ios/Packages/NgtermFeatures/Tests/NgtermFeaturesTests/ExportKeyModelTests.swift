@@ -79,13 +79,31 @@ internal struct ExportKeyModelTests {
         #expect(model.notice == .authFailed(keyId: key.id, reason: "too many attempts"))
         #expect(model.notice?.message.contains("too many attempts") == true)
         #expect(model.work.keyId == nil)
-        #expect(await model.retry())
+        // the alert's Try again runs after the alert has closed, so the notice is already dismissed
+        let failed = try #require(model.notice)
+        model.dismissNotice()
+        #expect(await model.retry(failed))
         #expect(model.notice == nil)
         #expect(model.work.keyId == key.id)
         #expect(test.auth.asked.count == 3)
-        // with no notice up there is nothing to try again
-        #expect(await !model.retry())
+        // a notice that isn't a failed check has nothing to try again
+        #expect(await !model.retry(.noPasscode))
         #expect(test.auth.asked.count == 3)
+        #expect(model.work.keyId == key.id)
+    }
+
+    @Test("an unlock in one window leaves the file another window staged for its file screen")
+    internal func unlockKeepsOtherStaged() async throws {
+        defer { test.remove() }
+        let (first, key) = try await unlocked()
+        await first.tap(.save)
+        let file = try #require(first.work.staged)
+        let second = model()
+        #expect(await second.start(keyId: key.id))
+        #expect(FileManager.default.fileExists(atPath: file.path))
+        first.placed(.success(URL(filePath: "/placed/ngterm-private-key")))
+        #expect(first.work.done == .saved)
+        #expect(staged().isEmpty)
     }
 
     @Test("a key file an earlier run left staged is removed as the app's graph is made, before any unlock")

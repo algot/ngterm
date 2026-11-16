@@ -100,11 +100,12 @@ public final class ExportKeyModel {
         }
     }
 
-    /// Asks the owner again, after the device couldn't confirm.
+    /// Asks the owner again, after the device couldn't confirm: `notice` is the one that said so, which the alert
+    /// gives its Try again (the alert closes, and so dismisses ``notice``, before the retry runs).
     ///
     /// - Returns: whether the owner confirmed, so the export may show.
     @discardableResult
-    public func retry() async -> Bool {
+    public func retry(_ notice: ExportNotice) async -> Bool {
         guard case .authFailed(let keyId, _) = notice else {
             return false
         }
@@ -190,10 +191,10 @@ public final class ExportKeyModel {
         work.isBusy = false
     }
 
-    // the owner confirmed it is them: `keyId` can be exported, and files an earlier run left staged are removed
+    // the owner confirmed it is them: `keyId` can be exported (the files an earlier run left staged went at launch;
+    // another window's file, still waiting for its file screen, stays)
     private func unlock(_ keyId: String) {
         showing += 1
-        services.files.discardAll()
         unlockedAt = now()
         work = ExportWork()
         work.keyId = keyId

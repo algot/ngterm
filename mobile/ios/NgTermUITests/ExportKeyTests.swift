@@ -3,7 +3,8 @@ import XCTest
 /// A key's export on the fake core, whose device's owner confirms at once (mobile/android's `KeyExport*E2eTest`s): a
 /// key made on the first run is saved under a passphrase through the system's file screen and Import a key reads the
 /// file back as the same key; a save left without a place says nothing; an export without a passphrase warns and
-/// asks again, and the page left forgets it; a device with no passcode exports nothing.
+/// asks again, and the page left forgets it; a device with no passcode exports nothing; a check that failed opens
+/// the export on Try again.
 ///
 /// The key is the core's own (made by the first run, kept in memory), so the file holds a real export. It is saved
 /// under a name of this run's own, and removed after it.
@@ -238,6 +239,16 @@ internal final class ExportKeyTests: XCTestCase {
         FakeApp.expect(app.staticTexts["Set a passcode first"], "that a passcode is needed")
         app.buttons["OK"].tap()
         XCTAssertFalse(app.navigationBars["Export private key"].exists)
+    }
+
+    @MainActor
+    internal func testTryAgainAfterAFailedCheckOpensTheExport() {
+        let app = openSettings(arguments: ["-ngterm-fake-auth-fails-once"])
+        tapExport(in: app)
+        FakeApp.expect(app.staticTexts["Couldn't confirm it's you"], "that the check failed")
+        XCTAssertFalse(app.navigationBars["Export private key"].exists)
+        app.buttons["Try again"].tap()
+        FakeApp.expect(app.navigationBars["Export private key"], "the export screen after Try again")
     }
 
     deinit {

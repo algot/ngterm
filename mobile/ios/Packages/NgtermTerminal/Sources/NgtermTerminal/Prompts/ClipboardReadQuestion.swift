@@ -5,12 +5,12 @@ import UIKit
 
 /// The question a program's clipboard read asks (mobile/android's `ClipboardReadQuestion`), a sheet's page: the
 /// attention glyph, "Let docs-site read your clipboard?" as a heading, from where, what the program would see (the
-/// text or what kinds of content and how much, and the first image, on a plate: Ghostty's macOS form), the "don't ask
-/// again" toggle when the read can be remembered, then **Allow** (prominent), and **Always allow on build-01** and
-/// **Deny**, quieter (the tint on the ground).
+/// text or what kinds of content and how much, and the first image, on a plate: Ghostty's macOS form; only that it may
+/// be an exported private key, when it is `concealed`), the "don't ask again" toggle when the read can be remembered,
+/// then **Allow** (prominent), and **Always allow on build-01** and **Deny**, quieter (the tint on the ground).
 ///
 /// Asked for the one read (the clip is marked sensitive), it says so, hides what was copied behind its kinds and sizes
-/// until the user asks to see it, and offers **Allow once** and **Deny** alone.
+/// until the user asks to see it, and offers **Allow once** and **Deny** alone. A `concealed` clip is never shown.
 public struct ClipboardReadQuestion: View {
     private static let width: Double = 520
     // the tallest the copied text shows before it scrolls, and an image (Ghostty's dialog: 200 points)
@@ -23,6 +23,7 @@ public struct ClipboardReadQuestion: View {
     private let preview: [ClipboardPart]
     private let listed: Bool
     private let once: Bool
+    private let concealed: Bool
     private let onAllow: @MainActor (Bool) -> Void
     private let onAlways: @MainActor (Bool) -> Void
     private let onDeny: @MainActor () -> Void
@@ -68,9 +69,9 @@ public struct ClipboardReadQuestion: View {
         .background(Color(uiColor: .systemGroupedBackground))
     }
 
-    // a clip marked sensitive stays off the screen until the user asks for it
+    // a clip marked sensitive stays off the screen until the user asks for it; a concealed one shows never
     private var conceals: Bool {
-        once && !preview.isEmpty
+        once && !concealed && !preview.isEmpty
     }
 
     private var explanation: String {
@@ -122,7 +123,24 @@ public struct ClipboardReadQuestion: View {
 
     @ViewBuilder private var shownContent: some View {
         let summary = ClipboardSummary(preview)
-        if let text = summary.text {
+        if concealed {
+            Label {
+                Text(
+                    String(
+                        localized: """
+                            Your clipboard may hold the private key you exported, or another item marked secret, so \
+                            it isn't shown here.
+                            """
+                    )
+                )
+                .fixedSize(horizontal: false, vertical: true)
+            } icon: {
+                Image(systemName: "key")
+                    .accessibilityHidden(true)
+            }
+            .foregroundStyle(Palette.secondaryText.color)
+            .accessibilityIdentifier("clipboard-concealed")
+        } else if let text = summary.text {
             ScrollView {
                 Text(verbatim: text)
                     .font(Typography.plateValue)
@@ -136,7 +154,7 @@ public struct ClipboardReadQuestion: View {
                 .foregroundStyle(Palette.secondaryText.color)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        if let part = summary.image, let image = UIImage(data: part.data) {
+        if !concealed, let part = summary.image, let image = UIImage(data: part.data) {
             Image(uiImage: image)
                 .resizable()
                 .interpolation(.none)
@@ -181,7 +199,8 @@ public struct ClipboardReadQuestion: View {
     /// The question of a read from `session` on `machine` (by their names) that would hand over `preview` (`listed`:
     /// the read also learns which types the clipboard holds), offering the "don't ask again" toggle when it
     /// `canRemember`; each answer runs its closure, Allow and Always with the toggle's state. `once`: the clip is
-    /// marked sensitive, so the question is for this one read.
+    /// marked sensitive, so the question is for this one read. `concealed`: an exported private key may be in it, so
+    /// none of it shows, not even on request.
     @preconcurrency
     public init(
         canRemember: Bool,
@@ -190,6 +209,7 @@ public struct ClipboardReadQuestion: View {
         preview: [ClipboardPart],
         listed: Bool,
         once: Bool = false,
+        concealed: Bool = false,
         onAllow: @escaping @MainActor (Bool) -> Void,
         onAlways: @escaping @MainActor (Bool) -> Void,
         onDeny: @escaping @MainActor () -> Void
@@ -200,6 +220,7 @@ public struct ClipboardReadQuestion: View {
         self.preview = preview
         self.listed = listed
         self.once = once
+        self.concealed = concealed
         self.onAllow = onAllow
         self.onAlways = onAlways
         self.onDeny = onDeny
