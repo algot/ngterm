@@ -64,7 +64,7 @@ extension TerminalView {
     }
 
     /// As ``takeHandover()``, for a terminal about to be drawn focused too (`comingOn`: its pane turns from its chat
-    /// to it).
+    /// to it), which is drawn focused as it takes the keyboard, so the keys typed before the view changes reach it.
     internal func takeHandover(comingOn: Bool) {
         guard
             drawsFocused || comingOn,
@@ -74,6 +74,7 @@ extension TerminalView {
         else {
             return
         }
+        drawsFocused = true
         focus(showingKeyboard: handover == .withKeyboard)
     }
 
