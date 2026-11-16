@@ -318,6 +318,11 @@ recognizers; what is new to iOS is the system's: the edit menu, the text beam, t
   (`clipboard_read_consent`), the same on Android. iOS has no mark of its own to read: a copy's local-only and expiry
   options can't be read back, so the one sign is the pasteboard type `org.nspasteboard.ConcealedType`, which an app
   has to add itself. A password copied by an app that doesn't add it reads as an ordinary clip.
+- **While an exported private key may be on the clipboard** (the copy Settings' export made, while the pasteboard
+  still holds it, or any item marked concealed, which a key copied before the app last ended carries), each clip
+  counts as marked sensitive (above), whatever mark it has: a read that would hand over data asks, also on a machine
+  allowed always and for a program holding a grant, and its answer is for that one read. Always is not offered, so
+  no machine is trusted and no grant is kept; the machine's other reads waiting still ask.
 - **A program writing the clipboard** isn't asked about (Ghostty's `clipboard-write = allow`): its text, HTML and
   images land on the general pasteboard as one item, and the program learns the outcome once the pasteboard took it. A
   write of none of those types is refused as unsupported, only a write with nothing in it clears, and a write to the

@@ -56,4 +56,20 @@ internal struct SystemKeyClipboardTests {
             #expect(pasteboard.string == "the user's own again")
         }
     }
+
+    @Test("the pasteboard may hold a key while it holds the copy, or an item marked concealed an earlier run left")
+    internal func mayHoldKey() {
+        withPasteboard { clipboard, pasteboard in
+            #expect(!clipboard.mayHoldKey)
+            clipboard.copy(Self.key)
+            #expect(clipboard.mayHoldKey)
+            pasteboard.string = "something the user copied since"
+            #expect(!clipboard.mayHoldKey)
+            clipboard.copy(Self.key)
+            clipboard.clearCopied()
+            #expect(!clipboard.mayHoldKey)
+            pasteboard.setItems([["public.utf8-plain-text": Self.key, SystemKeyClipboard.concealedType: Data()]])
+            #expect(clipboard.mayHoldKey)
+        }
+    }
 }

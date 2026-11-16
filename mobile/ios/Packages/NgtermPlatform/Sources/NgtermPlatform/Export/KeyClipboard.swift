@@ -3,6 +3,9 @@
 @preconcurrency
 @MainActor
 public protocol KeyClipboard: AnyObject {
+    /// Whether the clipboard may hold an exported key: while it does, a program's read of it asks the user first.
+    var mayHoldKey: Bool { get }
+
     /// Puts the exported key `text` on the clipboard, for this device only and for a while only.
     func copy(_ text: String)
 

@@ -9,7 +9,8 @@ import Observation
 /// the program holds a grant in its terminal, which answer it at once; a read that discloses no data (a listing of the
 /// types, or one asking for no type) is answered at once too. A read that would hand over a clip marked sensitive
 /// always asks, showing the snapshot that was taken, and its answer is for that one read (``asksOnce(_:)``): it keeps
-/// no grant and trusts no machine. The rule is the core's (`clipboardReadConsent(facts:)`).
+/// no grant and trusts no machine. The rule is the core's (`clipboardReadConsent(facts:)`). While an exported private
+/// key may be on the clipboard (`keyCopied`), each clip counts as marked sensitive.
 ///
 /// The prompt shows what the read would hand over (``preview(_:)``), and its Allow hands over exactly that (Ghostty's
 /// macOS form). Every read gets an answer: a read the core dismisses (its pane hidden, its link lost, its program
@@ -28,6 +29,7 @@ public final class ClipboardReads {
     @ObservationIgnored private let connections: Connections
     @ObservationIgnored private let trust: ClipboardTrustStore
     @ObservationIgnored private let clipboard: any TerminalClipboard
+    @ObservationIgnored private let keyCopied: @MainActor () -> Bool
     // trusted this run: a machine whose Always the store couldn't write is trusted until the app ends
     private var trustedNow: Set<String> = []
     // revoked this run: a machine whose Ask again the store couldn't write asks until the app ends
@@ -41,11 +43,19 @@ public final class ClipboardReads {
     }
 
     /// The reads over `connections`, whose events they take from now on, trusting the machines in `trust` and handing
-    /// over what `clipboard` holds.
-    public init(connections: Connections, trust: ClipboardTrustStore, clipboard: any TerminalClipboard) {
+    /// over what `clipboard` holds; while `keyCopied` says an exported key may be there, each clip counts as marked
+    /// sensitive.
+    @preconcurrency
+    public init(
+        connections: Connections,
+        trust: ClipboardTrustStore,
+        clipboard: any TerminalClipboard,
+        keyCopied: @escaping @MainActor () -> Bool = { false }
+    ) {
         self.connections = connections
         self.trust = trust
         self.clipboard = clipboard
+        self.keyCopied = keyCopied
         connections.listen { [weak self] event in
             self?.receive(event)
         }
@@ -205,7 +215,7 @@ public final class ClipboardReads {
                 discloses: discloses,
                 granted: read.granted,
                 trusted: alwaysAllowed.contains(read.pane.machineId),
-                sensitive: sensitive
+                sensitive: sensitive || keyCopied()
             )
         )
     }

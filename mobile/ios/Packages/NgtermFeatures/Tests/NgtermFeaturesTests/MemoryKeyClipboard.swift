@@ -8,6 +8,10 @@ internal final class MemoryKeyClipboard: KeyClipboard {
     /// How many times it was asked to clear.
     internal private(set) var clears = 0
 
+    internal var mayHoldKey: Bool {
+        held != nil
+    }
+
     internal init() {
         // nothing copied yet
     }

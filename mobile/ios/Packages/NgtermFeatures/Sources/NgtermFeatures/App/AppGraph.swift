@@ -117,7 +117,10 @@ public final class AppGraph {
             diagnostics: lines
         )
         clipboardTrust = stores.clipboardTrust
-        clipboardReads = ClipboardReads(connections: made, trust: stores.clipboardTrust, clipboard: board)
+        let keyClipboard = self.exports.clipboard
+        clipboardReads = ClipboardReads(connections: made, trust: stores.clipboardTrust, clipboard: board) {
+            keyClipboard.mayHoldKey
+        }
         let open = Asks(connections: made)
         asks = open
         notificationPrefs = stores.notificationPrefs

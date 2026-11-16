@@ -6,7 +6,8 @@ import UniformTypeIdentifiers
 ///
 /// The key is a local-only item (Universal Clipboard never carries it to another device) that the system drops after
 /// ``lifetime``, marked concealed (``concealedType``) so a program's clipboard read asks before it takes the key;
-/// ``clearCopied()`` empties the pasteboard sooner, unless something else was copied since.
+/// ``clearCopied()`` empties the pasteboard sooner, unless something else was copied since. ``mayHoldKey`` reads no
+/// data, so it never brings up iOS's paste question.
 @preconcurrency
 @MainActor
 public final class SystemKeyClipboard: KeyClipboard {
@@ -19,6 +20,12 @@ public final class SystemKeyClipboard: KeyClipboard {
     private let now: @MainActor () -> Date
     // the pasteboard's change count right after the app's own copy: another copy since moves it on
     private var copiedChange: Int?
+
+    /// Whether the pasteboard still holds the key copied last, or an item marked concealed: a key that an earlier run
+    /// of the app copied carries that mark too.
+    public var mayHoldKey: Bool {
+        pasteboard.changeCount == copiedChange || pasteboard.types.contains(Self.concealedType)
+    }
 
     /// The clipboard over `pasteboard` (the general one unless a test gives its own), its items expiring by `now`.
     @preconcurrency
