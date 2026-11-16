@@ -4,9 +4,11 @@ import SwiftUI
 /// The machines whose programs read the clipboard without asking, each with Ask again; or that every machine asks.
 internal struct ClipboardSection: View {
     internal let model: SettingsModel
+    /// The trusted machines, as the form shows them.
+    internal let facts: FormFacts
 
     internal var body: some View {
-        let trusted = model.trusted
+        let trusted = facts.trusted
         Section {
             if trusted.isEmpty {
                 Text("Every machine asks before its programs read your clipboard.")

@@ -6,6 +6,8 @@ import SwiftUI
 /// rotating means.
 internal struct KeysSection: View {
     internal let model: SettingsModel
+    /// The keys and the work on them, as the form shows them.
+    internal let facts: FormFacts
     /// Shows the public half of the key with the id given.
     internal let onShow: @MainActor (String) -> Void
     /// Asks to export the private half of the key with the id given.
@@ -14,9 +16,9 @@ internal struct KeysSection: View {
     internal let onImport: @MainActor () -> Void
 
     internal var body: some View {
-        let work = model.work
+        let work = facts.work
         Section {
-            ForEach(model.keys) { item in
+            ForEach(facts.keys) { item in
                 KeyRow(item: item) {
                     onShow(item.id)
                 } onExport: {

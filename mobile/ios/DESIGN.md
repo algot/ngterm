@@ -721,7 +721,11 @@ leaves it for Settings.
 A sheet from the machines' toolbar (the gear), a `NavigationStack` over a `Form`, **Done** in the toolbar. The set is
 Android's, without its wallpaper colors. Every section's header and note are the app's `FormHint`s; a choice is one of
 the section's rows, its title over what it means in `secondaryText`, the chosen one checked in the tint (the system's
-inline `Picker`); a switch is the system's `Toggle`, tinted copper.
+inline `Picker`); a switch is the system's `Toggle`, tinted copper. While a pushed page takes the form out of the
+window, the form keeps what it showed (`FormFacts`, `WindowPresence`); what changed meanwhile, for example a key that
+Use for every machine moved, shows as the form joins the window again. On an iPad with a keyboard, a `Form` changed
+out of the window comes back with rows of a stale height. UIKit's focus search after Back then removes a focus guide
+that it still reads, and the app ends ("parentEnvironment != nil").
 
 - **Terminal:** a live sample of a shell (a prompt, a listing, `git status` with a line selected, the cursor) in the
   chosen font, size and palette, on the palette's ground with 12 pt corners; it keeps the terminal's own size in

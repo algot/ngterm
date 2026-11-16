@@ -11,6 +11,8 @@ internal struct NotificationsSection: View {
     private var openURL
 
     internal let model: SettingsModel
+    /// Whether the app may notify, as the form shows it.
+    internal let facts: FormFacts
 
     internal var body: some View {
         Section {
@@ -31,7 +33,7 @@ internal struct NotificationsSection: View {
     }
 
     private var banner: Banner? {
-        switch model.permission {
+        switch facts.permission {
         case .undecided:
             Banner(
                 .attention,

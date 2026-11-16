@@ -9,7 +9,8 @@ import SwiftUI
 /// unlocked it, a key's export, which locks again however its screen is left. A key just made or brought
 /// opens its public half in place of where Settings was. Whether the app may notify is read again each time the app
 /// comes back to the foreground, so a change in the system's settings shows. A change the stores couldn't keep shows
-/// as a banner at the sheet's foot until it is dismissed.
+/// as a banner at the sheet's foot until it is dismissed. While a pushed page takes the form out of the window, the
+/// form stays as it was (``FormFacts``): what changed meanwhile shows once it is back in the window.
 public struct SettingsView: View {
     @Environment(\.dismiss)
     private var dismiss
@@ -19,17 +20,20 @@ public struct SettingsView: View {
     private let coreVersion: String
     @State private var model: SettingsModel
     @State private var navigation: SettingsNavigation
+    // what the form shows while it is out of the window; nil while it is in one
+    @State private var covered: FormFacts?
 
     /// The body of the view.
     public var body: some View {
+        let facts = covered ?? FormFacts(model)
         NavigationStack(path: pages) {
             Form {
                 TerminalSection(model: model)
                 ChoiceSections(model: model)
                 AgentsSection(model: model)
-                NotificationsSection(model: model)
-                ClipboardSection(model: model)
-                KeysSection(model: model) { keyId in
+                NotificationsSection(model: model, facts: facts)
+                ClipboardSection(model: model, facts: facts)
+                KeysSection(model: model, facts: facts) { keyId in
                     navigation.path.append(.publicKey(keyId))
                 } onExport: { keyId in
                     Task {
@@ -46,6 +50,13 @@ public struct SettingsView: View {
                 AboutSection(coreVersion: coreVersion)
             }
             .accessibilityIdentifier("settings-form")
+            .background {
+                WindowPresence { isInWindow in
+                    covered = isInWindow ? nil : FormFacts(model)
+                }
+                .frame(width: 0, height: 0)
+                .accessibilityHidden(true)
+            }
             .modifier(ExportNotices(model: model.export, onUnlocked: showExport))
             .navigationTitle(String(localized: "Settings"))
             .toolbar {
