@@ -150,21 +150,11 @@ internal final class LogsTests: XCTestCase {
         secret.typeText(Self.passphrase + "\n")
         app.buttons["import-key-action"].tap()
         FakeApp.expect(app.descendants(matching: .any)["public-key-page"].firstMatch, "the imported key's public half")
-        // a phone offers to keep the passphrase in Passwords, over the page
-        let notNow = app.buttons["Not Now"]
-        if notNow.waitForExistence(timeout: LogsPage.offerWait) {
-            notNow.tap()
-        }
-        // a tap while the offer goes can reach nothing: tap Back again
+        // the system's offer to keep the passphrase in Passwords comes at no fixed time, and takes the next tap
         let done = app.buttons["settings-done"]
-        for _ in 0..<LogsPage.tries where !done.exists {
-            app.buttons["BackButton"].firstMatch.tap()
-            _ = done.waitForExistence(timeout: LogsPage.offerWait)
-        }
-        FakeApp.expect(done, "Settings' Done")
-        app.buttons["settings-done"].tap()
-        // a tap while the sheet goes reaches nothing
-        XCTAssertTrue(app.navigationBars["Settings"].waitForNonExistence(timeout: LogsPage.wait), "Settings stayed")
+        LogsPage.tap(app.buttons["BackButton"].firstMatch, until: { done.exists }, in: app, "no Settings' Done")
+        let settings = app.navigationBars["Settings"]
+        LogsPage.tap(done, until: { !settings.exists }, in: app, "Settings stayed")
     }
 
     // a message to `work`'s agent, then text typed into its terminal; the log gains fewer lines over the typing than
@@ -173,9 +163,9 @@ internal final class LogsTests: XCTestCase {
     private func sendAndType(in app: XCUIApplication, logIn directory: URL) {
         FakeApp.showMachines(in: app)
         FakeApp.expectRow("split", reads: "Connected", in: app)
-        app.descendants(matching: .any)["machine-row-split"].firstMatch.tap()
+        let machine = app.descendants(matching: .any)["machine-row-split"].firstMatch
         let row = app.descendants(matching: .any)["session-work"].firstMatch
-        FakeApp.expect(row, "the session's row")
+        LogsPage.tap(machine, until: { row.exists }, in: app, "no row for the session work")
         row.tap()
         let prompt = app.descendants(matching: .any)["chat-prompt"].firstMatch
         FakeApp.expect(prompt, "the prompt field")

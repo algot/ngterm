@@ -9,6 +9,8 @@ internal enum LogsPage {
     internal static let offerWait: TimeInterval = 5
     /// How often a tap that can reach nothing is tried again.
     internal static let tries = 3
+    // the button that closes the system's offer to keep a password
+    private static let offerDismiss = "Not Now"
     private static let swipes = 12
     // Settings' page swiped down to its foot, then back up
     private static let revealSwipes = swipes + swipes
@@ -69,6 +71,36 @@ internal enum LogsPage {
         let newest = NSPredicate { _, _ in shownLines(in: app).first?.contains(text) == true }
         let came = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: newest, object: nil)], timeout: wait)
         XCTAssertEqual(came, .completed, "the newest line is not \"\(text)\": \(shownLines(in: app))")
+    }
+
+    /// Taps `control` until `isDone`, and closes the system's offer to keep a password whenever it shows.
+    ///
+    /// After a key's import with its passphrase, the system offers to keep the passphrase in Passwords. The offer
+    /// comes at no fixed time: on a loaded simulator it came 11 s after the import, over Settings. A tap while the
+    /// offer shows or closes reaches only the offer. The tap is then tried again, while `control` is on screen.
+    /// `isDone` reads the app on each poll.
+    @MainActor
+    internal static func tap(
+        _ control: XCUIElement,
+        until isDone: @escaping () -> Bool,
+        in app: XCUIApplication,
+        _ what: String
+    ) {
+        let offer = app.buttons[offerDismiss]
+        let next = NSPredicate { _, _ in isDone() || offer.exists }
+        for _ in 0..<tries where !isDone() {
+            // a tap on Not Now while the offer comes in reaches nothing: tap it again while the offer stays
+            for _ in 0..<tries where offer.exists {
+                offer.tap()
+                _ = offer.waitForNonExistence(timeout: offerWait)
+            }
+            // a control that went off screen did its work: wait for it
+            if !isDone(), control.exists, control.isHittable {
+                control.tap()
+            }
+            _ = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: next, object: nil)], timeout: wait)
+        }
+        XCTAssertTrue(isDone(), what)
     }
 
     /// Settings open, then Logs.
