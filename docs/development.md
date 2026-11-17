@@ -1151,7 +1151,10 @@ scripts/test-ios-e2e.sh [--device phone|tablet] [TEST...]   # the UI tests that 
   simulators' profiles and each target's objects (its header says why not `xccov`). Floors only rise, toward 90%.
 - A Unit test that runs longer than 5 minutes fails: `Unit.xctestplan` turns on Xcode's test timeouts, which also
   stop a Swift Testing test ("Time limit was exceeded") and start the runner again, so a hang costs minutes, not the
-  job. The tests' own waits (`AppWindow.until`, and `AppWindow.value` for a call) fail in about 10 s.
+  job. A Swift Testing test does not have to have a `.timeLimit` trait: Xcode gives the plan's allowance to Swift
+  Testing as its time limit. On Xcode 27.2 a suite with no trait stopped at the allowance, for a lost resume and for
+  a blocked thread too. A shorter `.timeLimit` trait wins. The tests' own waits (`AppWindow.until`, and
+  `AppWindow.value` for a call) fail in about 10 s.
 - Snapshot goldens live in each package's `Tests/*/__Snapshots__/`, one per simulator (`-on-phone`, `-on-tablet`),
   recorded on the pinned runtime, which CI verifies them on. A missing golden is recorded by the run that first
   meets it, which fails; the next run checks it. To re-record the ones that fail, run
