@@ -1,14 +1,20 @@
 //! The Windows child and its job on real pseudoconsoles: a handed-over child killed through its process handle, a
 //! retired killer, handles without the rights a call needs, a job holding more processes than a first read of its
-//! list has room for, and the spawn's and the master's refusals. An actor reads each child's output away, so the
-//! console never waits on its pipe.
+//! list has room for, a packaged app started beside another process of its package, and the spawn's and the master's
+//! refusals. An actor reads each child's output away, so the console never waits on its pipe.
 
 use std::os::windows::io::{AsRawHandle, BorrowedHandle, FromRawHandle, OwnedHandle};
+use std::os::windows::process::CommandExt;
+use std::path::Path;
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use portable_pty::ChildKiller;
 use windows_sys::Win32::Foundation::{DuplicateHandle, ERROR_ACCESS_DENIED, ERROR_INVALID_HANDLE};
-use windows_sys::Win32::System::Threading::{GetCurrentProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+use windows_sys::Win32::System::JobObjects::IsProcessInJob;
+use windows_sys::Win32::System::Threading::{
+    CREATE_NO_WINDOW, CREATE_SUSPENDED, GetCurrentProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+};
 
 use super::*;
 use crate::{Actor, ActorConfig, ActorHandle, Command};
@@ -278,6 +284,54 @@ fn a_missing_program_is_refused_naming_it_as_written() {
     for debug_text in [r"\\", r"\0", "Some(", "CreateProcessW"] {
         assert!(!shown.contains(debug_text), "{debug_text} in {shown}");
     }
+}
+
+/// Whether `child`'s process is in its job.
+fn in_its_job(child: &Child) -> bool {
+    let process = child.process().expect("the child's process handle");
+    let mut inside = 0;
+    // SAFETY: passes handles the child keeps open and a live local for the answer.
+    let asked = unsafe { IsProcessInJob(process.as_raw_handle(), child.job().as_raw_handle(), &raw mut inside) };
+    assert_ne!(asked, 0, "{}", io::Error::last_os_error());
+    inside != 0
+}
+
+/// A process killed and waited for once dropped, so a failed test leaves none behind.
+struct Ended(std::process::Child);
+
+impl Drop for Ended {
+    fn drop(&mut self) {
+        // a process that ended already refuses the kill; the wait reaps it either way
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// A packaged app (MSIX, here winget's App Execution Alias, where the system has it) starts on a pseudoconsole, in
+/// its pane's job, while another process of its package runs: the package's processes share one job, which refused
+/// the pane's job given at creation (nickalie/ngterm#19). The other process is one started suspended outside every
+/// pane, so it runs until the test ends it.
+#[test]
+fn a_packaged_app_starts_while_another_process_of_its_package_runs() {
+    let local = std::env::var_os("LOCALAPPDATA").unwrap_or_default();
+    let alias = Path::new(&local).join(r"Microsoft\WindowsApps\winget.exe");
+    // the alias itself, a reparse point, not the packaged program it names
+    if std::fs::symlink_metadata(&alias).is_err() {
+        eprintln!("skipped: no winget App Execution Alias at {}", alias.display());
+        return;
+    }
+    let _other = Ended(
+        std::process::Command::new(&alias)
+            .arg("--version")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_SUSPENDED | CREATE_NO_WINDOW)
+            .spawn()
+            .expect("winget, suspended"),
+    );
+    let running = run(alias.to_str().expect("a UTF-8 path"), &["--version"]);
+    assert!(in_its_job(&running.child), "the packaged app is outside its pane's job");
 }
 
 /// A console whose pipes were taken already makes no master.
