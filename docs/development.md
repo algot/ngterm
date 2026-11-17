@@ -1130,12 +1130,14 @@ scripts/test-ios-e2e.sh [--device phone|tablet] [TEST...]   # the UI tests that 
 - `lint` is SwiftLint (`--strict`, with its analyzer rules), `swift format lint --strict` and a check that every
   `swiftlint:disable:next` gives its reason; the compiler adds Swift 6 with complete concurrency checking and
   warnings as errors. A finding is fixed in the code: there are no baselines.
-- `test` runs on the pinned `ngterm-phone` and `ngterm-tablet` simulators, one after the other. The UI tests drive
-  the app on a fake core (Debug builds only; `archive` checks the Release build doesn't hold it). A UI test that fails
-  runs once more, for XCTest gives up on the app now and then on CI's virtual Macs ("Failed to terminate", "does not
-  have a process ID", "Timed out while evaluating UI query"). A test that passed on its retry is named after the run
-  with what failed it, red runs included: as a warning when its first attempt failed on those alone, and otherwise
-  as a flaky test that fails the run. CI keeps the result bundles and attachments of any run that retried a test.
+- `test` runs on the pinned `ngterm-phone` and `ngterm-tablet` simulators, one after the other: each boots right
+  before its run and shuts down before the next one boots, so a CI Mac (3 CPUs, 7 GB) never has two booted. The UI
+  tests drive the app on a fake core (Debug builds only; `archive` checks the Release build doesn't hold it). A UI
+  test that fails runs once more, for XCTest gives up on the app now and then on CI's virtual Macs ("Failed to
+  terminate", "does not have a process ID", "Timed out while evaluating UI query"). A test that passed on its retry
+  is named after the run with what failed it, red runs included: as a warning when its first attempt failed on those
+  alone, and otherwise as a flaky test that fails the run. CI keeps the result bundles and attachments of any run
+  that retried a test.
 - CI runs the plans as parallel jobs over one build of the core (`.github/workflows/ios.yml`): `--prebuilt-core`
   takes the XCFramework and bindings a `--no-xcode` run left in `Generated/`, `--device phone|tablet` keeps a plan
   to one simulator, and `--ui-shard K/N` to the K-th of N shares of the UI test classes (the last share skips what

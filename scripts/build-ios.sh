@@ -28,13 +28,14 @@
 #      none of them. Each runs even when an earlier one failed, and the action fails when any did;
 #    - build: the app, its tests and its packages for the simulator (Debug);
 #    - test: the Unit and then the UI test plan on the pinned phone and tablet simulators (IOS_SIM_PHONE_NAME and
-#      IOS_SIM_TABLET_NAME, made by setup-ios.sh), one at a time, each with its keyboard's slide-to-type introduction
-#      marked as shown (it would cover the keys the UI tests tap); result bundles in mobile/ios/build/, and a failed
-#      snapshot's image in mobile/ios/build/snapshot-failures/ (its diff is in the result bundle). The Unit plan
-#      measures line coverage of the app's own code (Unit.xctestplan names the targets): scripts/ios-coverage.py
-#      writes its summary beside the result bundle (Unit.coverage.txt and Unit.coverage.json, from the run's
-#      profiles merged into Unit.profdata) and, after the UI plan, fails the action when a target is below its floor
-#      in mobile/ios/coverage-floors.txt. Each plan's run ends with its tests counted per simulator and its test
+#      IOS_SIM_TABLET_NAME, made by setup-ios.sh), one at a time (each boots right before its run, and shuts down
+#      before the next one boots), each with its keyboard's slide-to-type introduction marked as shown (it would
+#      cover the keys the UI tests tap); result bundles in mobile/ios/build/, and a failed snapshot's image in
+#      mobile/ios/build/snapshot-failures/ (its diff is in the result bundle). The Unit plan measures line coverage
+#      of the app's own code (Unit.xctestplan names the targets): scripts/ios-coverage.py writes its summary beside
+#      the result bundle (Unit.coverage.txt and Unit.coverage.json, from the run's profiles merged into
+#      Unit.profdata) and, after the UI plan, fails the action when a target is below its floor in
+#      mobile/ios/coverage-floors.txt. Each plan's run ends with its tests counted per simulator and its test
 #      classes' times;
 #    - coverage: the Unit plan alone on both simulators, its coverage summary and the floor check, as test measures
 #      them;
@@ -359,30 +360,49 @@ quiet_keyboard_introduction() {
 
 # Run test plan $1 on the phone and tablet simulators, one after the other (or on --device's alone), into
 # mobile/ios/build/$1.xcresult, with xcodebuild's options $2... (the UI plan's retry and shard), then count its tests
-# (report_test_counts); its status is xcodebuild's.
+# (report_test_counts); its status is that of the runs.
+#
+# Only one simulator runs at a time: each boots right before its own xcodebuild run, and shuts down before the next
+# one boots. A CI Mac has 3 CPUs and 7 GB; a new simulator's first boot alone took it to a load of 800, 1 GB of swap
+# and 97 s stalls (a UI leg of ios run 44064367405), and the unit job, with both simulators booted for its whole run,
+# twice went silent until its job timeout (d0bd06ee, 9a986aa3). Each run writes its own result bundle,
+# $1-<simulator>.xcresult (CI uploads it if the job ends before the merge); xcresulttool merges two into $1.xcresult,
+# and one is moved there.
 run_test_plan() {
-  local plan="$1" name udid destinations=() status=0
+  local plan="$1" name udid booted="" status=0 bundle bundles=()
   shift
+  mkdir -p "$BUILD_DIR"
+  # a failed snapshot's image goes to snapshot-failures/<test file>/ (xcodebuild hands TEST_RUNNER_* to the test
+  # processes without the prefix; the simulator's processes write the Mac's paths), its diffs into the result bundle
+  export TEST_RUNNER_SNAPSHOT_ARTIFACTS="$BUILD_DIR/snapshot-failures"
+  # the profiles of this plan's runs only: each simulator's are in Build/ProfileData/<its UDID>/, and a later run
+  # leaves an earlier one's in place
+  rm -rf "${BUILD_DIR:?}/$plan.xcresult" "${BUILD_DIR:?}/$plan-"*.xcresult "${DERIVED_DATA:?}/Build/ProfileData"
   for name in "$IOS_SIM_PHONE_NAME" "$IOS_SIM_TABLET_NAME"; do
     case "$DEVICE" in
       phone) [[ "$name" == "$IOS_SIM_PHONE_NAME" ]] || continue ;;
       tablet) [[ "$name" == "$IOS_SIM_TABLET_NAME" ]] || continue ;;
     esac
+    if [[ -n "$booted" ]]; then
+      xcrun simctl shutdown "$booted" || die "couldn't shut down simulator $booted before the next one boots"
+    fi
     # found, made again when it is gone, and booted right before the run: a CI Mac's simulators can still come and go
     udid="$("$NATIVE_ROOT/scripts/setup-ios.sh" --simulator "$name")" ||
       die "the $name simulator on iOS $IOS_SIMULATOR_RUNTIME is not ready (see above)"
+    booted="$udid"
     quiet_keyboard_introduction "$udid"
-    destinations+=(-destination "id=$udid")
+    bundle="$BUILD_DIR/$plan-$name.xcresult"
+    project_xcodebuild test -scheme NgTerm -configuration Debug -testPlan "$plan" -destination "id=$udid" \
+      -parallel-testing-enabled NO -resultBundlePath "$bundle" "$@" -quiet || status=$?
+    [[ ! -d "$bundle" ]] || bundles+=("$bundle")
   done
-  mkdir -p "$BUILD_DIR"
-  # a failed snapshot's image goes to snapshot-failures/<test file>/ (xcodebuild hands TEST_RUNNER_* to the test
-  # processes without the prefix; the simulator's processes write the Mac's paths), its diffs into the result bundle
-  export TEST_RUNNER_SNAPSHOT_ARTIFACTS="$BUILD_DIR/snapshot-failures"
-  # the profiles of this run only: each simulator's are in Build/ProfileData/<its UDID>/
-  rm -rf "$BUILD_DIR/$plan.xcresult" "$DERIVED_DATA/Build/ProfileData"
-  project_xcodebuild test -scheme NgTerm -configuration Debug -testPlan "$plan" \
-    "${destinations[@]}" -disable-concurrent-destination-testing \
-    -parallel-testing-enabled NO -resultBundlePath "$BUILD_DIR/$plan.xcresult" "$@" -quiet || status=$?
+  if ((${#bundles[@]} > 1)); then
+    xcrun xcresulttool merge "${bundles[@]}" --output-path "$BUILD_DIR/$plan.xcresult" ||
+      die "couldn't merge the $plan plan's result bundles (they stay beside it)"
+  elif ((${#bundles[@]} == 1)); then
+    mv "${bundles[0]}" "$BUILD_DIR/$plan.xcresult"
+  fi
+  rm -rf "${BUILD_DIR:?}/$plan-"*.xcresult
   report_test_counts "$plan" "$BUILD_DIR/$plan.xcresult"
   return "$status"
 }
