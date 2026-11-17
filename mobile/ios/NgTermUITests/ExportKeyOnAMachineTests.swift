@@ -1,0 +1,354 @@
+import XCTest
+
+/// A key's export on a real machine, through the app's real core and the simulator's own owner check
+/// (mobile/android's `KeyExport*E2eTest`s).
+///
+/// From a fresh install a person imports their key with its passphrase and adds the machine, which reads Connected.
+/// In Settings, Export private key asks the device's owner first: a face or finger that doesn't match, then Cancel,
+/// opens nothing; a match opens the export. It shows the key's fingerprint, refuses a passphrase too short, and saves
+/// the key under a passphrase through the system's file screen, as an encrypted OpenSSH private key. Export without a
+/// passphrase warns and asks once more; Copy then puts the key on the clipboard as a concealed item, which leaving the
+/// page clears. Then, after the app is installed anew (the
+/// second test), Import a key reads that file back: a wrong passphrase is refused, the right one gives the same key,
+/// and the same machine signs it in again.
+///
+/// The machine is a private `ngterm-headless` behind a private, unprivileged `sshd` on the Mac's 127.0.0.1, which
+/// trusts only the machine's key: `scripts/test-ios-e2e.sh` starts it, installs the app anew before each test and
+/// hands the machine to the test through the test runner's environment. Run the two tests in one run of the script,
+/// in their order (`ExportKeyOnAMachineTests/testA… ExportKeyOnAMachineTests/testB…`): the second reads the file the
+/// first saved. Without a machine both are skipped.
+internal final class ExportKeyOnAMachineTests: XCTestCase {
+    // the passphrase the export is saved under, and one a character too short
+    private static let passphrase = "qa-export-7kq2-ladder"
+    private static let short = "qa-7kq2"
+    private static let wrong = "qa-wrong-7kq2-ladder"
+    private static let opensshHeader = "-----BEGIN OPENSSH PRIVATE KEY-----"
+    private static let concealedType = "org.nspasteboard.ConcealedType"
+    private static let firstLabel = "qa-export-mac"
+    private static let secondLabel = "qa-import-mac"
+    private static let wait: TimeInterval = 30
+    private static let connectWait: TimeInterval = 60
+    private static let offerWait: TimeInterval = 5
+    private static let beat: TimeInterval = 1
+    // how long a switch is held: a plain tap on a form's switch can miss
+    private static let switchPress: TimeInterval = 0.6
+    private static let tries = 3
+    // how many swipes a row far down the form may take to come into view
+    private static let swipes = 12
+    // how many times a face or finger is shown before the system's prompt is known to be up
+    private static let looks = 10
+    // how often, and how many times at most, the file screen's Save is read while it settles
+    private static let settleBeat: TimeInterval = 0.5
+    private static let settleReads = 20
+    private static let springboardIdentifier = "com.apple.springboard"
+
+    private static func pause(_ seconds: TimeInterval) {
+        _ = XCTWaiter.wait(for: [XCTestExpectation(description: "a beat")], timeout: seconds)
+    }
+
+    @MainActor
+    internal func testAOnARealMachineAKeyIsExportedBehindTheOwnerCheckUnderAPassphrase() throws {
+        let machine = try E2EMachine.fromEnvironment()
+        ExportedKeyFiles.removeAll()
+        Biometrics.enroll(for: self)
+        let app = launch()
+        signIn(with: machine, in: app)
+        addMachine(machine, label: Self.firstLabel, in: app)
+        app.buttons["settings"].tap()
+        FakeApp.expect(app.navigationBars["Settings"], "Settings")
+
+        // a face or finger that doesn't match, then Cancel: nothing opens
+        tapExport(in: app)
+        refuseOwnerCheck()
+        Self.pause(Self.beat)
+        XCTAssertFalse(app.navigationBars["Export private key"].exists, "a refused check opened the export")
+        shot("refused", app)
+
+        // a match opens the export, which shows the key's fingerprint
+        tapExport(in: app)
+        passOwnerCheck(in: app)
+        let page = app.scrollViews["export-key-page"]
+        FakeApp.expect(page, "the export page")
+        FakeApp.expect(FakeApp.element(containing: machine.fingerprint, in: app), "the key's fingerprint")
+
+        // nothing is saved under a passphrase too short
+        typePassphrase(Self.short, in: app)
+        app.buttons["export-save"].tap()
+        FakeApp.expect(FakeApp.element(containing: "Use at least 8 characters.", in: app), "the short passphrase")
+        XCTAssertFalse(app.buttons["DOCPicker.actionButton"].exists, "a short passphrase opened the file screen")
+        shot("short", app)
+
+        typePassphrase(Self.passphrase, in: app)
+        app.buttons["export-save"].tap()
+        awaitFileScreen(in: app).tap()
+        expectFileScreenGone(in: app)
+        FakeApp.expect(app.staticTexts["Saved"], "that the key was saved")
+        assertSavedFileIsAnEncryptedOpenSSHKey()
+
+        // without a passphrase only past the switch's warning and one more question; Copy then puts the key on the
+        // clipboard as a concealed item, and leaving the page clears it
+        let unprotected = app.switches["export-unprotected"]
+        let isOn = NSPredicate(format: "value == '1'")
+        for _ in 0..<Self.tries where unprotected.value as? String != "1" {
+            unprotected.switches.firstMatch.press(forDuration: Self.switchPress)
+            _ = XCTWaiter.wait(
+                for: [XCTNSPredicateExpectation(predicate: isOn, object: unprotected)],
+                timeout: Self.offerWait
+            )
+        }
+        XCTAssertEqual(unprotected.value as? String, "1", "Export without a passphrase never turned on")
+        FakeApp.expect(app.staticTexts["The exported key won't be encrypted"], "the warning")
+        XCTAssertFalse(app.secureTextFields["export-passphrase"].exists)
+        app.buttons["export-copy"].tap()
+        FakeApp.expect(app.staticTexts["Export without a passphrase?"], "the last question")
+        XCTAssertFalse(app.staticTexts["Copied"].exists, "the key was copied before the last question was answered")
+        shot("last-question", app)
+        app.buttons["Export without a passphrase"].firstMatch.tap()
+        FakeApp.expect(app.staticTexts["Copied"], "that the key was copied")
+        XCTAssertTrue(UIPasteboard.general.types.contains(Self.concealedType), "the copied key is not concealed")
+        app.navigationBars["Export private key"].buttons.element(boundBy: 0).tap()
+        FakeApp.expect(app.navigationBars["Settings"], "Settings again")
+        let cleared = NSPredicate { _, _ in !UIPasteboard.general.types.contains(Self.concealedType) }
+        let gone = XCTWaiter.wait(
+            for: [XCTNSPredicateExpectation(predicate: cleared, object: nil)],
+            timeout: Self.offerWait
+        )
+        XCTAssertEqual(gone, .completed, "the copied key stayed on the clipboard after the page was left")
+    }
+
+    @MainActor
+    internal func testBAfterAReinstallTheExportedFileImportsBackAndSignsInToTheSameMachine() throws {
+        let machine = try E2EMachine.fromEnvironment()
+        addTeardownBlock {
+            ExportedKeyFiles.removeAll()
+        }
+        XCTAssertFalse(
+            ExportedKeyFiles.saved().isEmpty,
+            "no exported file: run testA first, in the same run of the script"
+        )
+        let app = launch()
+        let start = app.buttons["import-key"]
+        FakeApp.expect(start, "the welcome's Import a key: is the install fresh?")
+        start.tap()
+        app.buttons["Choose file"].tap()
+        let file = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label BEGINSWITH %@", ExportedKeyFiles.name))
+            .firstMatch
+        FakeApp.expect(file, "the exported file in the system's file screen")
+        file.tap()
+        FakeApp.expect(
+            FakeApp.element(containing: "This key is protected: enter its passphrase.", in: app),
+            "that the file is under a passphrase"
+        )
+
+        // a wrong passphrase is refused, and the key stays out
+        let field = app.secureTextFields["passphrase"]
+        field.tap()
+        field.typeText(Self.wrong + "\n")
+        app.buttons["import-key-action"].tap()
+        FakeApp.expect(
+            FakeApp.element(containing: "That passphrase doesn't open this key.", in: app),
+            "that the wrong passphrase was refused"
+        )
+        XCTAssertFalse(app.descendants(matching: .any)["public-key-page"].firstMatch.exists)
+        shot("wrong-passphrase", app)
+
+        field.tap()
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: Self.wrong.count))
+        field.typeText(Self.passphrase + "\n")
+        app.buttons["import-key-action"].tap()
+        FakeApp.expect(app.descendants(matching: .any)["public-key-page"].firstMatch, "the imported key's public half")
+        FakeApp.expect(FakeApp.element(containing: machine.fingerprint, in: app), "the exported key's fingerprint")
+        closePublicKey(in: app)
+
+        // the machine, which trusts only this key, signs it in
+        addMachine(machine, label: Self.secondLabel, in: app)
+        shot("connected-again", app)
+    }
+
+    // the app on its real core; an iPad on its side, as the other UI tests hold it
+    @MainActor
+    private func launch() -> XCUIApplication {
+        let isPad = UIDevice.current.userInterfaceIdiom == .pad
+        if isPad {
+            XCUIDevice.shared.orientation = .landscapeLeft
+            addTeardownBlock { @MainActor in
+                XCUIDevice.shared.orientation = .portrait
+            }
+        }
+        let app = XCUIApplication()
+        app.launchArguments = []
+        app.launch()
+        return app
+    }
+
+    // the welcome's Import a key, with the machine's key and its passphrase, to its public half, then Done
+    @MainActor
+    private func signIn(with machine: E2EMachine, in app: XCUIApplication) {
+        let start = app.buttons["import-key"]
+        FakeApp.expect(start, "the welcome's Import a key: is the install fresh?")
+        start.tap()
+        let field = app.textViews["private-key"]
+        FakeApp.expect(field, "the private key's field")
+        field.tap()
+        field.typeText(machine.key.trimmingCharacters(in: .whitespacesAndNewlines))
+        let secret = app.secureTextFields["passphrase"]
+        secret.tap()
+        secret.typeText(machine.passphrase + "\n")
+        app.buttons["import-key-action"].tap()
+        FakeApp.expect(app.descendants(matching: .any)["public-key-page"].firstMatch, "the imported key's public half")
+        closePublicKey(in: app)
+    }
+
+    // the public key page's Done, past the offer to keep the passphrase in Passwords
+    @MainActor
+    private func closePublicKey(in app: XCUIApplication) {
+        let notNow = app.buttons["Not Now"]
+        if notNow.waitForExistence(timeout: Self.offerWait) {
+            notNow.tap()
+        }
+        // a tap while the offer goes can reach nothing: tap Done again until the page goes
+        let page = app.descendants(matching: .any)["public-key-page"].firstMatch
+        let done = app.buttons["key-done"]
+        FakeApp.expect(done, "the public key page's Done")
+        for _ in 0..<Self.tries where page.exists {
+            done.tap()
+            _ = page.waitForNonExistence(timeout: Self.offerWait)
+        }
+        XCTAssertFalse(page.exists, "the public key page stayed after Done")
+    }
+
+    // the machine through the form, its host key trusted, connected
+    @MainActor
+    private func addMachine(_ machine: E2EMachine, label: String, in app: XCUIApplication) {
+        FakeApp.showMachines(in: app)
+        app.buttons["add-machine"].tap()
+        E2EMachine.fill("machine-label", with: label, in: app)
+        E2EMachine.fill("machine-host", with: machine.host, in: app)
+        E2EMachine.fill("machine-port", with: machine.port, in: app)
+        E2EMachine.fill("machine-user", with: machine.user, in: app)
+        app.buttons["machine-save"].tap()
+        let trust = app.buttons["trust-host-key"]
+        FakeApp.expect(trust, "the host key sheet")
+        trust.tap()
+        let row = NSPredicate(format: "identifier == %@ AND label CONTAINS 'Connected'", "machine-row-\(label)")
+        let connected = app.descendants(matching: .any).matching(row).firstMatch
+        XCTAssertTrue(connected.waitForExistence(timeout: Self.connectWait), "the machine never read Connected")
+    }
+
+    // Settings' Export private key of the app's one key, tapped
+    @MainActor
+    private func tapExport(in app: XCUIApplication) {
+        let export = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'export-key-'")).firstMatch
+        let form = app.collectionViews["settings-form"]
+        for _ in 0..<Self.swipes where !(export.exists && export.isHittable) {
+            form.swipeUp()
+        }
+        XCTAssertTrue(export.isHittable, "Export private key never came into view")
+        export.tap()
+    }
+
+    // allows the app Face ID, the first time it asks (Touch ID asks nothing)
+    @MainActor
+    private func allowBiometrics() {
+        let allow = XCUIApplication(bundleIdentifier: Self.springboardIdentifier).alerts.buttons["OK"]
+        if allow.waitForExistence(timeout: Self.offerWait) {
+            allow.tap()
+        }
+    }
+
+    // the system's prompt shown a face or finger that doesn't match, then cancelled
+    @MainActor
+    private func refuseOwnerCheck() {
+        allowBiometrics()
+        let cancel = XCUIApplication(bundleIdentifier: Self.springboardIdentifier).buttons["Cancel"].firstMatch
+        for _ in 0..<Self.looks where !cancel.exists {
+            Self.pause(Self.beat)
+            Biometrics.noMatch()
+        }
+        FakeApp.expect(cancel, "the system prompt's Cancel")
+        cancel.tap()
+    }
+
+    // the system's prompt shown a matching face or finger, until the export opens
+    @MainActor
+    private func passOwnerCheck(in app: XCUIApplication) {
+        allowBiometrics()
+        let page = app.navigationBars["Export private key"]
+        for _ in 0..<Self.looks where !page.exists {
+            Self.pause(Self.beat)
+            Biometrics.match()
+        }
+        FakeApp.expect(page, "the export page after a match")
+    }
+
+    // types the passphrase into both fields, each emptied first, closing the keyboard after the second
+    @MainActor
+    private func typePassphrase(_ passphrase: String, in app: XCUIApplication) {
+        for identifier in ["export-passphrase", "export-passphrase-again"] {
+            let field = app.secureTextFields[identifier]
+            FakeApp.expect(field, identifier)
+            field.tap()
+            let old = (field.value as? String ?? "").count
+            if old > 0, field.value as? String != field.placeholderValue {
+                field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: old))
+            }
+            field.typeText(passphrase + (identifier.hasSuffix("again") ? "\n" : ""))
+            // a secure field reads as a dot for each character it holds
+            XCTAssertEqual((field.value as? String)?.count, passphrase.count, "\(identifier) holds another text")
+        }
+    }
+
+    // waits for the system's file screen to take taps: its Save enabled and still
+    @MainActor
+    private func awaitFileScreen(in app: XCUIApplication) -> XCUIElement {
+        let place = app.buttons["DOCPicker.actionButton"]
+        FakeApp.expect(place, "the system's file screen")
+        var before = CGRect.null
+        for _ in 0..<Self.settleReads {
+            let now = place.frame
+            if place.isEnabled, place.isHittable, now == before {
+                break
+            }
+            before = now
+            Self.pause(Self.settleBeat)
+        }
+        return place
+    }
+
+    // waits for the system's file screen to go, the export screen taking taps again
+    @MainActor
+    private func expectFileScreenGone(in app: XCUIApplication) {
+        let gone = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "isHittable == true"),
+            object: app.buttons["export-copy"]
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [gone], timeout: Self.wait), .completed, "the file screen stayed")
+    }
+
+    // the one saved file is an OpenSSH private key under a cipher, never in the clear; only its cipher is reported
+    private func assertSavedFileIsAnEncryptedOpenSSHKey() {
+        let files = ExportedKeyFiles.saved()
+        XCTAssertEqual(files.count, 1, "the export saved \(files.count) files")
+        guard let file = files.first, let text = try? String(contentsOf: file, encoding: .utf8) else {
+            XCTFail("the saved file can't be read")
+            return
+        }
+        XCTAssertTrue(text.hasPrefix(Self.opensshHeader), "the saved file is not an OpenSSH private key")
+        let cipher = ExportedKeyFiles.cipher(of: text)
+        XCTAssertNotNil(cipher, "the saved file's OpenSSH body can't be read")
+        XCTAssertNotEqual(cipher, "none", "the key was saved in the clear")
+    }
+
+    @MainActor
+    private func shot(_ name: String, _ app: XCUIApplication) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    deinit {
+        // nothing to release: XCTest owns the app it launched
+    }
+}
