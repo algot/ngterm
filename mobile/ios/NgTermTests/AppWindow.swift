@@ -61,8 +61,11 @@ internal enum AppWindow {
         try #require(condition(), what)
     }
 
-    /// What `call` returns, waited for as ``until(_:)`` waits: a call that never returns fails the test with `what`
-    /// and is cancelled, so a resume that never comes costs seconds, not the whole run.
+    /// What `call` returns, waited for as ``until(_:)`` waits: a call that never returns fails the test with `what`,
+    /// so a resume that never comes costs seconds, not the whole run. The task that runs `call` is then cancelled,
+    /// but the cancel stops only work that looks for it: a wait on a continuation with no cancellation handler (the
+    /// fakes' cues) or on another task's `value` stays suspended until the test process ends. A suspended task does
+    /// not keep the process alive, so this leaks the held work and does not hold the run.
     internal static func value<Value>(
         _ what: Comment,
         of call: @escaping @MainActor () async throws -> Value
