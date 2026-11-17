@@ -216,20 +216,12 @@ internal final class LogsOnAMachineTests: XCTestCase {
         secret.typeText(machine.passphrase + "\n")
         app.buttons["import-key-action"].tap()
         FakeApp.expect(app.descendants(matching: .any)["public-key-page"].firstMatch, "the imported key's public half")
-        // a phone offers to keep the passphrase in Passwords, over the page
-        let notNow = app.buttons["Not Now"]
-        if notNow.waitForExistence(timeout: LogsPage.offerWait) {
-            notNow.tap()
-        }
-        // a tap while the offer goes can reach nothing: tap Done again until the page goes
+        // the system's offer to keep the passphrase in Passwords comes at no fixed time, and takes the next tap
         let page = app.descendants(matching: .any)["public-key-page"].firstMatch
         let done = app.buttons["key-done"]
         FakeApp.expect(done, "the public key page's Done")
-        for _ in 0..<LogsPage.tries where page.exists {
-            done.tap()
-            _ = page.waitForNonExistence(timeout: LogsPage.offerWait)
-        }
-        XCTAssertFalse(page.exists, "the public key page stayed after Done")
+        let closed = LogsPage.tap(done, until: { !page.exists }, in: app, "the public key page stayed after Done")
+        LogsPage.closeLateOffer(unless: closed, in: app)
     }
 
     // the machine through the form, its host key trusted, connected

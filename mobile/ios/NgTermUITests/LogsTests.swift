@@ -152,9 +152,11 @@ internal final class LogsTests: XCTestCase {
         FakeApp.expect(app.descendants(matching: .any)["public-key-page"].firstMatch, "the imported key's public half")
         // the system's offer to keep the passphrase in Passwords comes at no fixed time, and takes the next tap
         let done = app.buttons["settings-done"]
-        LogsPage.tap(app.buttons["BackButton"].firstMatch, until: { done.exists }, in: app, "no Settings' Done")
+        let back = app.buttons["BackButton"].firstMatch
+        let closedOnBack = LogsPage.tap(back, until: { done.exists }, in: app, "no Settings' Done")
         let settings = app.navigationBars["Settings"]
-        LogsPage.tap(done, until: { !settings.exists }, in: app, "Settings stayed")
+        let closedOnDone = LogsPage.tap(done, until: { !settings.exists }, in: app, "Settings stayed")
+        LogsPage.closeLateOffer(unless: closedOnBack || closedOnDone, in: app)
     }
 
     // a message to `work`'s agent, then text typed into its terminal; the log gains fewer lines over the typing than

@@ -78,29 +78,60 @@ internal enum LogsPage {
     /// After a key's import with its passphrase, the system offers to keep the passphrase in Passwords. The offer
     /// comes at no fixed time: on a loaded simulator it came 11 s after the import, over Settings. A tap while the
     /// offer shows or closes reaches only the offer. The tap is then tried again, while `control` is on screen.
-    /// `isDone` reads the app on each poll.
+    /// `isDone` reads the app on each poll. An offer that shows when `isDone` holds is closed before the return,
+    /// because it takes the next tap. Returns true when it closed an offer.
     @MainActor
+    @discardableResult
     internal static func tap(
         _ control: XCUIElement,
         until isDone: @escaping () -> Bool,
         in app: XCUIApplication,
         _ what: String
-    ) {
+    ) -> Bool {
         let offer = app.buttons[offerDismiss]
         let next = NSPredicate { _, _ in isDone() || offer.exists }
+        var closed = false
         for _ in 0..<tries where !isDone() {
-            // a tap on Not Now while the offer comes in reaches nothing: tap it again while the offer stays
-            for _ in 0..<tries where offer.exists {
-                offer.tap()
-                _ = offer.waitForNonExistence(timeout: offerWait)
-            }
+            closed = closeOffer(in: app, within: 0) || closed
             // a control that went off screen did its work: wait for it
             if !isDone(), control.exists, control.isHittable {
                 control.tap()
             }
             _ = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: next, object: nil)], timeout: wait)
         }
+        closed = closeOffer(in: app, within: 0) || closed
         XCTAssertTrue(isDone(), what)
+        return closed
+    }
+
+    /// Closes the system's offer to keep a password, if it comes until `timeout` ends.
+    ///
+    /// Returns true when it closed an offer.
+    @MainActor
+    @discardableResult
+    private static func closeOffer(in app: XCUIApplication, within timeout: TimeInterval) -> Bool {
+        let offer = app.buttons[offerDismiss]
+        guard offer.exists || (timeout > 0 && offer.waitForExistence(timeout: timeout)) else {
+            return false
+        }
+        // a tap on Not Now while the offer comes in reaches nothing: tap it again while the offer stays
+        for _ in 0..<tries where offer.exists {
+            offer.tap()
+            _ = offer.waitForNonExistence(timeout: offerWait)
+        }
+        XCTAssertFalse(offer.exists, "the offer to keep the passphrase stayed after \(tries) taps on \(offerDismiss)")
+        return true
+    }
+
+    /// Closes the offer to keep the imported key's passphrase if it comes after the import's last tap.
+    ///
+    /// The system makes the offer one time for each import. When the import's taps closed no offer, it can still
+    /// come, and take a tap of the steps after the import: wait for it until `wait` ends.
+    @MainActor
+    internal static func closeLateOffer(unless closed: Bool, in app: XCUIApplication) {
+        if !closed {
+            closeOffer(in: app, within: wait)
+        }
     }
 
     /// Settings open, then Logs.
