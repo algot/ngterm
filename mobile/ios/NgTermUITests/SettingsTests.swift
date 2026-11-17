@@ -19,12 +19,17 @@ internal final class SettingsTests: XCTestCase {
         return app
     }
 
-    // swipes the form up until `element` is on screen
+    // swipes the form until `element` is on screen: up, or down while it is above the form's middle
     @MainActor
     private func scroll(to element: XCUIElement, in app: XCUIApplication) {
         let form = app.collectionViews["settings-form"]
         for _ in 0..<Self.swipes where !(element.exists && element.isHittable) {
-            form.swipeUp()
+            // a row the list already holds can be above its view (under the navigation bar after a Back): bring it down
+            if element.exists, element.frame.midY < form.frame.midY {
+                form.swipeDown()
+            } else {
+                form.swipeUp()
+            }
         }
         XCTAssertTrue(element.isHittable, "\(element) never came into view")
     }
