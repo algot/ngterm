@@ -516,8 +516,8 @@ Windows, the HTML clipboard offer, per-MIME clipboard access, xdg-output geometr
 `scripts/vendor-calloop.sh` and `scripts/vendor-gpui.sh` (`--check` compares, as CI does; `vendor-gpui.sh --diff`
 turns edits under `vendor/` back into the patch files). `vendor/portable-pty` (the PTY and child under `ngterm-pty`:
 ConPTY from kernel32 only, herdr's fixes for malformed Windows environments and directories on `PATH`, the child
-created in its job, a ConPTY session's handles exported and imported for the session server's update handoff) is
-the same, through `scripts/vendor-portable-pty.sh` (`--check`, `--diff`), and so is
+started suspended and assigned to its job before it runs, a ConPTY session's handles exported and imported for the
+session server's update handoff) is the same, through `scripts/vendor-portable-pty.sh` (`--check`, `--diff`), and so is
 `vendor/accesskit_atspi_common` (AccessKit's AT-SPI mapping: a disabled control without Enabled, a menu button's
 role), through `scripts/vendor-accesskit-atspi.sh`, and `vendor/accesskit_windows` (AccessKit's UI Automation
 mapping: a highlighted menu item keeps its Invoke pattern), through `scripts/vendor-accesskit-windows.sh`.

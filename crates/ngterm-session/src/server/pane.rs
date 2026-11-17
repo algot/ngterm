@@ -16,10 +16,11 @@
 //!   output stream, under the lock that feeds the terminal (the pane's one serialization point);
 //! - the shutdown signals the child's process group through `ngterm-pty`'s [`Killer`] and, on Unix, every other
 //!   process of its session (herdr's session process list, [`crate::job::session_members`]), so a job-controlling
-//!   shell's jobs in groups of their own are reached too; on Windows the child's job, its whole tree. A hangup, then
-//!   a kill after [`KILL_GRACE`] or once the child, the PTY and the session's other processes ended (herdr's
-//!   terminate step dropped), the child left unreaped meanwhile, so its group and its session, which its id names,
-//!   are still reached once it exited and cannot be reused;
+//!   shell's jobs in groups of their own are reached too; on Windows the child's job, its whole tree (but a different
+//!   packaged app it started, see `ngterm-pty`'s Windows module). A hangup, then a kill after [`KILL_GRACE`] or
+//!   once the child, the PTY and the session's other processes ended (herdr's terminate step dropped), the child left
+//!   unreaped meanwhile, so its group and its session, which its id names, are still reached once it exited and
+//!   cannot be reused;
 //! - a kill reports whether the program ended, in place of herdr's grace after the kill: its exit seen within
 //!   [`TERMINATION_LIMIT`] of the first signal (a plain hangup on Unix, which the program may ignore, within
 //!   [`KILL_LIMIT`]), then its end recorded, which waits for the PTY from the exit, so a slow exit (a loaded Windows
@@ -1086,7 +1087,8 @@ impl Pane {
     /// End the session's program and its tree. Without `force`, a hangup to its process group, so a program or a
     /// member of its group that ignores it lives on; with `force`, [`Pane::end_tree`]'s hangup and then kill of the
     /// whole group and of every other process of its session, which ends those too. On Windows either ends the
-    /// program's job, its whole tree, at once.
+    /// program's job, its whole tree but a different packaged app it started (see `ngterm-pty`'s Windows module), at
+    /// once.
     /// Whether the program ended: its exit seen within [`TERMINATION_LIMIT`] of the first signal ([`KILL_LIMIT`] for
     /// a plain kill on Unix, which the program may ignore), and its end recorded after it, once the PTY ended or
     /// [`EXIT_GRACE`] after the exit, however late the exit came.

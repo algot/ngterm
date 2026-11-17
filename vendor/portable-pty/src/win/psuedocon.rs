@@ -13,15 +13,21 @@ use std::{mem, ptr};
 use winapi::shared::minwindef::{DWORD, HMODULE};
 use winapi::shared::winerror::{HRESULT, S_OK};
 use winapi::um::handleapi::*;
+use winapi::um::jobapi2::AssignProcessToJobObject;
 use winapi::um::libloaderapi::{GetModuleHandleW, GetProcAddress};
 use winapi::um::processthreadsapi::*;
 use winapi::um::winbase::{
-    CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT, STARTF_USESTDHANDLES, STARTUPINFOEXW,
+    CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT,
+    STARTF_USESTDHANDLES, STARTUPINFOEXW,
 };
 use winapi::um::wincon::COORD;
 use winapi::um::winnt::HANDLE;
 
 pub type HPCON = HANDLE;
+
+// PROCESS_CREATION_DESKTOP_APP_BREAKAWAY_DISABLE_PROCESS_TREE: a packaged
+// app's descendants are created in its package's job, not outside it.
+const DESKTOP_APP_DISABLE_PROCESS_TREE: DWORD = 0x2;
 
 pub const PSUEDOCONSOLE_INHERIT_CURSOR: DWORD = 0x1;
 pub const PSEUDOCONSOLE_RESIZE_QUIRK: DWORD = 0x2;
@@ -191,7 +197,9 @@ impl PsuedoCon {
     }
 
     /// Spawn `cmd` attached to this console and, with `job`, inside that job
-    /// object from its first instruction on.
+    /// object from its first instruction on: started suspended, assigned to
+    /// the job, then resumed, a packaged app with a desktop app policy that
+    /// keeps its descendants in the job.
     pub fn spawn_command_in_job(
         &self,
         cmd: CommandBuilder,
@@ -210,13 +218,15 @@ impl PsuedoCon {
         si.StartupInfo.hStdOutput = INVALID_HANDLE_VALUE;
         si.StartupInfo.hStdError = INVALID_HANDLE_VALUE;
 
-        // UpdateProcThreadAttribute keeps a pointer to the job list: it lives
+        // UpdateProcThreadAttribute keeps a pointer to the policy: it lives
         // until CreateProcessW below has returned.
-        let jobs: Vec<HANDLE> = job.into_iter().collect();
-        let mut attrs = ProcThreadAttributeList::with_capacity(1 + jobs.len() as DWORD)?;
+        let policy = DESKTOP_APP_DISABLE_PROCESS_TREE;
+        let mut attrs = ProcThreadAttributeList::with_capacity(1 + job.is_some() as DWORD)?;
         attrs.set_pty(self.con)?;
-        if !jobs.is_empty() {
-            attrs.set_job_list(&jobs)?;
+        if job.is_some() {
+            // a packaged child's descendants stay in its package's job, which
+            // the job nests under, and so in the job
+            attrs.set_desktop_app_policy(&policy)?;
         }
         si.lpAttributeList = attrs.as_mut_ptr();
 
@@ -227,6 +237,12 @@ impl PsuedoCon {
 
         let cwd = cmd.current_directory();
 
+        // With a job the child runs only once it is in the job, see below.
+        let mut flags = EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT;
+        if job.is_some() {
+            flags |= CREATE_SUSPENDED;
+        }
+
         let res = unsafe {
             CreateProcessW(
                 exe.as_mut_slice().as_mut_ptr(),
@@ -234,7 +250,7 @@ impl PsuedoCon {
                 ptr::null_mut(),
                 ptr::null_mut(),
                 0,
-                EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
+                flags,
                 cmd.environment_block().as_mut_slice().as_mut_ptr() as *mut _,
                 cwd.as_ref()
                     .map(|c| c.as_slice().as_ptr())
@@ -256,11 +272,39 @@ impl PsuedoCon {
 
         // Make sure we close out the thread handle so we don't leak it;
         // we do this simply by making it owned
-        let _main_thread = unsafe { OwnedHandle::from_raw_handle(pi.hThread as _) };
+        let main_thread = unsafe { OwnedHandle::from_raw_handle(pi.hThread as _) };
         let proc = unsafe { OwnedHandle::from_raw_handle(pi.hProcess as _) };
+
+        if let Some(job) = job {
+            // Assigned before its first instruction, every process it starts
+            // is in the job too (a packaged app's through the desktop app
+            // policy above). Not given at creation
+            // (PROC_THREAD_ATTRIBUTE_JOB_LIST): a packaged app is created in
+            // its package's job, which the package's other processes share,
+            // and a job list is then refused with ERROR_ACCESS_DENIED, while
+            // the empty `job` nests under it here.
+            if unsafe { AssignProcessToJobObject(job, proc.as_raw_handle() as _) } == 0 {
+                return Err(abandon(&proc, "AssignProcessToJobObject", &cmd_os));
+            }
+            if unsafe { ResumeThread(main_thread.as_raw_handle() as _) } == DWORD::MAX {
+                return Err(abandon(&proc, "ResumeThread", &cmd_os));
+            }
+        }
 
         Ok(WinChild {
             proc: Mutex::new(proc),
         })
     }
+}
+
+/// The error of a step after CreateProcessW that failed, once the suspended
+/// child it leaves is terminated: outside the job, nothing else would end it.
+/// Call it right after the failed step, before anything else sets the
+/// thread's last error.
+fn abandon(proc: &OwnedHandle, step: &str, cmd_os: &OsStr) -> Error {
+    let err = IoError::last_os_error();
+    unsafe { TerminateProcess(proc.as_raw_handle() as _, 1) };
+    let msg = format!("{} for `{:?}` failed", step, cmd_os);
+    log::error!("{}: {}", msg, err);
+    Error::new(err).context(msg)
 }

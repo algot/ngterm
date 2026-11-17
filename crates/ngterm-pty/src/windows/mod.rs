@@ -1,11 +1,15 @@
-//! The PTY on Windows: a pseudoconsole (`ConPTY`) through portable-pty, the child assigned as it is created to a job
-//! object that kills it and every process it starts once the job's last handle closes.
+//! The PTY on Windows: a pseudoconsole (`ConPTY`) through portable-pty, the child started suspended and assigned to a
+//! job object before it runs (`build/patches/portable-pty/0004`, `0010`), a job that kills it and every process it
+//! starts once the job's last handle closes. A packaged app's (MSIX: Store PowerShell) descendants stay in the job
+//! through its desktop app policy (`0010`) and run inside the package's runtime: its identity, and the file-system
+//! and registry virtualization its manifest asks for (PowerShell's turns both off). A different packaged app started
+//! from the pane activates in its own package's job, outside the pane's.
 //!
 //! herdr: `src/pty/backend.rs` (`spawn_with_portable_pty`, its Windows form) and `src/platform/windows.rs`
 //! (`StatusCommandGuard`'s kill-on-close job) at `HERDR_REV` (`build/pins.env`), licensed under the Apache License
-//! 2.0, modified: the child is created inside the job (`build/patches/portable-pty/0004`) instead of started
-//! suspended and assigned; the pipes are taken as owned handles (`0005`), so the actor holds what a handoff passes
-//! on; a master is rebuilt from handed-over handles.
+//! 2.0, modified: the suspended start and the assignment happen inside portable-pty, which closed the thread handle
+//! the resume needs; the pipes are taken as owned handles (`0005`), so the actor holds what a handoff passes on; a
+//! master is rebuilt from handed-over handles.
 
 mod actor;
 
@@ -71,7 +75,8 @@ impl Master {
     }
 }
 
-/// The child on a pseudoconsole, and the job that holds it and every process it starts.
+/// The child on a pseudoconsole, and the job that holds it and every process it starts (but a different packaged app,
+/// see the module doc).
 #[derive(Debug)]
 pub struct Child {
     inner: Box<dyn portable_pty::Child + Send + Sync>,
@@ -379,8 +384,12 @@ fn let_children_take_ctrl_c() {
 }
 
 pub(crate) fn spawn(builder: CommandBuilder, size: Size) -> io::Result<Spawned> {
+    spawn_in_job(builder, size, kill_on_close_job()?)
+}
+
+/// `spawn` into `job`: a test's copy of one without the right to assign a process to it shows a refused child ends.
+fn spawn_in_job(builder: CommandBuilder, size: Size, job: OwnedHandle) -> io::Result<Spawned> {
     let_children_take_ctrl_c();
-    let job = kill_on_close_job()?;
     let pair = ConPtySystem::default()
         .openpty(size.pty())
         .map_err(|err| pty_error(&err))?;

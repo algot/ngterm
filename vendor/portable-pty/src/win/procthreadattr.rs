@@ -4,12 +4,11 @@ use std::io::Error as IoError;
 use std::{mem, ptr};
 use winapi::shared::minwindef::DWORD;
 use winapi::um::processthreadsapi::*;
-use winapi::um::winnt::HANDLE;
 
 const PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE: usize = 0x00020016;
-// ProcThreadAttributeValue(ProcThreadAttributeJobList = 13, input): the jobs
-// the new process is assigned to as it is created (Windows 10 and newer).
-const PROC_THREAD_ATTRIBUTE_JOB_LIST: usize = 0x0002000D;
+// ProcThreadAttributeValue(ProcThreadAttributeDesktopAppPolicy = 18, input):
+// how a packaged app's descendants are created (Windows 10 1703 and newer).
+const PROC_THREAD_ATTRIBUTE_DESKTOP_APP_POLICY: usize = 0x00020012;
 
 pub struct ProcThreadAttributeList {
     data: Vec<u8>,
@@ -68,23 +67,24 @@ impl ProcThreadAttributeList {
         Ok(())
     }
 
-    /// Assign the process to `jobs` as it is created. The list keeps a pointer
-    /// to `jobs`, which must outlive the CreateProcessW call that uses it.
-    pub fn set_job_list(&mut self, jobs: &[HANDLE]) -> Result<(), Error> {
+    /// Set the desktop app policy (PROCESS_CREATION_DESKTOP_APP_*). The list
+    /// keeps a pointer to `policy`, which must outlive the CreateProcessW call
+    /// that uses it.
+    pub fn set_desktop_app_policy(&mut self, policy: &DWORD) -> Result<(), Error> {
         let res = unsafe {
             UpdateProcThreadAttribute(
                 self.as_mut_ptr(),
                 0,
-                PROC_THREAD_ATTRIBUTE_JOB_LIST,
-                jobs.as_ptr() as *mut _,
-                mem::size_of_val(jobs),
+                PROC_THREAD_ATTRIBUTE_DESKTOP_APP_POLICY,
+                policy as *const DWORD as *mut _,
+                mem::size_of::<DWORD>(),
                 ptr::null_mut(),
                 ptr::null_mut(),
             )
         };
         ensure!(
             res != 0,
-            "UpdateProcThreadAttribute(job list) failed: {}",
+            "UpdateProcThreadAttribute(desktop app policy) failed: {}",
             IoError::last_os_error()
         );
         Ok(())

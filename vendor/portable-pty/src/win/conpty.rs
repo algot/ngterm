@@ -88,8 +88,11 @@ pub struct ConPtyMasterPty {
 
 impl ConPtyMasterPty {
     /// Spawn `cmd` attached to this pseudoconsole, assigned to the job object
-    /// `job` as it is created, so neither it nor any process it starts runs
-    /// outside the job. `job` must stay open until this returns.
+    /// `job` before it runs, so no process it starts runs outside the job (a
+    /// packaged app's descendants run in its package's runtime, a different
+    /// packaged app it starts in that app's own job, outside this one). `job`
+    /// must stay open until this returns, and a failed assignment ends the
+    /// child.
     pub fn spawn_command_in_job(
         &self,
         cmd: CommandBuilder,
