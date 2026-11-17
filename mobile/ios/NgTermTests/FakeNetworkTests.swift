@@ -18,10 +18,14 @@ internal struct FakeNetworkTests {
         #expect(FakeNetwork.path.isSatisfied)
     }
 
-    @Test("the fake world's graph is online once started")
+    @Test("the fake world's graph starts a fake network, not the system's, and is online at once")
     internal func graphOnline() {
         let graph = FakeWorld.graph(arguments: [CoreChoice.fakeArgument, CoreChoice.fakeKeyArgument])
+        // the system's network is online until its first path, which comes on a later turn of the main queue: only
+        // the count of starts tells which network the graph follows
+        let before = FakeNetwork.starts
         graph.start()
+        #expect(FakeNetwork.starts == before + 1)
         #expect(graph.network.isOnline)
     }
 }

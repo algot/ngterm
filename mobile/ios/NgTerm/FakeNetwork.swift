@@ -11,12 +11,16 @@
     internal final class FakeNetwork: PathSource {
         /// The path the source reports: Wi-Fi that can carry traffic.
         internal static let path = NetworkPath(isSatisfied: true, interfaces: ["en0"])
+        /// How many times a fake network started, all of them together: a test reads it to see that the fake world's
+        /// graph follows a fake network, not the system's.
+        internal private(set) static var starts = 0
 
         internal init() {
             // the graph starts it
         }
 
         internal func start(_ update: @MainActor (NetworkPath) -> Void) {
+            Self.starts += 1
             update(Self.path)
         }
 
