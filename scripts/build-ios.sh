@@ -363,11 +363,11 @@ quiet_keyboard_introduction() {
 # (report_test_counts); its status is that of the runs.
 #
 # Only one simulator runs at a time: each boots right before its own xcodebuild run, and shuts down before the next
-# one boots. A CI Mac has 3 CPUs and 7 GB; a new simulator's first boot alone took it to a load of 800, 1 GB of swap
-# and 97 s stalls (a UI leg of ios run 44064367405), and the unit job, with both simulators booted for its whole run,
-# twice went silent until its job timeout (d0bd06ee, 9a986aa3). Each run writes its own result bundle,
-# $1-<simulator>.xcresult (CI uploads it if the job ends before the merge); xcresulttool merges two into $1.xcresult,
-# and one is moved there.
+# one boots; the last one shuts down before the function returns. A CI Mac has 3 CPUs and 7 GB; a new simulator's
+# first boot alone took it to a load of 800, 1 GB of swap and 97 s stalls (a UI leg of ios run 44064367405), and the
+# unit job, with both simulators booted for its whole run, twice went silent until its job timeout (d0bd06ee,
+# 9a986aa3). Each run writes its own result bundle, $1-<simulator>.xcresult (CI uploads it if the job ends before the
+# merge); xcresulttool merges two into $1.xcresult, and one is moved there.
 run_test_plan() {
   local plan="$1" name udid booted="" status=0 bundle bundles=()
   shift
@@ -396,6 +396,12 @@ run_test_plan() {
       -parallel-testing-enabled NO -resultBundlePath "$bundle" "$@" -quiet || status=$?
     [[ ! -d "$bundle" ]] || bundles+=("$bundle")
   done
+  # the last one too: the next plan's run (test runs Unit, then UI) starts with its own first simulator. A failed
+  # shutdown fails the plan, but the merge and the counts still come.
+  if [[ -n "$booted" ]] && ! xcrun simctl shutdown "$booted"; then
+    echo "build-ios.sh: couldn't shut down simulator $booted after the $plan plan's runs" >&2
+    ((status)) || status=1
+  fi
   if ((${#bundles[@]} > 1)); then
     xcrun xcresulttool merge "${bundles[@]}" --output-path "$BUILD_DIR/$plan.xcresult" ||
       die "couldn't merge the $plan plan's result bundles (they stay beside it)"
