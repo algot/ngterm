@@ -31,8 +31,11 @@ internal struct FakeDuplicateWorldTests {
         return (graph, core)
     }
 
+    // a held Duplicate that is never let on fails the test, not the run
     private func duplicateWork(_ core: FakeMobileCore) async throws -> RemoteSession {
-        try await core.duplicateSession(machineId: work.machineId, sessionId: work.sessionId)
+        try await AppWindow.value("the Duplicate did not return") { [work] in
+            try await core.duplicateSession(machineId: work.machineId, sessionId: work.sessionId)
+        }
     }
 
     // the roles the core reported for `pane`, oldest first
@@ -92,13 +95,16 @@ internal struct FakeDuplicateWorldTests {
         let (graph, core) = try await connected([CoreChoice.fakeDuplicateSlowArgument])
         for number in 1...2 {
             let copyId = "fake-\(number)"
-            let duplicate = Task { try await duplicateWork(core) }
+            let duplicate = Task { [work] in
+                try await core.duplicateSession(machineId: work.machineId, sessionId: work.sessionId)
+            }
             try await AppWindow.until { cues.asked.count == number }
             #expect(cues.asked.last == .duplicateLands)
             let listed = core.sessions[work.machineId, default: []].map(\.id)
             #expect(!listed.contains(copyId), "Duplicate \(number) landed before its cue")
             cues.letOn()
-            #expect(try await duplicate.value.id == copyId)
+            let copy = try await AppWindow.value("Duplicate \(number) did not land") { try await duplicate.value }
+            #expect(copy.id == copyId)
         }
         #expect(graph.connections.links[work.machineId] == .connected)
     }

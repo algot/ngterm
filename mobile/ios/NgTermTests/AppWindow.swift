@@ -48,12 +48,40 @@ internal enum AppWindow {
 
     /// Waits for `condition`, about 10 s on an idle simulator, failing the test when it doesn't come.
     internal static func until(_ condition: () -> Bool) async throws {
+        try await until("timed out waiting", condition)
+    }
+
+    /// Waits for `condition` as ``until(_:)`` does, failing the test with `what` when it doesn't come.
+    internal static func until(_ what: Comment, _ condition: () -> Bool) async throws {
         var looked = 0
         while !condition(), looked < looks {
             looked += 1
             try await Task.sleep(for: .milliseconds(stepMilliseconds))
         }
-        try #require(condition(), "timed out waiting")
+        try #require(condition(), what)
+    }
+
+    /// What `call` returns, waited for as ``until(_:)`` waits: a call that never returns fails the test with `what`
+    /// and is cancelled, so a resume that never comes costs seconds, not the whole run.
+    internal static func value<Value>(
+        _ what: Comment,
+        of call: @escaping @MainActor () async throws -> Value
+    ) async throws -> Value {
+        let outcome = Outcome<Value>()
+        let running = Task {
+            do {
+                outcome.result = .success(try await call())
+            } catch {
+                outcome.result = .failure(error)
+            }
+        }
+        do {
+            try await until(what) { outcome.result != nil }
+        } catch {
+            running.cancel()
+            throw error
+        }
+        return try #require(outcome.result).get()
     }
 
     /// The views of type `kind` under `view`, its own included.
