@@ -1120,7 +1120,7 @@ scripts/build-ios.sh archive      # a Release archive for devices (unsigned with
 eval "$(scripts/setup-ios.sh --check)"   # then the core's tests in the phone simulator, as CI's core-tests job runs them:
 CARGO_TARGET_AARCH64_APPLE_IOS_SIM_RUNNER="$PWD/scripts/ios-sim-runner.sh" \
   cargo test -p ngterm-mobile --lib --target aarch64-apple-ios-sim
-scripts/test-ios-e2e.sh [--device phone|tablet] [TEST...]   # the UI tests that take a machine (LogsOnAMachineTests), the app on its real core from a fresh install, against a real ngterm-headless behind a private sshd on the Mac's 127.0.0.1 (with the mobile e2e's stand-in Claude Code on its PATH); the UI plan skips them without it
+scripts/test-ios-e2e.sh [--device phone|tablet] [TEST...]   # the UI tests that take a machine (the *OnAMachineTests; default LogsOnAMachineTests), the app on its real core from a fresh install, against a real ngterm-headless behind a private sshd on the Mac's 127.0.0.1 (with the mobile e2e's stand-in Claude Code and an OSC 52 clipboard reader on its PATH, the app allowed to read another app's copy in the simulator); the UI plan skips them without it
 ```
 
 - `build-ios.sh` builds `libngterm_mobile.a` for the device and the simulator, generates the Swift bindings, wraps

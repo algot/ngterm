@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The iOS app's end-to-end UI tests (mobile/ios/NgTermUITests, those that take a machine: LogsOnAMachineTests) on a
+# The iOS app's end-to-end UI tests (mobile/ios/NgTermUITests, those that take a machine: the *OnAMachineTests) on a
 # pinned simulator, through the app's real core, against a real machine: a private ngterm-headless behind a private,
 # unprivileged sshd on the Mac's 127.0.0.1, which the simulator reaches as the Mac's own loopback. The iOS sibling of
 # scripts/test-android-e2e.sh, and on the Mac only.
@@ -13,7 +13,9 @@
 # machine in the test runner's environment (TEST_RUNNER_IOS_E2E_*: host, port, user, the client key's file, its
 # passphrase and its fingerprint). The machine's PATH also holds `e2e-claude`, the mobile e2e's stand-in Claude Code in
 # its standalone form (crates/ngterm-mobile/tests/support/fake_agent.py --standalone), which a test starts in a
-# session's shell as a person starts Claude Code.
+# session's shell as a person starts Claude Code, and `e2e-clip-read`, which reads the clipboard once with OSC 52 and
+# prints the answer. Each test runs with the app allowed to read another app's copy in the simulator (its pasteboard
+# row in the simulator's TCC.db, put back after the test and on any exit).
 #
 # On exit it stops the instance and sshd by the pids they recorded, ends every session of the private namespace through
 # that namespace's own session server and removes the namespace's directory. The scratch directory is removed after a
@@ -140,8 +142,38 @@ reap() {
     fi
   fi
 }
+# The simulator gives the app nothing of another app's copy, and asks no question, while the app's
+# kTCCServicePasteboard row in the simulator's TCC.db is 3, which iOS writes at the app's first read; 2 lets the read
+# through, and simctl privacy has no pasteboard service. Each test runs with the row at 2. The row as it was before
+# (none, or iOS's) goes back after the test, and on any exit.
+TCC_DB=
+TCC_WHERE="service = 'kTCCServicePasteboard' and client = 'com.nickalie.ngterm.ios' and client_type = 0"
+TCC_ROW=  # the row as it was, as an INSERT statement; empty when there was none
+TCC_HELD= # set while the row is this run's
+pasteboard_allow() {
+  [[ -f "$TCC_DB" && -w "$TCC_DB" ]] || die "cannot write the simulator's TCC.db ($TCC_DB)"
+  TCC_ROW="$(sqlite3 -bail -cmd '.timeout 5000' -cmd '.mode insert access' "$TCC_DB" \
+    "select * from access where $TCC_WHERE")" || die "cannot read the app's pasteboard row in $TCC_DB"
+  TCC_HELD=1
+  sqlite3 -bail -cmd '.timeout 5000' "$TCC_DB" "begin; delete from access where $TCC_WHERE;
+    insert into access (service, client, client_type, auth_value, auth_reason, auth_version, flags)
+    values ('kTCCServicePasteboard', 'com.nickalie.ngterm.ios', 0, 2, 4, 2, 0); commit;" &&
+    [[ "$(sqlite3 -cmd '.timeout 5000' "$TCC_DB" "select auth_value from access where $TCC_WHERE")" == 2 ]] ||
+    die "cannot set the app's pasteboard row to 2 in $TCC_DB"
+}
+pasteboard_restore() {
+  [[ -n "$TCC_HELD" ]] || return 0
+  if sqlite3 -bail -cmd '.timeout 5000' "$TCC_DB" "begin; delete from access where $TCC_WHERE; $TCC_ROW commit;"; then
+    TCC_HELD=
+  else
+    echo "→ cannot put the app's pasteboard row back in $TCC_DB; it was: ${TCC_ROW:-none}" >&2
+    return 1
+  fi
+}
+
 on_exit() {
   local status=$?
+  pasteboard_restore || true
   reap
   [[ -z "$EVIDENCE" ]] || cp "$WORK/headless.log" "$EVIDENCE/" 2>/dev/null || true
   if ((status == 0)); then
@@ -161,6 +193,36 @@ mkdir -p "$WORK/s" "$WORK/home" "$WORK/sshd" "$WORK/bin" "$WORK/client"
 printf '#!/bin/sh\nexec %q -I %q --standalone "$@"\n' "$(command -v python3)" \
   "$NATIVE_ROOT/crates/ngterm-mobile/tests/support/fake_agent.py" >"$WORK/bin/e2e-claude"
 chmod 755 "$WORK/bin/e2e-claude"
+# `e2e-clip-read <label>`: one OSC 52 read of the clipboard on the session's terminal, its answer printed as
+# R:<label>:<length>:<text> (R:<label>:none:<bytes> when no answer came)
+cat >"$WORK/clip-read.py" <<'EOF'
+import base64, os, select, sys, termios, time, tty
+label = sys.argv[1] if len(sys.argv) > 1 else "r"
+fd = os.open("/dev/tty", os.O_RDWR)
+old = termios.tcgetattr(fd)
+tty.setraw(fd)
+buf = b""
+try:
+    os.write(fd, b"\x1b]52;c;?\x07")
+    end = time.monotonic() + 150
+    while not buf.endswith((b"\x07", b"\x1b\\")):
+        ready, _, _ = select.select([fd], [], [], max(0.0, end - time.monotonic()))
+        if not ready:
+            break
+        buf += os.read(fd, 65536)
+finally:
+    termios.tcsetattr(fd, termios.TCSADRAIN, old)
+reply = buf.decode(errors="replace")
+if "\x1b]52;" not in reply:
+    print(f"R:{label}:none:{len(buf)}")
+else:
+    body = reply.split("\x1b]52;", 1)[1].removesuffix("\x07").removesuffix("\x1b\\")
+    data = body.split(";", 1)[1] if ";" in body else ""
+    text = base64.b64decode(data).decode(errors="replace") if data else ""
+    print(f"R:{label}:{len(text)}:{text}")
+EOF
+printf '#!/bin/sh\nexec %q -I %q "$@"\n' "$(command -v python3)" "$WORK/clip-read.py" >"$WORK/bin/e2e-clip-read"
+chmod 755 "$WORK/bin/e2e-clip-read"
 
 # the instance's live namespace: /tmp/ngterm-live-<FNV-1a 64 of the resolved state dir> (ngterm_core::live)
 python3 -I - "$WORK/s" >"$WORK/live-dir" <<'EOF'
@@ -253,6 +315,12 @@ UDID="$(xcrun simctl list devices 2>/dev/null | awk -v header="-- iOS $IOS_SIMUL
   /^-- / { inside = ($0 == header); next }
   inside && index($0, name) == 1 { rest = substr($0, length(name) + 1); print substr(rest, 1, index(rest, ")") - 1); exit }')"
 [[ -n "$UDID" ]] || die "no $NAME simulator on iOS $IOS_SIMULATOR_RUNTIME: run scripts/setup-ios.sh"
+TCC_DB="$(xcrun simctl list devices -j | python3 -I -c '
+import json, sys
+for device in (d for ds in json.load(sys.stdin)["devices"].values() for d in ds):
+    if device["udid"] == sys.argv[1]:
+        print(device["dataPath"] + "/Library/TCC/TCC.db")' "$UDID")"
+[[ -n "$TCC_DB" ]] || die "simctl names no data directory for $NAME ($UDID)"
 
 # The environment xcodebuild gets: the caller's, without NGTERM_* and what would forward it into a simulator
 # (build-ios.sh's), and with the machine for the test runner.
@@ -273,6 +341,7 @@ for test in "${TESTS[@]}"; do
   xcrun simctl spawn "$UDID" defaults write com.apple.keyboard.preferences DidShowContinuousPathIntroduction -bool true
   xcrun simctl uninstall "$UDID" com.nickalie.ngterm.ios 2>/dev/null || true
   xcrun simctl keychain "$UDID" reset
+  pasteboard_allow
   bundle="$BUILD_DIR/e2e-${test//\//-}-$DEVICE.xcresult"
   rm -rf "$bundle"
   env ${UNSET_NGTERM[@]+"${UNSET_NGTERM[@]}"} "${MACHINE[@]}" caffeinate -is xcodebuild test \
@@ -280,6 +349,7 @@ for test in "${TESTS[@]}"; do
     -onlyUsePackageVersionsFromResolvedFile -scheme NgTerm -configuration Debug -testPlan UI \
     -destination "id=$UDID" -parallel-testing-enabled NO -resultBundlePath "$bundle" \
     "-only-testing:NgTermUITests/$test" -quiet || status=1
+  pasteboard_restore || status=1
   # a test that found no machine skips itself: here that is a failure, as is a run that passed nothing
   xcrun xcresulttool get test-results summary --path "$bundle" 2>/dev/null | python3 -I -c '
 import json, sys
