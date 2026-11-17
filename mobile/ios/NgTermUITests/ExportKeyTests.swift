@@ -186,11 +186,7 @@ internal final class ExportKeyTests: XCTestCase {
         importKey.tap()
         FakeApp.expect(app.navigationBars["Import a key"], "the import screen")
         app.buttons["Choose file"].tap()
-        let file = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label BEGINSWITH %@", fileName))
-            .firstMatch
-        FakeApp.expect(file, "the saved file in the system's file screen")
-        file.tap()
+        FileScreen.choose(fileStartingWith: fileName, in: app)
         FakeApp.expect(
             FakeApp.element(containing: "This key is protected: enter its passphrase.", in: app),
             "that the file is under a passphrase"

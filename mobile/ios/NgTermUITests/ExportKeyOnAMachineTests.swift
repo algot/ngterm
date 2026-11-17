@@ -131,11 +131,7 @@ internal final class ExportKeyOnAMachineTests: XCTestCase {
         FakeApp.expect(start, "the welcome's Import a key: is the install fresh?")
         start.tap()
         app.buttons["Choose file"].tap()
-        let file = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label BEGINSWITH %@", ExportedKeyFiles.name))
-            .firstMatch
-        FakeApp.expect(file, "the exported file in the system's file screen")
-        file.tap()
+        FileScreen.choose(fileStartingWith: ExportedKeyFiles.name, in: app)
         FakeApp.expect(
             FakeApp.element(containing: "This key is protected: enter its passphrase.", in: app),
             "that the file is under a passphrase"
