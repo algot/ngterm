@@ -23,6 +23,8 @@
     /// (``FakeCues/Cue/duplicateLands``); and, when asked, a Mac running agterm, `studio` (``FakeAgtermWorld``); and,
     /// when asked, a Mac running agterm beside ngterm, `duo` (``FakeAgtermWorld/seedBeside(_:core:keyId:)``).
     ///
+    /// The network is always online (``FakeNetwork``), whatever the simulator's is.
+    ///
     /// Notifications go to memory (``FakeNotices``), and the question about notifying counts as asked unless the
     /// launch asks for it. The diagnostic log is the core's own, in the launch's directory or the one it names.
     internal enum FakeWorld {
@@ -110,6 +112,7 @@
                 stores: stores,
                 core: core,
                 notices: FakeNotices(),
+                pathSource: FakeNetwork(),
                 clipboard: clipboard(arguments: arguments),
                 log: AppLogs.open(in: logs.appending(path: "log", directoryHint: .isDirectory)),
                 logExports: logs.appending(path: "export", directoryHint: .isDirectory)

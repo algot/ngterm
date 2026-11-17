@@ -13,7 +13,6 @@ yet:
   footnote on the bar material) and the question card's **Send answers** while it is disabled (nothing picked yet).
 - Dynamic Type "partially unsupported": the session title's `work` and `working` in the toolbar. On the phone that
   title also wraps the state word letter by letter ("wor / kin / g") beside the pane tabs, which the recordings show.
-  It may share a cause with `ios-machines-list-audit-flags-session-rows-as-not-scaling.md`.
 
 The chat screen had no audit before, so these are older than #13. Fix them, then add `try FakeApp.audit(app)` back to
 `ChatTests.testClaudesQuestionIsAQuestionCardAnsweredThereAndAskedAgain` after the card shows.
